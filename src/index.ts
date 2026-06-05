@@ -40,6 +40,13 @@ export {
   type RendererFramePlanOptions,
 } from "./engine/renderer/interface/render-frame-plan";
 export {
+  createShaderSource,
+  type ShaderLanguage,
+  type ShaderProgramSource,
+  type ShaderSource,
+  type ShaderStage,
+} from "./engine/renderer/interface/shader-source";
+export {
   type Renderer,
   type RendererBackend,
   type RendererCapabilities,
@@ -47,3 +54,4 @@ export {
   type RenderPassId,
 } from "./engine/renderer/interface/renderer";
 export { WebGPURenderer } from "./engine/renderer/webgpu/webgpu-renderer";
+export { webGpuGlobeProgram } from "./engine/renderer/webgpu/wgsl-shaders";

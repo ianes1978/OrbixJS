@@ -14,7 +14,7 @@ import {
   modelVertexShader,
   vectorLineFragmentShader,
   vectorLineVertexShader,
-} from "./shaders";
+} from "./glsl-shaders";
 
 type GlobeProgram = {
   program: WebGLProgram;
