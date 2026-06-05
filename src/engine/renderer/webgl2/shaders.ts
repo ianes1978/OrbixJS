@@ -150,16 +150,19 @@ void main() {
 
 export const modelVertexShader = `#version 300 es
 in vec3 position;
+in vec2 uv;
 
 uniform mat4 uProjection;
 uniform mat4 uView;
 uniform mat4 uModel;
 
 out vec3 vPosition;
+out vec2 vUv;
 
 void main() {
   vec4 worldPosition = uModel * vec4(position, 1.0);
   vPosition = worldPosition.xyz;
+  vUv = uv;
   gl_Position = uProjection * uView * worldPosition;
 }
 `;
@@ -168,12 +171,19 @@ export const modelFragmentShader = `#version 300 es
 precision highp float;
 
 in vec3 vPosition;
+in vec2 vUv;
+
+uniform vec4 uBaseColorFactor;
+uniform bool uTextureEnabled;
+uniform sampler2D uBaseColorTexture;
 
 out vec4 outColor;
 
 void main() {
   float pulse = 0.5 + 0.5 * smoothstep(-0.2, 0.8, normalize(vPosition).y);
-  vec3 color = mix(vec3(1.0, 0.32, 0.12), vec3(1.0, 0.9, 0.18), pulse);
-  outColor = vec4(color, 1.0);
+  vec4 textureColor = uTextureEnabled ? texture(uBaseColorTexture, vUv) : vec4(1.0);
+  vec4 material = uBaseColorFactor * textureColor;
+  vec3 color = material.rgb * (0.72 + pulse * 0.28);
+  outColor = vec4(color, material.a);
 }
 `;

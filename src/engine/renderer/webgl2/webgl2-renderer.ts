@@ -45,6 +45,9 @@ type ModelProgram = {
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
+  uBaseColorFactor: WebGLUniformLocation;
+  uTextureEnabled: WebGLUniformLocation;
+  uBaseColorTexture: WebGLUniformLocation;
 };
 
 type GpuMesh = {
@@ -53,6 +56,8 @@ type GpuMesh = {
   indexBuffer: WebGLBuffer;
   indexCount: number;
   indexType: number;
+  texture?: WebGLTexture;
+  textureEnabled?: boolean;
 };
 
 type GpuLineMesh = {
@@ -81,6 +86,7 @@ export class WebGL2Renderer implements Renderer {
   private vectorLines: GpuLineMesh | null = null;
   private vectorLinesVisible = false;
   private debugModelVisible = false;
+  private debugModelBaseColorFactor: [number, number, number, number] = [1, 0.75, 0.15, 1];
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
 
@@ -156,11 +162,14 @@ export class WebGL2Renderer implements Renderer {
 
   setDebugModelMesh(mesh: {
     positions: Float32Array;
+    texcoords?: Float32Array;
     indices?: Uint16Array | Uint32Array;
     lon: number;
     lat: number;
     height?: number;
     scale?: number;
+    baseColorFactor?: [number, number, number, number];
+    baseColorTexture?: TexImageSource;
   }): void {
     if (!this.gl) {
       return;
@@ -170,18 +179,28 @@ export class WebGL2Renderer implements Renderer {
       this.gl.deleteVertexArray(this.debugModel.vao);
       this.gl.deleteBuffer(this.debugModel.vertexBuffer);
       this.gl.deleteBuffer(this.debugModel.indexBuffer);
+      if (this.debugModel.texture) {
+        this.gl.deleteTexture(this.debugModel.texture);
+      }
       this.debugModel = null;
     }
 
     this.debugModel = uploadSimpleMesh(
       this.gl,
       createPlacedModelMesh(mesh.positions, mesh.indices, {
+        texcoords: mesh.texcoords,
         lon: mesh.lon,
         lat: mesh.lat,
         height: mesh.height ?? 90000,
         scale: mesh.scale ?? 180000,
       }),
     );
+    this.debugModelBaseColorFactor = mesh.baseColorFactor ?? [1, 1, 1, 1];
+
+    if (mesh.baseColorTexture) {
+      this.debugModel.texture = createModelTexture(this.gl, mesh.baseColorTexture);
+      this.debugModel.textureEnabled = true;
+    }
   }
 
   setImagery(image: TexImageSource): void {
@@ -276,6 +295,9 @@ export class WebGL2Renderer implements Renderer {
       this.gl.deleteVertexArray(this.debugModel.vao);
       this.gl.deleteBuffer(this.debugModel.vertexBuffer);
       this.gl.deleteBuffer(this.debugModel.indexBuffer);
+      if (this.debugModel.texture) {
+        this.gl.deleteTexture(this.debugModel.texture);
+      }
     }
 
     if (this.vectorLines) {
@@ -354,6 +376,11 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.modelProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.modelProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.modelProgram.uModel, false, identityMatrix());
+    this.gl.uniform4fv(this.modelProgram.uBaseColorFactor, this.debugModelBaseColorFactor);
+    this.gl.uniform1i(this.modelProgram.uTextureEnabled, this.debugModel.textureEnabled ? 1 : 0);
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.debugModel.texture ?? null);
+    this.gl.uniform1i(this.modelProgram.uBaseColorTexture, 0);
     this.gl.bindVertexArray(this.debugModel.vao);
     this.gl.drawElements(this.gl.TRIANGLES, this.debugModel.indexCount, this.debugModel.indexType, 0);
     this.gl.enable(this.gl.CULL_FACE);
@@ -505,12 +532,15 @@ function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
   const uProjection = gl.getUniformLocation(program, "uProjection");
   const uView = gl.getUniformLocation(program, "uView");
   const uModel = gl.getUniformLocation(program, "uModel");
+  const uBaseColorFactor = gl.getUniformLocation(program, "uBaseColorFactor");
+  const uTextureEnabled = gl.getUniformLocation(program, "uTextureEnabled");
+  const uBaseColorTexture = gl.getUniformLocation(program, "uBaseColorTexture");
 
-  if (!uProjection || !uView || !uModel) {
+  if (!uProjection || !uView || !uModel || !uBaseColorFactor || !uTextureEnabled || !uBaseColorTexture) {
     throw new Error("Missing WebGL2 model uniform");
   }
 
-  return { program, uProjection, uView, uModel };
+  return { program, uProjection, uView, uModel, uBaseColorFactor, uTextureEnabled, uBaseColorTexture };
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -617,7 +647,9 @@ function uploadSimpleMesh(
   gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 5 * Float32Array.BYTES_PER_ELEMENT, 0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 5 * Float32Array.BYTES_PER_ELEMENT, 3 * Float32Array.BYTES_PER_ELEMENT);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
 
@@ -633,7 +665,7 @@ function uploadSimpleMesh(
 function createPlacedModelMesh(
   positions: Float32Array,
   indices: Uint16Array | Uint32Array | undefined,
-  placement: { lon: number; lat: number; height: number; scale: number },
+  placement: { texcoords?: Float32Array; lon: number; lat: number; height: number; scale: number },
   ellipsoid = Ellipsoid.WGS84,
 ): { vertices: Float32Array; indices: Uint16Array | Uint32Array } {
   const lon = placement.lon * (Math.PI / 180);
@@ -654,7 +686,7 @@ function createPlacedModelMesh(
       add(add(center, scale(east, localX * unitScale)), scale(up, localY * unitScale)),
       scale(north, localZ * unitScale),
     );
-    vertices.push(...worldPosition);
+    vertices.push(...worldPosition, placement.texcoords?.[(index / 3) * 2] ?? 0, placement.texcoords?.[(index / 3) * 2 + 1] ?? 0);
   }
 
   return { vertices: new Float32Array(vertices), indices: indices ?? createSequentialIndices(positions.length / 3) };
@@ -786,6 +818,19 @@ function createDebugTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
     gl.UNSIGNED_BYTE,
     new Uint8Array([255, 40, 20, 210]),
   );
+  gl.generateMipmap(gl.TEXTURE_2D);
+  return texture;
+}
+
+function createModelTexture(gl: WebGL2RenderingContext, image: TexImageSource): WebGLTexture {
+  const texture = createPlaceholderTexture(gl);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
   gl.generateMipmap(gl.TEXTURE_2D);
   return texture;
 }

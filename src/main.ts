@@ -2,6 +2,8 @@ import "./styles.css";
 import { GeoViewer } from "./engine/geo-viewer";
 import { loadGlb } from "./engine/loaders/gltf/glb-loader";
 import { extractFirstMeshPrimitive } from "./engine/loaders/gltf/gltf-mesh";
+import { selectTilesetTile } from "./engine/loaders/tiles3d/tile-selector";
+import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./engine/loaders/tiles3d/tileset";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -32,6 +34,10 @@ app.innerHTML = `
         <div class="metric wide">
           <span>Tile runtime</span>
           <strong id="tile-status">LOD -</strong>
+        </div>
+        <div class="metric">
+          <span>3D Tiles</span>
+          <strong id="tiles3d-status">tileset -</strong>
         </div>
         <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
           LOD overlay
@@ -75,6 +81,7 @@ const overallBar = document.querySelector<HTMLElement>("#overall-bar");
 const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
+const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
@@ -87,6 +94,7 @@ if (
   !rendererStatus ||
   !imageryStatus ||
   !tileStatus ||
+  !tiles3dStatus ||
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
@@ -139,6 +147,11 @@ if (!globeHost) {
   throw new Error("Missing globe host");
 }
 
+const tiles3dStatusElement = tiles3dStatus;
+let demoTileset: TilesetJson | undefined;
+let activeTilesetContentKey: string | undefined;
+let pendingTilesetContentKey: string | undefined;
+
 const viewer = new GeoViewer({
   container: globeHost,
   renderer: "webgl2",
@@ -146,6 +159,7 @@ const viewer = new GeoViewer({
     imageryStatus.textContent = `LOD ${stats.level}`;
     const mode = debugTileOverlay ? "overlay" : "base";
     tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
+    void syncDemoTilesetContent();
   },
   onImageryError: () => {
     imageryStatus.textContent = "fallback";
@@ -157,7 +171,7 @@ viewer.imagery.addXYZLayer({
   url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   level: 2,
 });
-void loadDemoModel();
+void loadDemoTileset();
 viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").catch(() => {
   coastlineToggle.textContent = "Coastline -";
   coastlineToggle.disabled = true;
@@ -203,21 +217,88 @@ flyPresetButtons.forEach((button) => {
   });
 });
 
-async function loadDemoModel(): Promise<void> {
+async function loadDemoModel(
+  url: string,
+  placement: {
+    lon: number;
+    lat: number;
+    height: number;
+  },
+): Promise<void> {
   try {
-    const demoGlb = await loadGlb("/models/demo-marker.glb");
+    const demoGlb = await loadGlb(url);
     const demoPrimitive = extractFirstMeshPrimitive(demoGlb.json, demoGlb.binaryChunk);
+    const baseColorTexture = demoPrimitive.baseColorTexture
+      ? await createImageBitmap(
+          new Blob([demoPrimitive.baseColorTexture.bytes.slice().buffer], {
+            type: demoPrimitive.baseColorTexture.mimeType,
+          })
+        )
+      : undefined;
     viewer.setDebugModelMesh({
       positions: demoPrimitive.positions,
+      texcoords: demoPrimitive.texcoords,
       indices: demoPrimitive.indices,
-      lon: 12.5,
-      lat: 42.5,
-      height: 90000,
+      lon: placement.lon,
+      lat: placement.lat,
+      height: placement.height,
       scale: 180000,
+      baseColorFactor: demoPrimitive.baseColorFactor,
+      baseColorTexture,
     });
   } catch (error) {
     console.warn("Demo GLB failed", error);
     modelToggle!.textContent = "Model -";
     modelToggle!.disabled = true;
   }
+}
+
+async function loadDemoTileset(): Promise<void> {
+  try {
+    demoTileset = await loadTilesetJson("/tilesets/demo/tileset.json");
+    tiles3dStatusElement.textContent = "tileset OK";
+    await syncDemoTilesetContent();
+  } catch (error) {
+    console.warn("Demo tileset failed", error);
+    tiles3dStatusElement.textContent = "tileset -";
+  }
+}
+
+async function syncDemoTilesetContent(): Promise<void> {
+  if (!demoTileset) {
+    return;
+  }
+
+  const selected = selectTilesetTile(demoTileset.root, viewer.camera.distance);
+  const contentUri = selected.tile.content?.resolvedUri;
+
+  if (!contentUri) {
+    tiles3dStatusElement.textContent = `LOD ${selected.depth}: vuoto`;
+    return;
+  }
+
+  const contentKey = `${selected.depth}:${contentUri}`;
+
+  if (contentKey === activeTilesetContentKey || contentKey === pendingTilesetContentKey) {
+    tiles3dStatusElement.textContent = `LOD ${selected.depth}: GLB`;
+    return;
+  }
+
+  const placement = tileBoundingVolumeCenter(demoTileset.root);
+
+  if (!placement) {
+    tiles3dStatusElement.textContent = `LOD ${selected.depth}: root bounds -`;
+    return;
+  }
+
+  pendingTilesetContentKey = contentKey;
+  tiles3dStatusElement.textContent = `LOD ${selected.depth}: loading`;
+  await loadDemoModel(contentUri, {
+    lon: placement.lon,
+    lat: placement.lat,
+    height: placement.height + 90000,
+  });
+  activeTilesetContentKey = contentKey;
+  pendingTilesetContentKey = undefined;
+  tiles3dStatusElement.textContent = `LOD ${selected.depth}: GLB`;
 }

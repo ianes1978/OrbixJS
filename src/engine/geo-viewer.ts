@@ -110,11 +110,14 @@ export class GeoViewer {
 
   setDebugModelMesh(mesh: {
     positions: Float32Array;
+    texcoords?: Float32Array;
     indices?: Uint16Array | Uint32Array;
     lon: number;
     lat: number;
     height?: number;
     scale?: number;
+    baseColorFactor?: [number, number, number, number];
+    baseColorTexture?: TexImageSource;
   }): void {
     this.renderer.setDebugModelMesh(mesh);
   }

@@ -45,19 +45,19 @@ export const roadmap: RoadmapPhase[] = [
     title: "glTF",
     items: [
       { label: "Caricamento GLB", done: true },
-      { label: "Materiali PBR", done: false },
-      { label: "Texture", done: false },
-      { label: "Posizionamento geografico", done: false },
+      { label: "Materiali PBR", done: true },
+      { label: "Texture", done: true },
+      { label: "Posizionamento geografico", done: true },
     ],
   },
   {
     step: "Fase 5",
     title: "3D Tiles",
     items: [
-      { label: "tileset.json", done: false },
-      { label: "LOD base", done: false },
+      { label: "tileset.json", done: true },
+      { label: "LOD base", done: true },
       { label: "Frustum culling", done: false },
-      { label: "Caricamento tile", done: false },
+      { label: "Caricamento tile", done: true },
     ],
   },
   {

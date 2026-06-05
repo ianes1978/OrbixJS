@@ -1,0 +1,41 @@
+{
+  "asset": {
+    "version": "1.1"
+  },
+  "geometricError": 200000,
+  "root": {
+    "boundingVolume": {
+      "region": [
+        0.10471975511965977,
+        0.6283185307179586,
+        0.3141592653589793,
+        0.8203047484373349,
+        0,
+        220000
+      ]
+    },
+    "geometricError": 200000,
+    "refine": "REPLACE",
+    "content": {
+      "uri": "../../models/demo-marker.glb"
+    },
+    "children": [
+      {
+        "boundingVolume": {
+          "region": [
+            0.19198621771937624,
+            0.7155849933176751,
+            0.24434609527920614,
+            0.767944870877505,
+            0,
+            180000
+          ]
+        },
+        "geometricError": 0,
+        "content": {
+          "uri": "../../models/demo-marker-lod1.glb"
+        }
+      }
+    ]
+  }
+}

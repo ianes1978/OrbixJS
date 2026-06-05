@@ -76,10 +76,15 @@ select {
   left: 20px;
   right: 20px;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   pointer-events: none;
+}
+
+.hud > div:first-child {
+  flex: 1 1 280px;
 }
 
 .hud .metric,
