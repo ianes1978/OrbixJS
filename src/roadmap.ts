@@ -48,7 +48,7 @@ export const roadmap: RoadmapPhase[] = [
     title: "CRS e precisione",
     items: [
       { label: "CRS dichiarato per layer", done: true },
-      { label: "Coordinate transformer", done: false },
+      { label: "Coordinate transformer", done: true },
       { label: "TileMatrixSet generico", done: false },
       { label: "LocalFrame ENU", done: false },
       { label: "Quote e height reference", done: true },

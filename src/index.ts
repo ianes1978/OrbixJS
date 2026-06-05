@@ -63,5 +63,13 @@ export {
   type RendererFrame,
   type RenderPassId,
 } from "./engine/renderer/interface/renderer";
+export {
+  cartographicToCoordinate,
+  coordinateToCartographic,
+  isSupportedCrs,
+  transformCoordinate,
+  type CrsCoordinate,
+  type SupportedCrs,
+} from "./engine/core/geodesy/crs-transform";
 export { WebGPURenderer } from "./engine/renderer/webgpu/webgpu-renderer";
 export { webGpuGlobeProgram } from "./engine/renderer/webgpu/wgsl-shaders";
