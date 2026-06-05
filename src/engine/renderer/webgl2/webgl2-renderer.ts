@@ -3,6 +3,7 @@ import { add, cross, normalize, scale, type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
+import { createRendererFramePlan } from "../interface/render-frame-plan";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import {
   globeFragmentShader,
@@ -255,7 +256,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  render({ scene, camera }: RendererFrame): void {
+  render(frame: RendererFrame): void {
     if (!this.gl || !this.program || !this.globe) {
       return;
     }
@@ -263,14 +264,17 @@ export class WebGL2Renderer implements Renderer {
     this.resize();
 
     const aspect = this.canvas.width / this.canvas.height;
-    const projection = camera.projectionMatrix(aspect);
-    const view = camera.viewMatrix();
+    const plan = createRendererFramePlan(frame, aspect, {
+      imageryEnabled: this.imageryEnabled && this.activeTileIds.size > 0,
+      vectorLinesVisible: this.vectorLinesVisible && this.vectorLines !== null,
+      modelVisible: this.debugModelVisible && this.debugModel !== null,
+    });
 
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
     this.gl.useProgram(this.program.program);
-    this.gl.uniformMatrix4fv(this.program.uProjection, false, projection);
-    this.gl.uniformMatrix4fv(this.program.uView, false, view);
+    this.gl.uniformMatrix4fv(this.program.uProjection, false, plan.projection);
+    this.gl.uniformMatrix4fv(this.program.uView, false, plan.view);
     this.gl.activeTexture(this.gl.TEXTURE0);
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
     this.gl.uniform1i(this.program.uImagery, 0);
@@ -278,18 +282,23 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
     this.gl.bindVertexArray(this.globe.vao);
 
-    for (const node of scene.visibleNodes) {
+    for (const node of plan.nodes) {
       this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
       this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
     }
 
-    if (this.imageryEnabled && this.activeTileIds.size > 0) {
+    if (plan.passes.includes("imagery")) {
       this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
-      this.renderImageryTiles(projection, view);
+      this.renderImageryTiles(plan.projection, plan.view);
     }
 
-    this.renderVectorLines(projection, view, camera.position);
-    this.renderDebugModel(projection, view);
+    if (plan.passes.includes("vector")) {
+      this.renderVectorLines(plan.projection, plan.view, plan.cameraPosition);
+    }
+
+    if (plan.passes.includes("model")) {
+      this.renderDebugModel(plan.projection, plan.view);
+    }
   }
 
   destroy(): void {

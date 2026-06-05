@@ -33,6 +33,13 @@ export {
 } from "./engine/project/orbix-project";
 export { sunDirectionFromDate } from "./engine/core/astro/sun-position";
 export {
+  createRenderPassList,
+  createRendererFramePlan,
+  type RendererFrameNode,
+  type RendererFramePlan,
+  type RendererFramePlanOptions,
+} from "./engine/renderer/interface/render-frame-plan";
+export {
   type Renderer,
   type RendererBackend,
   type RendererCapabilities,
