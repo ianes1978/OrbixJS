@@ -20,6 +20,8 @@ const webGpuTextureUsage = {
   renderAttachment: 0x10,
 } as const;
 
+const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
+
 type NavigatorWithGpu = Navigator & {
   gpu?: WebGpuLike;
 };
@@ -89,6 +91,12 @@ type WebGpuQueueLike = {
     data: ArrayBuffer | ArrayBufferView,
     dataOffset?: number,
     size?: number,
+  ): void;
+  writeTexture(
+    destination: { texture: WebGpuTextureLike },
+    data: ArrayBuffer | ArrayBufferView,
+    dataLayout: { bytesPerRow: number; rowsPerImage?: number },
+    size: [number, number],
   ): void;
   copyExternalImageToTexture(
     source: { source: TexImageSource },
@@ -175,7 +183,7 @@ type WebGpuRenderPipelineDescriptorLike = {
   };
   primitive: {
     topology: "triangle-list";
-    cullMode: "back";
+    cullMode: "back" | "none";
   };
 };
 
@@ -220,6 +228,8 @@ export class WebGPURenderer implements Renderer {
   private tilePipeline: WebGpuRenderPipelineLike | undefined;
   private readonly tileEntries = new Map<string, WebGpuTileEntry>();
   private readonly activeTileIds = new Set<string>();
+  private pendingImagery: TexImageSource | undefined;
+  private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -242,52 +252,28 @@ export class WebGPURenderer implements Renderer {
   }
 
   setImagery(image: TexImageSource): void {
-    if (!this.device) {
+    if (!this.device || !this.globePipeline) {
+      this.pendingImagery = image;
       return;
     }
 
-    const size = textureSourceSize(image);
-
-    if (!size) {
-      return;
-    }
-
-    this.imageryTexture?.destroy?.();
-    this.imageryTexture = this.device.createTexture({
-      label: "OrbixJS WebGPU globe imagery",
-      size,
-      format: "rgba8unorm",
-      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
-    });
-    this.device.queue.copyExternalImageToTexture({ source: image }, { texture: this.imageryTexture }, size);
-    this.createGlobeBindGroup();
+    this.uploadGlobeImagery(image);
   }
 
-  setImageryTile(_tile: QuadtreeTile, _image: TexImageSource): void {
-    if (!this.device) {
+  setImageryTile(tile: QuadtreeTile, image: TexImageSource): void {
+    if (!this.device || !this.tilePipeline) {
+      this.pendingTileImages.set(tile.id, { tile, image });
       return;
     }
 
-    const entry = this.ensureTileEntry(_tile);
-    const size = textureSourceSize(_image);
-
-    if (!size) {
-      return;
-    }
-
-    entry.texture.destroy?.();
-    entry.texture = this.device.createTexture({
-      label: `OrbixJS WebGPU tile ${_tile.id}`,
-      size,
-      format: "rgba8unorm",
-      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
-    });
-    this.device.queue.copyExternalImageToTexture({ source: _image }, { texture: entry.texture }, size);
-    entry.bindGroup = this.createTextureBindGroup(this.tilePipeline, entry.uniformBuffer, entry.texture, "OrbixJS WebGPU tile bind group");
-    entry.ready = true;
+    this.uploadTileImagery(tile, image);
   }
 
   ensureDebugImageryTile(tile: QuadtreeTile): void {
+    if (!this.device) {
+      return;
+    }
+
     this.ensureTileEntry(tile);
   }
 
@@ -329,6 +315,54 @@ export class WebGPURenderer implements Renderer {
     // Sun uniforms land after the first textured WebGPU pass.
   }
 
+  private uploadGlobeImagery(image: TexImageSource): void {
+    if (!this.device) {
+      return;
+    }
+
+    const size = textureSourceSize(image);
+
+    if (!size) {
+      return;
+    }
+
+    this.imageryTexture?.destroy?.();
+    this.imageryTexture = this.device.createTexture({
+      label: "OrbixJS WebGPU globe imagery",
+      size,
+      format: "rgba8unorm",
+      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
+    });
+    this.device.queue.copyExternalImageToTexture({ source: image }, { texture: this.imageryTexture }, size);
+    this.createGlobeBindGroup();
+    this.pendingImagery = undefined;
+  }
+
+  private uploadTileImagery(tile: QuadtreeTile, image: TexImageSource): void {
+    if (!this.device) {
+      return;
+    }
+
+    const entry = this.ensureTileEntry(tile);
+    const size = textureSourceSize(image);
+
+    if (!size) {
+      return;
+    }
+
+    entry.texture.destroy?.();
+    entry.texture = this.device.createTexture({
+      label: `OrbixJS WebGPU tile ${tile.id}`,
+      size,
+      format: "rgba8unorm",
+      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
+    });
+    this.device.queue.copyExternalImageToTexture({ source: image }, { texture: entry.texture }, size);
+    entry.bindGroup = this.createTextureBindGroup(this.tilePipeline, entry.uniformBuffer, entry.texture, "OrbixJS WebGPU tile bind group");
+    entry.ready = true;
+    this.pendingTileImages.delete(tile.id);
+  }
+
   async initialize(): Promise<boolean> {
     if (!this.gpu) {
       return false;
@@ -357,6 +391,7 @@ export class WebGPURenderer implements Renderer {
     this.resize();
     this.configureCanvas();
     this.createGlobeResources();
+    this.flushPendingImagery();
     this.initialized = true;
     return true;
   }
@@ -390,7 +425,7 @@ export class WebGPURenderer implements Renderer {
     }
 
     const aspect = this.canvas.width / this.canvas.height;
-    const viewProjection = multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix());
+    const viewProjection = webGpuViewProjection(frame, aspect);
     this.device.queue.writeBuffer(this.globeUniformBuffer, 0, viewProjection);
 
     const view = this.context.getCurrentTexture().createView();
@@ -462,6 +497,8 @@ export class WebGPURenderer implements Renderer {
     this.tilePipeline = undefined;
     this.tileEntries.clear();
     this.activeTileIds.clear();
+    this.pendingImagery = undefined;
+    this.pendingTileImages.clear();
   }
 
   private configureCanvas(): void {
@@ -550,7 +587,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "back",
+        cullMode: "none",
       },
     });
     this.tilePipeline = this.createTilePipeline(tileVertexModule, tileFragmentModule);
@@ -569,6 +606,9 @@ export class WebGPURenderer implements Renderer {
       format: "rgba8unorm",
       usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
     });
+    const data = new Uint8Array(256);
+    data.set([18, 42, 50, 255]);
+    this.device.queue.writeTexture({ texture }, data, { bytesPerRow: 256, rowsPerImage: 1 }, [1, 1]);
     return texture;
   }
 
@@ -636,7 +676,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "back",
+        cullMode: "none",
       },
     });
   }
@@ -721,6 +761,16 @@ export class WebGPURenderer implements Renderer {
       ],
     });
   }
+
+  private flushPendingImagery(): void {
+    if (this.pendingImagery) {
+      this.uploadGlobeImagery(this.pendingImagery);
+    }
+
+    for (const { tile, image } of this.pendingTileImages.values()) {
+      this.uploadTileImagery(tile, image);
+    }
+  }
 }
 
 function textureSourceSize(source: TexImageSource): [number, number] | undefined {
@@ -733,4 +783,8 @@ function textureSourceSize(source: TexImageSource): [number, number] | undefined
   }
 
   return [width, height];
+}
+
+function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {
+  return multiply(webGpuClipSpaceCorrection, multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix()));
 }

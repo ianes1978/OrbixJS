@@ -41,6 +41,12 @@ describe("WebGPURenderer", () => {
       }),
     );
     expect(device.createSampler).toHaveBeenCalled();
+    expect(device.queue.writeTexture).toHaveBeenCalledWith(
+      { texture: expect.anything() },
+      expect.any(Uint8Array),
+      { bytesPerRow: 256, rowsPerImage: 1 },
+      [1, 1],
+    );
     expect(configure).toHaveBeenCalledWith({
       device,
       format: "rgba8unorm",
@@ -106,6 +112,29 @@ describe("WebGPURenderer", () => {
     expect(device.createBindGroup.mock.calls.length).toBeGreaterThan(bindGroupsBefore);
   });
 
+  it("keeps globe imagery provided before WebGPU initialization", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+    const image = { width: 512, height: 256 } as TexImageSource;
+
+    renderer.setImagery(image);
+    await renderer.initialize();
+
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      { texture: expect.anything() },
+      [512, 256],
+    );
+  });
+
   it("renders active imagery tiles after the globe", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
@@ -132,6 +161,33 @@ describe("WebGPURenderer", () => {
       { texture: expect.anything() },
       [256, 256],
     );
+  });
+
+  it("keeps imagery tiles provided before WebGPU initialization", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+    const tile = createQuadtreeTile(1, 1, 2);
+    const image = { width: 256, height: 256 } as TexImageSource;
+
+    renderer.setImageryTile(tile, image);
+    await renderer.initialize();
+    renderer.setActiveImageryTiles([tile.id]);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      { texture: expect.anything() },
+      [256, 256],
+    );
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
   });
 
   it("reports unsupported when WebGPU is unavailable", async () => {
@@ -174,6 +230,7 @@ function createDeviceMock() {
   return {
     queue: {
       writeBuffer: vi.fn(),
+      writeTexture: vi.fn(),
       copyExternalImageToTexture: vi.fn(),
       submit: vi.fn(),
     },
