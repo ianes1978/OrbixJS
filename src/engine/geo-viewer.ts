@@ -108,6 +108,17 @@ export class GeoViewer {
     this.renderer.setDebugModelVisible(enabled);
   }
 
+  setDebugModelMesh(mesh: {
+    positions: Float32Array;
+    indices?: Uint16Array | Uint32Array;
+    lon: number;
+    lat: number;
+    height?: number;
+    scale?: number;
+  }): void {
+    this.renderer.setDebugModelMesh(mesh);
+  }
+
   flyTo(options: CameraFlyToOptions): void {
     this.camera.flyTo(options);
   }

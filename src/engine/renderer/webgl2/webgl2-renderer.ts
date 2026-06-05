@@ -52,6 +52,7 @@ type GpuMesh = {
   vertexBuffer: WebGLBuffer;
   indexBuffer: WebGLBuffer;
   indexCount: number;
+  indexType: number;
 };
 
 type GpuLineMesh = {
@@ -74,7 +75,7 @@ export class WebGL2Renderer implements Renderer {
   private readonly vectorProgram: VectorProgram | null = null;
   private readonly modelProgram: ModelProgram | null = null;
   private readonly globe: GpuMesh | null = null;
-  private readonly debugModel: GpuMesh | null = null;
+  private debugModel: GpuMesh | null = null;
   private imageryTexture: WebGLTexture | null = null;
   private imageryEnabled = false;
   private vectorLines: GpuLineMesh | null = null;
@@ -96,7 +97,6 @@ export class WebGL2Renderer implements Renderer {
     this.vectorProgram = createVectorProgram(this.gl);
     this.modelProgram = createModelProgram(this.gl);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh());
-    this.debugModel = uploadSimpleMesh(this.gl, createDebugModelMesh());
     this.imageryTexture = createPlaceholderTexture(this.gl);
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.enable(this.gl.CULL_FACE);
@@ -154,6 +154,36 @@ export class WebGL2Renderer implements Renderer {
     this.debugModelVisible = visible;
   }
 
+  setDebugModelMesh(mesh: {
+    positions: Float32Array;
+    indices?: Uint16Array | Uint32Array;
+    lon: number;
+    lat: number;
+    height?: number;
+    scale?: number;
+  }): void {
+    if (!this.gl) {
+      return;
+    }
+
+    if (this.debugModel) {
+      this.gl.deleteVertexArray(this.debugModel.vao);
+      this.gl.deleteBuffer(this.debugModel.vertexBuffer);
+      this.gl.deleteBuffer(this.debugModel.indexBuffer);
+      this.debugModel = null;
+    }
+
+    this.debugModel = uploadSimpleMesh(
+      this.gl,
+      createPlacedModelMesh(mesh.positions, mesh.indices, {
+        lon: mesh.lon,
+        lat: mesh.lat,
+        height: mesh.height ?? 90000,
+        scale: mesh.scale ?? 180000,
+      }),
+    );
+  }
+
   setImagery(image: TexImageSource): void {
     if (!this.gl || !this.imageryTexture) {
       return;
@@ -207,7 +237,7 @@ export class WebGL2Renderer implements Renderer {
 
     for (const node of scene.visibleNodes) {
       this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
-      this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.gl.UNSIGNED_SHORT, 0);
+      this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
     }
 
     if (this.imageryEnabled && this.activeTileIds.size > 0) {
@@ -287,7 +317,7 @@ export class WebGL2Renderer implements Renderer {
       this.gl.bindTexture(this.gl.TEXTURE_2D, entry.texture);
       this.gl.uniform1i(this.tileProgram.uImagery, 0);
       this.gl.bindVertexArray(entry.mesh.vao);
-      this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, this.gl.UNSIGNED_SHORT, 0);
+      this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
     this.gl.depthMask(true);
@@ -325,7 +355,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.modelProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.modelProgram.uModel, false, identityMatrix());
     this.gl.bindVertexArray(this.debugModel.vao);
-    this.gl.drawElements(this.gl.TRIANGLES, this.debugModel.indexCount, this.gl.UNSIGNED_SHORT, 0);
+    this.gl.drawElements(this.gl.TRIANGLES, this.debugModel.indexCount, this.debugModel.indexType, 0);
     this.gl.enable(this.gl.CULL_FACE);
   }
 
@@ -531,6 +561,7 @@ function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEl
     vertexBuffer,
     indexBuffer,
     indexCount: mesh.indices.length,
+    indexType: gl.UNSIGNED_SHORT,
   };
 }
 
@@ -566,12 +597,13 @@ function uploadTileMesh(
     vertexBuffer,
     indexBuffer,
     indexCount: mesh.indices.length,
+    indexType: gl.UNSIGNED_SHORT,
   };
 }
 
 function uploadSimpleMesh(
   gl: WebGL2RenderingContext,
-  mesh: { vertices: Float32Array; indices: Uint16Array },
+  mesh: { vertices: Float32Array; indices: Uint16Array | Uint32Array },
 ): GpuMesh {
   const vao = gl.createVertexArray();
   const vertexBuffer = gl.createBuffer();
@@ -594,32 +626,48 @@ function uploadSimpleMesh(
     vertexBuffer,
     indexBuffer,
     indexCount: mesh.indices.length,
+    indexType: mesh.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
   };
 }
 
-function createDebugModelMesh(ellipsoid = Ellipsoid.WGS84): { vertices: Float32Array; indices: Uint16Array } {
-  const lon = 12.5 * (Math.PI / 180);
-  const lat = 42.5 * (Math.PI / 180);
+function createPlacedModelMesh(
+  positions: Float32Array,
+  indices: Uint16Array | Uint32Array | undefined,
+  placement: { lon: number; lat: number; height: number; scale: number },
+  ellipsoid = Ellipsoid.WGS84,
+): { vertices: Float32Array; indices: Uint16Array | Uint32Array } {
+  const lon = placement.lon * (Math.PI / 180);
+  const lat = placement.lat * (Math.PI / 180);
   const maxRadius = ellipsoid.maximumRadius;
-  const center = scalePosition(ellipsoid.cartographicToCartesian({ lon, lat, height: 90000 }), maxRadius);
+  const center = scalePosition(ellipsoid.cartographicToCartesian({ lon, lat, height: placement.height }), maxRadius);
   const up = normalize(center);
   const east = normalize(cross([0, 1, 0], up));
   const north = normalize(cross(up, east));
-  const baseSize = 0.022;
-  const height = 0.07;
-  const baseCenter = add(center, scale(up, 0.012));
-  const vertices = [
-    ...add(add(baseCenter, scale(east, -baseSize)), scale(north, -baseSize)),
-    ...add(add(baseCenter, scale(east, baseSize)), scale(north, -baseSize)),
-    ...add(add(baseCenter, scale(east, baseSize)), scale(north, baseSize)),
-    ...add(add(baseCenter, scale(east, -baseSize)), scale(north, baseSize)),
-    ...add(baseCenter, scale(up, height)),
-  ];
+  const unitScale = placement.scale / maxRadius;
+  const vertices: number[] = [];
 
-  return {
-    vertices: new Float32Array(vertices),
-    indices: new Uint16Array([0, 1, 2, 0, 2, 3, 0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]),
-  };
+  for (let index = 0; index < positions.length; index += 3) {
+    const localX = positions[index];
+    const localY = positions[index + 1];
+    const localZ = positions[index + 2];
+    const worldPosition = add(
+      add(add(center, scale(east, localX * unitScale)), scale(up, localY * unitScale)),
+      scale(north, localZ * unitScale),
+    );
+    vertices.push(...worldPosition);
+  }
+
+  return { vertices: new Float32Array(vertices), indices: indices ?? createSequentialIndices(positions.length / 3) };
+}
+
+function createSequentialIndices(vertexCount: number): Uint16Array | Uint32Array {
+  const indices = vertexCount > 65535 ? new Uint32Array(vertexCount) : new Uint16Array(vertexCount);
+
+  for (let index = 0; index < vertexCount; index += 1) {
+    indices[index] = index;
+  }
+
+  return indices;
 }
 
 function uploadLineMesh(
