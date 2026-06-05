@@ -9,6 +9,7 @@ npm install
 npm run dev
 npm test
 npm run build
+npm run build:lib
 ```
 
 Apri la dashboard su:
@@ -43,7 +44,48 @@ Dataset terrain candidato:
 - layer ufficiale: `p_bz-Elevation:DigitalTerrainModel-2.5m`
 - tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/`
 
-Prima dell'uso runtime va validato il formato delle tile: schema, CRS, encoding quota e NoData.
+Basemap candidata:
+
+- `2023 Orthofoto`
+- WMTS: `https://geoservices.buergernetz.bz.it/mapproxy/p_bz-Orthoimagery/ows`
+- layer: `Aerial-2023-RGB`
+- matrix set: `EPSG_25832`
+- CRS: `EPSG:25832`
+- formato: `image/png`
+
+CRS target per GIS e Digital Twin:
+
+- `EPSG:4326`, `EPSG:4979`, `EPSG:4978`
+- `EPSG:3857`
+- UTM WGS84 `EPSG:326xx`/`EPSG:327xx`
+- ETRS89/UTM `EPSG:258xx`, con priorita a `EPSG:25832`
+- CRS italiani comuni come Gauss-Boaga `EPSG:3003`/`EPSG:3004`
+- frame locali ENU per GPU, editing, Digital Twin e Blender
+
+Modellazione parametrica target:
+
+- estrusione da poligoni usando metadata come altezza, numero piani, quota base e destinazione d'uso
+- setback, offset, tetti e facade rules per volumi edilizi
+- sweep da linee per strade, tubazioni, cavi, barriere e gallerie
+- instancing da punti per alberi, lampioni, sensori e arredo urbano
+- regole non distruttive: la mesh resta derivata da feature, metadata e parametri
+
+Layer styling target:
+
+- stato comune: `visible`, `opacity`, `zIndex`, `pickable`, `locked`
+- blend mode: `normal`, `multiply`, `screen`, `overlay`, `add`, `subtract`, `lighten`, `darken`, `mask`
+- controlli colore: brightness, contrast, saturation, gamma, tint e color ramp
+- gruppi layer, legenda, attribution e preset demo
+
+Project/data pipeline target:
+
+- `OrbixProject` JSON versionato per camera, CRS, project frame, layer stack, timeline, editing state e regole parametriche
+- `DataCatalog` per dataset, URL, CRS, extent, licenza, attribution, auth, cache policy, preview e fallback
+- `PreprocessJob` per trasformare DTM/GeoTIFF/WCS/COG, feature, glTF/3D Tiles e meteo in asset runtime riproducibili
+- manifest preprocessing con input, hash, CRS, extent, tool version, parametri, licenza e output
+- catalogo demo Alto Adige con DTM 2,5m, Orthofoto 2023, layer debug e fallback GitHub Pages
+
+Prima dell'uso runtime va validato il formato delle tile terrain: schema, CRS, encoding quota e NoData. Per l'ortofoto 2023 serve inoltre supporto WMTS con `TileMatrixSet` custom/CRS `EPSG:25832`. Il motore deve mantenere CRS sorgente, CRS di progetto, quote e trasformazioni come metadata espliciti.
 
 ## API minime
 
@@ -69,6 +111,14 @@ Quando il progetto sara' su GitHub:
 - fai push su `main`
 
 Il workflow esegue `npm ci`, `npm test`, `npm run build` e pubblica la cartella `dist` come demo statica.
+
+## Uso come libreria
+
+`npm run build:lib` genera l'entrypoint ESM tipizzato in `dist-lib/index.js` con declaration TypeScript in `dist-lib/index.d.ts`.
+
+```ts
+import { GeoViewer } from "orbixjs";
+```
 
 ## Stato MVP 0.1
 
