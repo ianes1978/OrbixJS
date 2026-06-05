@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OrbitCamera } from "../../core/camera/orbit-camera";
 import { Scene } from "../../core/scene/scene";
+import { createQuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { WebGPURenderer } from "./webgpu-renderer";
 
 describe("WebGPURenderer", () => {
@@ -33,6 +34,13 @@ describe("WebGPURenderer", () => {
     expect(canvas.height).toBe(360);
     expect(device.createRenderPipeline).toHaveBeenCalled();
     expect(device.createBindGroup).toHaveBeenCalled();
+    expect(device.createTexture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "OrbixJS WebGPU placeholder imagery",
+        size: [1, 1],
+      }),
+    );
+    expect(device.createSampler).toHaveBeenCalled();
     expect(configure).toHaveBeenCalledWith({
       device,
       format: "rgba8unorm",
@@ -65,6 +73,65 @@ describe("WebGPURenderer", () => {
     expect(device.pass.setIndexBuffer).toHaveBeenCalledWith(expect.anything(), "uint16");
     expect(device.pass.drawIndexed).toHaveBeenCalledWith(expect.any(Number));
     expect(device.queue.submit).toHaveBeenCalledWith(["command-buffer"]);
+  });
+
+  it("uploads globe imagery and refreshes the WebGPU bind group", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+    const image = { width: 512, height: 256 } as TexImageSource;
+
+    await renderer.initialize();
+    const bindGroupsBefore = device.createBindGroup.mock.calls.length;
+    renderer.setImagery(image);
+
+    expect(device.createTexture).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        label: "OrbixJS WebGPU globe imagery",
+        size: [512, 256],
+      }),
+    );
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      { texture: expect.anything() },
+      [512, 256],
+    );
+    expect(device.createBindGroup.mock.calls.length).toBeGreaterThan(bindGroupsBefore);
+  });
+
+  it("renders active imagery tiles after the globe", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+    const tile = createQuadtreeTile(1, 1, 2);
+    const image = { width: 256, height: 256 } as TexImageSource;
+
+    await renderer.initialize();
+    renderer.setImageryTile(tile, image);
+    renderer.setActiveImageryTiles([tile.id]);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.setPipeline).toHaveBeenCalledTimes(2);
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      { texture: expect.anything() },
+      [256, 256],
+    );
   });
 
   it("reports unsupported when WebGPU is unavailable", async () => {
@@ -107,6 +174,7 @@ function createDeviceMock() {
   return {
     queue: {
       writeBuffer: vi.fn(),
+      copyExternalImageToTexture: vi.fn(),
       submit: vi.fn(),
     },
     pass,
@@ -116,6 +184,8 @@ function createDeviceMock() {
       getBindGroupLayout: vi.fn(() => "bind-group-layout"),
     })),
     createBuffer: vi.fn((options) => ({ options, destroy: vi.fn() })),
+    createTexture: vi.fn((options) => ({ options, createView: vi.fn(() => ({ texture: options })), destroy: vi.fn() })),
+    createSampler: vi.fn((options) => ({ options })),
     createBindGroup: vi.fn((options) => ({ options })),
     createCommandEncoder: vi.fn(() => ({
       beginRenderPass: vi.fn(() => pass),
