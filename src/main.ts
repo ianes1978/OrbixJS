@@ -63,12 +63,12 @@ app.innerHTML = `
       </div>
       <aside class="panel" aria-label="Roadmap progress">
         <header>
-          <p class="eyebrow">Plan.md</p>
+          <p class="eyebrow">Plan2.md</p>
           <h2>Progressi</h2>
         </header>
         <div class="overall">
           <div class="overall-copy">
-            <span>Avanzamento MVP</span>
+            <span>Avanzamento Plan2</span>
             <strong id="overall-progress">0%</strong>
           </div>
           <div class="bar" aria-hidden="true">
