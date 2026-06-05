@@ -13,7 +13,7 @@
       "id": "demo-tileset",
       "type": "tileset",
       "title": "OrbixJS demo 3D Tiles",
-      "url": "/tilesets/demo/tileset.json",
+      "url": "tilesets/demo/tileset.json",
       "crs": "EPSG:4326"
     },
     {

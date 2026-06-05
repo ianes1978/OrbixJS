@@ -1,7 +1,7 @@
 {
   "schemaVersion": "0.1",
   "name": "OrbixJS MVP demo",
-  "catalogUrl": "/catalogs/demo-catalog.json",
+  "catalogUrl": "catalogs/demo-catalog.json",
   "crs": {
     "project": "EPSG:4326",
     "heightReference": "ellipsoid"

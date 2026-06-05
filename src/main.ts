@@ -281,8 +281,8 @@ viewer.canvas.addEventListener("pointerup", (event) => {
 
 async function loadDemoProject(): Promise<void> {
   try {
-    const project = await loadOrbixProject("/projects/demo.orbix.json");
-    const catalog = await loadDataCatalog(project.catalogUrl ?? "/catalogs/demo-catalog.json");
+    const project = await loadOrbixProject(demoAssetUrl("projects/demo.orbix.json"));
+    const catalog = await loadDataCatalog(demoAssetUrl(project.catalogUrl ?? "catalogs/demo-catalog.json"));
 
     if (project.camera) {
       viewer.flyTo(project.camera);
@@ -303,7 +303,7 @@ async function loadDemoProject(): Promise<void> {
       if (layer.type === "imagery-xyz" && source.type === "imagery-xyz") {
         viewer.imagery.addXYZLayer({ url: source.url, level: 2 });
       } else if (layer.type === "tileset" && source.type === "tileset") {
-        await viewer.addTileset({ url: source.url, id: source.title, scale: 180000 });
+        await viewer.addTileset({ url: demoAssetUrl(source.url), id: source.title, scale: 180000 });
       }
     }
   } catch (error) {
@@ -311,6 +311,14 @@ async function loadDemoProject(): Promise<void> {
     imageryStatusElement.textContent = "fallback";
     tiles3dStatusElement.textContent = "tileset -";
   }
+}
+
+function demoAssetUrl(path: string): string {
+  if (/^https?:\/\//u.test(path)) {
+    return path;
+  }
+
+  return `${import.meta.env.BASE_URL}${path.replace(/^\/+/u, "")}`;
 }
 
 function toDegrees(value: number): number {
