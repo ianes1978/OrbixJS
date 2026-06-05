@@ -83,7 +83,8 @@ select {
 }
 
 .hud .metric,
-.hud .debug-toggle {
+.hud .debug-toggle,
+.hud .fly-presets {
   pointer-events: auto;
 }
 
@@ -143,6 +144,22 @@ h2 {
 .debug-toggle[aria-pressed="true"] {
   border-color: rgba(120, 212, 168, 0.72);
   background: rgba(24, 78, 60, 0.72);
+}
+
+.fly-presets {
+  display: grid;
+  gap: 6px;
+}
+
+.fly-presets button {
+  min-width: 86px;
+  height: 30px;
+  border: 1px solid rgba(232, 237, 240, 0.18);
+  background: rgba(8, 17, 20, 0.72);
+  color: #e8edf0;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .metric span,

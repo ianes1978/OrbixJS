@@ -37,6 +37,11 @@ app.innerHTML = `
         <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
           Coastline
         </button>
+        <div class="fly-presets" aria-label="FlyTo presets">
+          <button data-fly-to="italy" type="button">Italia</button>
+          <button data-fly-to="usa" type="button">USA</button>
+          <button data-fly-to="tokyo" type="button">Tokyo</button>
+        </div>
       </div>
       </div>
       <aside class="panel" aria-label="Roadmap progress">
@@ -67,6 +72,7 @@ const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
+const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 
 if (
   !list ||
@@ -76,7 +82,8 @@ if (
   !imageryStatus ||
   !tileStatus ||
   !tileDebugToggle ||
-  !coastlineToggle
+  !coastlineToggle ||
+  flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
 }
@@ -162,4 +169,20 @@ coastlineToggle.addEventListener("click", () => {
   viewer.setCoastlineOverlay(coastlineOverlay);
   coastlineToggle.setAttribute("aria-pressed", String(coastlineOverlay));
   coastlineToggle.textContent = coastlineOverlay ? "Coast ON" : "Coastline";
+});
+
+const flyToPresets = {
+  italy: { lon: 12.5, lat: 42.5, height: 1_500_000 },
+  usa: { lon: -100, lat: 40, height: 2_500_000 },
+  tokyo: { lon: 139.7, lat: 35.7, height: 1_200_000 },
+};
+
+flyPresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const preset = flyToPresets[button.dataset.flyTo as keyof typeof flyToPresets];
+
+    if (preset) {
+      viewer.flyTo(preset);
+    }
+  });
 });

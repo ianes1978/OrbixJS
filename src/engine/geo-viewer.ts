@@ -1,4 +1,5 @@
 import { OrbitCamera } from "./core/camera/orbit-camera";
+import { type CameraFlyToOptions } from "./core/camera/orbit-camera";
 import { PointerController } from "./core/events/pointer-controller";
 import { Ellipsoid } from "./core/geodesy/ellipsoid";
 import { invert, multiply, transformPoint } from "./core/math/mat4";
@@ -101,6 +102,10 @@ export class GeoViewer {
 
   setCoastlineOverlay(enabled: boolean): void {
     this.renderer.setVectorLinesVisible(enabled);
+  }
+
+  flyTo(options: CameraFlyToOptions): void {
+    this.camera.flyTo(options);
   }
 
   async loadCoastlineOverlay(url: string): Promise<void> {

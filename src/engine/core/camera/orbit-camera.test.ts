@@ -32,4 +32,14 @@ describe("OrbitCamera", () => {
     expect(mid.dragSensitivityScale()).toBeGreaterThan(near.dragSensitivityScale());
     expect(far.dragSensitivityScale()).toBe(1);
   });
+
+  it("flies to cartographic coordinates expressed in degrees", () => {
+    const camera = new OrbitCamera();
+
+    camera.flyTo({ lon: 0, lat: 45, height: 1_000_000 });
+
+    expect(camera.yaw).toBeCloseTo(Math.PI / 2);
+    expect(camera.pitch).toBeCloseTo(Math.PI / 4);
+    expect(camera.distance).toBeCloseTo(1 + 1_000_000 / 6_378_137);
+  });
 });

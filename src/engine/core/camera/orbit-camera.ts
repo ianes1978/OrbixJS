@@ -1,6 +1,12 @@
 import { lookAt, perspective, type Mat4 } from "../math/mat4";
 import { type MutableVec3 } from "../math/vec3";
 
+export type CameraFlyToOptions = {
+  lon: number;
+  lat: number;
+  height?: number;
+};
+
 export type OrbitCameraOptions = {
   target?: MutableVec3;
   distance?: number;
@@ -42,6 +48,21 @@ export class OrbitCamera {
 
   zoom(delta: number): void {
     this.distance = clamp(this.distance * Math.exp(delta), this.minDistance, this.maxDistance);
+  }
+
+  flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
+    const lonRadians = lon * (Math.PI / 180);
+    const latRadians = lat * (Math.PI / 180);
+    const cosLat = Math.cos(latRadians);
+    const direction = [
+      cosLat * Math.cos(lonRadians),
+      Math.sin(latRadians),
+      -cosLat * Math.sin(lonRadians),
+    ] as const;
+
+    this.yaw = Math.atan2(direction[0], direction[2]);
+    this.pitch = clamp(Math.asin(direction[1]), -1.42, 1.42);
+    this.distance = clamp(1 + height / 6_378_137, this.minDistance, this.maxDistance);
   }
 
   get position(): MutableVec3 {
