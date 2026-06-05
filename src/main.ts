@@ -1,9 +1,5 @@
 import "./styles.css";
 import { GeoViewer } from "./engine/geo-viewer";
-import { loadGlb } from "./engine/loaders/gltf/glb-loader";
-import { extractFirstMeshPrimitive } from "./engine/loaders/gltf/gltf-mesh";
-import { selectTilesetTile } from "./engine/loaders/tiles3d/tile-selector";
-import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./engine/loaders/tiles3d/tileset";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -155,9 +151,6 @@ if (!globeHost) {
 
 const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
-let demoTileset: TilesetJson | undefined;
-let activeTilesetContentKey: string | undefined;
-let pendingTilesetContentKey: string | undefined;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -166,7 +159,9 @@ const viewer = new GeoViewer({
     imageryStatus.textContent = `LOD ${stats.level}`;
     const mode = debugTileOverlay ? "overlay" : "base";
     tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
-    void syncDemoTilesetContent();
+  },
+  onTilesetStats: (stats) => {
+    tiles3dStatusElement.textContent = stats.status;
   },
   onImageryError: () => {
     imageryStatus.textContent = "fallback";
@@ -269,108 +264,17 @@ viewer.canvas.addEventListener("pointerup", (event) => {
   pickingStatusElement.textContent = `${toDegrees(globe.lat).toFixed(3)}, ${toDegrees(globe.lon).toFixed(3)}`;
 });
 
-async function loadDemoModel(
-  url: string,
-  placement: {
-    lon: number;
-    lat: number;
-    height: number;
-  },
-): Promise<void> {
-  try {
-    const demoGlb = await loadGlb(url);
-    const demoPrimitive = extractFirstMeshPrimitive(demoGlb.json, demoGlb.binaryChunk);
-    const baseColorTexture = demoPrimitive.baseColorTexture
-      ? await createImageBitmap(
-          new Blob([demoPrimitive.baseColorTexture.bytes.slice().buffer], {
-            type: demoPrimitive.baseColorTexture.mimeType,
-          })
-        )
-      : undefined;
-    viewer.setDebugModelMesh({
-      positions: demoPrimitive.positions,
-      texcoords: demoPrimitive.texcoords,
-      indices: demoPrimitive.indices,
-      lon: placement.lon,
-      lat: placement.lat,
-      height: placement.height,
-      scale: 180000,
-      baseColorFactor: demoPrimitive.baseColorFactor,
-      baseColorTexture,
-    });
-    viewer.setDebugModelPickSphere({
-      center: viewer.cartographicToUnitSphere(placement),
-      radius: 230000 / 6_378_137,
-      id: "demo marker",
-    });
-  } catch (error) {
-    console.warn("Demo GLB failed", error);
-    modelToggle!.textContent = "Model -";
-    modelToggle!.disabled = true;
-  }
-}
-
 async function loadDemoTileset(): Promise<void> {
   try {
-    demoTileset = await loadTilesetJson("/tilesets/demo/tileset.json");
-    tiles3dStatusElement.textContent = "tileset OK";
-    await syncDemoTilesetContent();
+    await viewer.addTileset({
+      url: "/tilesets/demo/tileset.json",
+      id: "demo marker",
+      scale: 180000,
+    });
   } catch (error) {
     console.warn("Demo tileset failed", error);
     tiles3dStatusElement.textContent = "tileset -";
   }
-}
-
-async function syncDemoTilesetContent(): Promise<void> {
-  if (!demoTileset) {
-    return;
-  }
-
-  const selected = selectTilesetTile(demoTileset.root, viewer.camera.distance, {
-    cameraPosition: viewer.camera.position,
-    cameraTarget: viewer.camera.target,
-  });
-
-  if (!selected) {
-    tiles3dStatusElement.textContent = "culled";
-    activeTilesetContentKey = undefined;
-    viewer.setDebugModelPickSphere(undefined);
-    viewer.setDebugModelVisible(false);
-    return;
-  }
-
-  viewer.setDebugModelVisible(debugModelVisible);
-  const contentUri = selected.tile.content?.resolvedUri;
-
-  if (!contentUri) {
-    tiles3dStatusElement.textContent = `LOD ${selected.depth}: vuoto`;
-    return;
-  }
-
-  const contentKey = `${selected.depth}:${contentUri}`;
-
-  if (contentKey === activeTilesetContentKey || contentKey === pendingTilesetContentKey) {
-    tiles3dStatusElement.textContent = `LOD ${selected.depth}: GLB`;
-    return;
-  }
-
-  const placement = tileBoundingVolumeCenter(demoTileset.root);
-
-  if (!placement) {
-    tiles3dStatusElement.textContent = `LOD ${selected.depth}: root bounds -`;
-    return;
-  }
-
-  pendingTilesetContentKey = contentKey;
-  tiles3dStatusElement.textContent = `LOD ${selected.depth}: loading`;
-  await loadDemoModel(contentUri, {
-    lon: placement.lon,
-    lat: placement.lat,
-    height: placement.height + 90000,
-  });
-  activeTilesetContentKey = contentKey;
-  pendingTilesetContentKey = undefined;
-  tiles3dStatusElement.textContent = `LOD ${selected.depth}: GLB`;
 }
 
 function toDegrees(value: number): number {

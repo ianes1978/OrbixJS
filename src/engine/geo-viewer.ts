@@ -5,6 +5,10 @@ import { Ellipsoid } from "./core/geodesy/ellipsoid";
 import { invert, multiply, transformPoint } from "./core/math/mat4";
 import { directionBetween, type Ray, intersectUnitSphere } from "./core/math/ray";
 import { dot, type MutableVec3, type Vec3 } from "./core/math/vec3";
+import { loadGlb } from "./loaders/gltf/glb-loader";
+import { extractFirstMeshPrimitive } from "./loaders/gltf/gltf-mesh";
+import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
+import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./loaders/tiles3d/tileset";
 import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
@@ -20,6 +24,7 @@ export type GeoViewerOptions = {
     pendingTiles: number;
     cacheSize: number;
   }) => void;
+  onTilesetStats?: (stats: { status: string }) => void;
   onImageryError?: (error: unknown) => void;
 };
 
@@ -35,6 +40,21 @@ export type GeoPickResult =
       height: number;
     };
 
+export type GeoViewerGltfOptions = {
+  url: string;
+  lon: number;
+  lat: number;
+  height?: number;
+  scale?: number;
+  id?: string;
+};
+
+export type GeoViewerTilesetOptions = {
+  url: string;
+  scale?: number;
+  id?: string;
+};
+
 export class GeoViewer {
   readonly canvas: HTMLCanvasElement;
   readonly scene = new Scene();
@@ -43,12 +63,23 @@ export class GeoViewer {
   readonly imagery: ImageryLayerCollection;
   private readonly controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
+  private readonly onTilesetStatsCallback?: GeoViewerOptions["onTilesetStats"];
   private debugTileOverlay = false;
+  private debugModelVisible = false;
   private debugModelPickSphere:
     | {
         center: Vec3;
         radius: number;
         id: string;
+      }
+    | undefined;
+  private debugTileset:
+    | {
+        tileset: TilesetJson;
+        scale: number;
+        id: string;
+        activeContentKey?: string;
+        pendingContentKey?: string;
       }
     | undefined;
   private lastActiveTileIds: string[] = [];
@@ -57,6 +88,7 @@ export class GeoViewer {
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
+    this.onTilesetStatsCallback = options.onTilesetStats;
     const container =
       typeof options.container === "string"
         ? document.getElementById(options.container)
@@ -125,6 +157,7 @@ export class GeoViewer {
   }
 
   setDebugModelVisible(enabled: boolean): void {
+    this.debugModelVisible = enabled;
     this.renderer.setDebugModelVisible(enabled);
   }
 
@@ -140,6 +173,49 @@ export class GeoViewer {
     baseColorTexture?: TexImageSource;
   }): void {
     this.renderer.setDebugModelMesh(mesh);
+  }
+
+  async addGltf(options: GeoViewerGltfOptions): Promise<void> {
+    const glb = await loadGlb(options.url);
+    const primitive = extractFirstMeshPrimitive(glb.json, glb.binaryChunk);
+    const baseColorTexture = primitive.baseColorTexture
+      ? await createImageBitmap(
+          new Blob([primitive.baseColorTexture.bytes.slice().buffer], {
+            type: primitive.baseColorTexture.mimeType,
+          }),
+        )
+      : undefined;
+    const scale = options.scale ?? 180000;
+
+    this.setDebugModelMesh({
+      positions: primitive.positions,
+      texcoords: primitive.texcoords,
+      indices: primitive.indices,
+      lon: options.lon,
+      lat: options.lat,
+      height: options.height,
+      scale,
+      baseColorFactor: primitive.baseColorFactor,
+      baseColorTexture,
+    });
+    this.setDebugModelPickSphere({
+      center: this.cartographicToUnitSphere({
+        lon: options.lon,
+        lat: options.lat,
+        height: options.height ?? 0,
+      }),
+      radius: (scale * 1.3) / Ellipsoid.WGS84.maximumRadius,
+      id: options.id ?? "gltf",
+    });
+  }
+
+  async addTileset(options: GeoViewerTilesetOptions): Promise<void> {
+    this.debugTileset = {
+      tileset: await loadTilesetJson(options.url),
+      scale: options.scale ?? 180000,
+      id: options.id ?? "tileset",
+    };
+    await this.syncDebugTilesetContent();
   }
 
   flyTo(options: CameraFlyToOptions): void {
@@ -230,6 +306,7 @@ export class GeoViewer {
         this.onImageryStats(stats);
       }
 
+      void this.syncDebugTilesetContent();
       this.renderer.render({ scene: this.scene, camera: this.camera });
       this.frame = requestAnimationFrame(render);
     };
@@ -241,6 +318,67 @@ export class GeoViewer {
     this.onImageryStatsCallback?.(stats);
     const event = new CustomEvent("orbix:imagery-stats", { detail: stats });
     this.canvas.dispatchEvent(event);
+  }
+
+  private onTilesetStats(status: string): void {
+    const stats = { status };
+    this.onTilesetStatsCallback?.(stats);
+    this.canvas.dispatchEvent(new CustomEvent("orbix:tileset-stats", { detail: stats }));
+  }
+
+  private async syncDebugTilesetContent(): Promise<void> {
+    if (!this.debugTileset) {
+      return;
+    }
+
+    const selected = selectTilesetTile(this.debugTileset.tileset.root, this.camera.distance, {
+      cameraPosition: this.camera.position,
+      cameraTarget: this.camera.target,
+    });
+
+    if (!selected) {
+      this.debugTileset.activeContentKey = undefined;
+      this.setDebugModelPickSphere(undefined);
+      this.renderer.setDebugModelVisible(false);
+      this.onTilesetStats("culled");
+      return;
+    }
+
+    this.renderer.setDebugModelVisible(this.debugModelVisible);
+    const contentUri = selected.tile.content?.resolvedUri;
+
+    if (!contentUri) {
+      this.onTilesetStats(`LOD ${selected.depth}: vuoto`);
+      return;
+    }
+
+    const contentKey = `${selected.depth}:${contentUri}`;
+
+    if (contentKey === this.debugTileset.activeContentKey || contentKey === this.debugTileset.pendingContentKey) {
+      this.onTilesetStats(`LOD ${selected.depth}: GLB`);
+      return;
+    }
+
+    const placement = tileBoundingVolumeCenter(this.debugTileset.tileset.root);
+
+    if (!placement) {
+      this.onTilesetStats(`LOD ${selected.depth}: root bounds -`);
+      return;
+    }
+
+    this.debugTileset.pendingContentKey = contentKey;
+    this.onTilesetStats(`LOD ${selected.depth}: loading`);
+    await this.addGltf({
+      url: contentUri,
+      lon: placement.lon,
+      lat: placement.lat,
+      height: placement.height + 90000,
+      scale: this.debugTileset.scale,
+      id: this.debugTileset.id,
+    });
+    this.debugTileset.activeContentKey = contentKey;
+    this.debugTileset.pendingContentKey = undefined;
+    this.onTilesetStats(`LOD ${selected.depth}: GLB`);
   }
 
   private syncDebugTileOverlay(): void {
