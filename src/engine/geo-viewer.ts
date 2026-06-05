@@ -104,6 +104,10 @@ export class GeoViewer {
     this.renderer.setVectorLinesVisible(enabled);
   }
 
+  setDebugModelVisible(enabled: boolean): void {
+    this.renderer.setDebugModelVisible(enabled);
+  }
+
   flyTo(options: CameraFlyToOptions): void {
     this.camera.flyTo(options);
   }

@@ -37,6 +37,9 @@ app.innerHTML = `
         <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
           Coastline
         </button>
+        <button id="model-toggle" class="debug-toggle" type="button" aria-pressed="false">
+          Model
+        </button>
         <div class="fly-presets" aria-label="FlyTo presets">
           <button data-fly-to="italy" type="button">Italia</button>
           <button data-fly-to="usa" type="button">USA</button>
@@ -72,6 +75,7 @@ const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
+const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 
 if (
@@ -83,6 +87,7 @@ if (
   !tileStatus ||
   !tileDebugToggle ||
   !coastlineToggle ||
+  !modelToggle ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
@@ -169,6 +174,14 @@ coastlineToggle.addEventListener("click", () => {
   viewer.setCoastlineOverlay(coastlineOverlay);
   coastlineToggle.setAttribute("aria-pressed", String(coastlineOverlay));
   coastlineToggle.textContent = coastlineOverlay ? "Coast ON" : "Coastline";
+});
+
+let debugModelVisible = false;
+modelToggle.addEventListener("click", () => {
+  debugModelVisible = !debugModelVisible;
+  viewer.setDebugModelVisible(debugModelVisible);
+  modelToggle.setAttribute("aria-pressed", String(debugModelVisible));
+  modelToggle.textContent = debugModelVisible ? "Model ON" : "Model";
 });
 
 const flyToPresets = {

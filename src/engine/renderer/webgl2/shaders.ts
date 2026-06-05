@@ -147,3 +147,33 @@ void main() {
   outColor = vec4(1.0, 0.88, 0.22, 0.82 * horizonFade);
 }
 `;
+
+export const modelVertexShader = `#version 300 es
+in vec3 position;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform mat4 uModel;
+
+out vec3 vPosition;
+
+void main() {
+  vec4 worldPosition = uModel * vec4(position, 1.0);
+  vPosition = worldPosition.xyz;
+  gl_Position = uProjection * uView * worldPosition;
+}
+`;
+
+export const modelFragmentShader = `#version 300 es
+precision highp float;
+
+in vec3 vPosition;
+
+out vec4 outColor;
+
+void main() {
+  float pulse = 0.5 + 0.5 * smoothstep(-0.2, 0.8, normalize(vPosition).y);
+  vec3 color = mix(vec3(1.0, 0.32, 0.12), vec3(1.0, 0.9, 0.18), pulse);
+  outColor = vec4(color, 1.0);
+}
+`;

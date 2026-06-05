@@ -1,4 +1,5 @@
 import { Ellipsoid } from "../../core/geodesy/ellipsoid";
+import { add, cross, normalize, scale, type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
@@ -8,6 +9,8 @@ import {
   globeVertexShader,
   imageryTileFragmentShader,
   imageryTileVertexShader,
+  modelFragmentShader,
+  modelVertexShader,
   vectorLineFragmentShader,
   vectorLineVertexShader,
 } from "./shaders";
@@ -37,6 +40,13 @@ type VectorProgram = {
   uCameraPosition: WebGLUniformLocation;
 };
 
+type ModelProgram = {
+  program: WebGLProgram;
+  uProjection: WebGLUniformLocation;
+  uView: WebGLUniformLocation;
+  uModel: WebGLUniformLocation;
+};
+
 type GpuMesh = {
   vao: WebGLVertexArrayObject;
   vertexBuffer: WebGLBuffer;
@@ -62,11 +72,14 @@ export class WebGL2Renderer implements Renderer {
   private readonly program: GlobeProgram | null = null;
   private readonly tileProgram: TileProgram | null = null;
   private readonly vectorProgram: VectorProgram | null = null;
+  private readonly modelProgram: ModelProgram | null = null;
   private readonly globe: GpuMesh | null = null;
+  private readonly debugModel: GpuMesh | null = null;
   private imageryTexture: WebGLTexture | null = null;
   private imageryEnabled = false;
   private vectorLines: GpuLineMesh | null = null;
   private vectorLinesVisible = false;
+  private debugModelVisible = false;
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
 
@@ -81,7 +94,9 @@ export class WebGL2Renderer implements Renderer {
     this.program = createGlobeProgram(this.gl);
     this.tileProgram = createTileProgram(this.gl);
     this.vectorProgram = createVectorProgram(this.gl);
+    this.modelProgram = createModelProgram(this.gl);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh());
+    this.debugModel = uploadSimpleMesh(this.gl, createDebugModelMesh());
     this.imageryTexture = createPlaceholderTexture(this.gl);
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.enable(this.gl.CULL_FACE);
@@ -133,6 +148,10 @@ export class WebGL2Renderer implements Renderer {
 
   setVectorLinesVisible(visible: boolean): void {
     this.vectorLinesVisible = visible;
+  }
+
+  setDebugModelVisible(visible: boolean): void {
+    this.debugModelVisible = visible;
   }
 
   setImagery(image: TexImageSource): void {
@@ -197,6 +216,7 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.renderVectorLines(projection, view, camera.position);
+    this.renderDebugModel(projection, view);
   }
 
   destroy(): void {
@@ -216,6 +236,16 @@ export class WebGL2Renderer implements Renderer {
 
     if (this.vectorProgram) {
       this.gl.deleteProgram(this.vectorProgram.program);
+    }
+
+    if (this.modelProgram) {
+      this.gl.deleteProgram(this.modelProgram.program);
+    }
+
+    if (this.debugModel) {
+      this.gl.deleteVertexArray(this.debugModel.vao);
+      this.gl.deleteBuffer(this.debugModel.vertexBuffer);
+      this.gl.deleteBuffer(this.debugModel.indexBuffer);
     }
 
     if (this.vectorLines) {
@@ -282,6 +312,21 @@ export class WebGL2Renderer implements Renderer {
     this.gl.drawArrays(this.gl.LINES, 0, this.vectorLines.vertexCount);
     this.gl.disable(this.gl.BLEND);
     this.gl.enable(this.gl.DEPTH_TEST);
+  }
+
+  private renderDebugModel(projection: Float32Array, view: Float32Array): void {
+    if (!this.gl || !this.modelProgram || !this.debugModel || !this.debugModelVisible) {
+      return;
+    }
+
+    this.gl.useProgram(this.modelProgram.program);
+    this.gl.disable(this.gl.CULL_FACE);
+    this.gl.uniformMatrix4fv(this.modelProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.modelProgram.uView, false, view);
+    this.gl.uniformMatrix4fv(this.modelProgram.uModel, false, identityMatrix());
+    this.gl.bindVertexArray(this.debugModel.vao);
+    this.gl.drawElements(this.gl.TRIANGLES, this.debugModel.indexCount, this.gl.UNSIGNED_SHORT, 0);
+    this.gl.enable(this.gl.CULL_FACE);
   }
 
   private ensureTileEntry(tile: QuadtreeTile): TileEntry {
@@ -407,6 +452,37 @@ function createVectorProgram(gl: WebGL2RenderingContext): VectorProgram {
   return { program, uProjection, uView, uModel, uCameraPosition };
 }
 
+function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, modelVertexShader);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, modelFragmentShader);
+  const program = gl.createProgram();
+
+  if (!program) {
+    throw new Error("Unable to create WebGL2 model program");
+  }
+
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.bindAttribLocation(program, 0, "position");
+  gl.linkProgram(program);
+  gl.deleteShader(vertex);
+  gl.deleteShader(fragment);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 model program");
+  }
+
+  const uProjection = gl.getUniformLocation(program, "uProjection");
+  const uView = gl.getUniformLocation(program, "uView");
+  const uModel = gl.getUniformLocation(program, "uModel");
+
+  if (!uProjection || !uView || !uModel) {
+    throw new Error("Missing WebGL2 model uniform");
+  }
+
+  return { program, uProjection, uView, uModel };
+}
+
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
 
@@ -493,6 +569,59 @@ function uploadTileMesh(
   };
 }
 
+function uploadSimpleMesh(
+  gl: WebGL2RenderingContext,
+  mesh: { vertices: Float32Array; indices: Uint16Array },
+): GpuMesh {
+  const vao = gl.createVertexArray();
+  const vertexBuffer = gl.createBuffer();
+  const indexBuffer = gl.createBuffer();
+
+  if (!vao || !vertexBuffer || !indexBuffer) {
+    throw new Error("Unable to allocate WebGL2 simple mesh");
+  }
+
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+
+  return {
+    vao,
+    vertexBuffer,
+    indexBuffer,
+    indexCount: mesh.indices.length,
+  };
+}
+
+function createDebugModelMesh(ellipsoid = Ellipsoid.WGS84): { vertices: Float32Array; indices: Uint16Array } {
+  const lon = 12.5 * (Math.PI / 180);
+  const lat = 42.5 * (Math.PI / 180);
+  const maxRadius = ellipsoid.maximumRadius;
+  const center = scalePosition(ellipsoid.cartographicToCartesian({ lon, lat, height: 90000 }), maxRadius);
+  const up = normalize(center);
+  const east = normalize(cross([0, 1, 0], up));
+  const north = normalize(cross(up, east));
+  const baseSize = 0.022;
+  const height = 0.07;
+  const baseCenter = add(center, scale(up, 0.012));
+  const vertices = [
+    ...add(add(baseCenter, scale(east, -baseSize)), scale(north, -baseSize)),
+    ...add(add(baseCenter, scale(east, baseSize)), scale(north, -baseSize)),
+    ...add(add(baseCenter, scale(east, baseSize)), scale(north, baseSize)),
+    ...add(add(baseCenter, scale(east, -baseSize)), scale(north, baseSize)),
+    ...add(baseCenter, scale(up, height)),
+  ];
+
+  return {
+    vertices: new Float32Array(vertices),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3, 0, 4, 1, 1, 4, 2, 2, 4, 3, 3, 4, 0]),
+  };
+}
+
 function uploadLineMesh(
   gl: WebGL2RenderingContext,
   lines: readonly (readonly [number, number])[][],
@@ -549,6 +678,10 @@ function pushLineVertex(
   });
 
   vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
+}
+
+function scalePosition(position: Vec3, maxRadius: number): [number, number, number] {
+  return [position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius];
 }
 
 function identityMatrix(): Float32Array {
