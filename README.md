@@ -112,15 +112,14 @@ const hit = viewer.pick({ clientX, clientY });
 
 ## Demo pubblica da GitHub
 
+Demo pubblica:
+
+https://ianes1978.github.io/OrbixJS/
+
 Il repository include un workflow GitHub Actions in `.github/workflows/deploy-demo.yml`.
 
-Quando il progetto sara' su GitHub:
-
-- abilita GitHub Pages dalle impostazioni del repository
-- scegli GitHub Actions come sorgente di deploy
-- fai push su `main`
-
-Il workflow esegue `npm ci`, `npm test`, `npm run build` e pubblica la cartella `dist` come demo statica.
+GitHub Pages e' configurato per usare GitHub Actions come sorgente di deploy.
+Ogni push su `master` o `main` esegue `npm ci`, `npm test`, `npm run build` e pubblica la cartella `dist` come demo statica.
 
 ## Uso come libreria
 
