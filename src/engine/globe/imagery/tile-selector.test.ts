@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CameraTileSelector, selectLevel, selectRadius } from "./tile-selector";
+import { CameraTileSelector, clampLevel, selectLevel, selectRadius } from "./tile-selector";
 
 describe("CameraTileSelector", () => {
   it("selects LOD from camera distance", () => {
@@ -25,6 +25,14 @@ describe("CameraTileSelector", () => {
 
     expect(selection.level).toBe(6);
     expect(selection.tiles).toHaveLength(121);
+  });
+
+  it("clamps selected LOD to layer metadata", () => {
+    const selector = new CameraTileSelector({ minLevel: 3, maxLevel: 4 });
+
+    expect(selector.select(0, 0, 4).level).toBe(3);
+    expect(selector.select(0, 0, 1.1).level).toBe(4);
+    expect(clampLevel(6, { maxLevel: 5 })).toBe(5);
   });
 
   it("selects larger coverage radii for visible LOD overlays", () => {

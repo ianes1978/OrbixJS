@@ -11,6 +11,9 @@ export type DataSourceDescriptor = {
   crs?: string;
   attribution?: string;
   license?: string;
+  minLevel?: number;
+  maxLevel?: number;
+  tileSize?: number;
 };
 
 type RawDataCatalog = {
@@ -26,6 +29,9 @@ type RawDataSourceDescriptor = {
   crs?: unknown;
   attribution?: unknown;
   license?: unknown;
+  minLevel?: unknown;
+  maxLevel?: unknown;
+  tileSize?: unknown;
 };
 
 export function parseDataCatalog(json: unknown): DataCatalog {
@@ -76,6 +82,9 @@ function parseSource(value: unknown, index: number): DataSourceDescriptor {
     crs: optionalString(source.crs, `catalog.sources[${index}].crs`),
     attribution: optionalString(source.attribution, `catalog.sources[${index}].attribution`),
     license: optionalString(source.license, `catalog.sources[${index}].license`),
+    minLevel: optionalNonNegativeInteger(source.minLevel, `catalog.sources[${index}].minLevel`),
+    maxLevel: optionalNonNegativeInteger(source.maxLevel, `catalog.sources[${index}].maxLevel`),
+    tileSize: optionalPositiveInteger(source.tileSize, `catalog.sources[${index}].tileSize`),
   };
 }
 
@@ -101,4 +110,28 @@ function optionalString(value: unknown, path: string): string | undefined {
   }
 
   return expectString(value, path);
+}
+
+function optionalNonNegativeInteger(value: unknown, path: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Invalid non-negative integer at ${path}`);
+  }
+
+  return value;
+}
+
+function optionalPositiveInteger(value: unknown, path: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`Invalid positive integer at ${path}`);
+  }
+
+  return value;
 }

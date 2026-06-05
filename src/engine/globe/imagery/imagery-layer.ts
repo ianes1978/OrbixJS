@@ -2,6 +2,7 @@ import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
 import { CameraTileSelector } from "./tile-selector";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { type RasterTileProvider } from "./tile-provider";
+import { type CameraTileSelectorOptions } from "./tile-selector";
 
 export type ImageryTexture = {
   image: HTMLCanvasElement;
@@ -12,6 +13,8 @@ export type ImageryTexture = {
 export type ImageryLayerOptions = {
   onTileReady?: (tile: QuadtreeTile, image: HTMLImageElement) => void;
   onTileError?: (tile: QuadtreeTile, error: unknown) => void;
+  minLevel?: number;
+  maxLevel?: number;
 };
 
 export type ImageryLayerStats = {
@@ -24,7 +27,7 @@ export type ImageryLayerStats = {
 
 export class ImageryLayer {
   private readonly tiling = new WebMercatorTilingScheme();
-  private readonly selector = new CameraTileSelector();
+  private readonly selector: CameraTileSelector;
   private readonly active = new Set<string>();
   private readonly loaded = new Set<string>();
   private readonly pending = new Set<string>();
@@ -33,7 +36,9 @@ export class ImageryLayer {
     readonly provider: RasterTileProvider,
     readonly level = 2,
     private readonly options: ImageryLayerOptions = {},
-  ) {}
+  ) {
+    this.selector = new CameraTileSelector(layerSelectorOptions(options));
+  }
 
   update(lon: number, lat: number, cameraDistance: number): ImageryLayerStats {
     const selection = this.selector.select(lon, lat, cameraDistance);
@@ -126,4 +131,8 @@ export class ImageryLayer {
       expectedTiles: tiles.length,
     };
   }
+}
+
+function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): CameraTileSelectorOptions {
+  return { minLevel, maxLevel };
 }

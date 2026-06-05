@@ -6,11 +6,18 @@ export type TileSelection = {
   tiles: QuadtreeTile[];
 };
 
+export type CameraTileSelectorOptions = {
+  minLevel?: number;
+  maxLevel?: number;
+};
+
 export class CameraTileSelector {
   private readonly tiling = new WebMercatorTilingScheme();
 
+  constructor(private readonly options: CameraTileSelectorOptions = {}) {}
+
   select(lon: number, lat: number, cameraDistance: number): TileSelection {
-    const level = selectLevel(cameraDistance);
+    const level = clampLevel(selectLevel(cameraDistance), this.options);
     const count = this.tiling.tileCount(level);
     const center = this.tiling.positionToTileXY(lon, lat, level);
     const radius = selectRadius(level);
@@ -32,6 +39,10 @@ export class CameraTileSelector {
 
     return { level, tiles };
   }
+}
+
+export function clampLevel(level: number, { minLevel = 0, maxLevel = Number.POSITIVE_INFINITY }: CameraTileSelectorOptions = {}): number {
+  return Math.min(maxLevel, Math.max(minLevel, level));
 }
 
 export function selectLevel(cameraDistance: number): number {

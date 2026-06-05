@@ -301,7 +301,12 @@ async function loadDemoProject(): Promise<void> {
       }
 
       if (layer.type === "imagery-xyz" && source.type === "imagery-xyz") {
-        viewer.imagery.addXYZLayer({ url: source.url, level: 2 });
+        viewer.imagery.addXYZLayer({
+          url: source.url,
+          level: source.minLevel ?? 2,
+          minLevel: source.minLevel,
+          maxLevel: source.maxLevel,
+        });
       } else if (layer.type === "tileset" && source.type === "tileset") {
         await viewer.addTileset({ url: demoAssetUrl(source.url), id: source.title, scale: 180000 });
       }

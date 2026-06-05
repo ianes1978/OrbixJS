@@ -16,18 +16,20 @@ export class ImageryLayerCollection {
 
   constructor(private readonly options: ImageryLayerCollectionOptions) {}
 
-  addXYZLayer(options: XYZTileProviderOptions & { level?: number }): ImageryLayer {
+  addXYZLayer(options: XYZTileProviderOptions & { level?: number; minLevel?: number; maxLevel?: number }): ImageryLayer {
     const provider = new XYZTileProvider(options);
-    return this.addLayer(provider, options.level);
+    return this.addLayer(provider, options);
   }
 
-  addWMTSLayer(options: WMTSTileProviderOptions & { level?: number }): ImageryLayer {
+  addWMTSLayer(options: WMTSTileProviderOptions & { level?: number; minLevel?: number; maxLevel?: number }): ImageryLayer {
     const provider = new WMTSTileProvider(options);
-    return this.addLayer(provider, options.level);
+    return this.addLayer(provider, options);
   }
 
-  private addLayer(provider: RasterTileProvider, level = 2): ImageryLayer {
-    const layer = new ImageryLayer(provider, level, {
+  private addLayer(provider: RasterTileProvider, options: { level?: number; minLevel?: number; maxLevel?: number }): ImageryLayer {
+    const layer = new ImageryLayer(provider, options.level ?? 2, {
+      minLevel: options.minLevel,
+      maxLevel: options.maxLevel,
       onTileReady: (tile, image) => this.options.onTileReady?.(tile, image),
       onTileError: (_tile, error) => this.options.onLayerError?.(error),
     });

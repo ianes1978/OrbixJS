@@ -7,6 +7,9 @@
       "title": "Esri World Imagery fallback",
       "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       "crs": "EPSG:3857",
+      "minLevel": 2,
+      "maxLevel": 6,
+      "tileSize": 256,
       "attribution": "Esri World Imagery"
     },
     {
