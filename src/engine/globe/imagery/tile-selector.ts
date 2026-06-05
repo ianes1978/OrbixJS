@@ -17,7 +17,7 @@ export class CameraTileSelector {
   constructor(private readonly options: CameraTileSelectorOptions = {}) {}
 
   select(lon: number, lat: number, cameraDistance: number): TileSelection {
-    const level = clampLevel(selectLevel(cameraDistance), this.options);
+    const level = clampLevel(selectLevel(cameraDistance, this.options.maxLevel), this.options);
     const count = this.tiling.tileCount(level);
     const center = this.tiling.positionToTileXY(lon, lat, level);
     const radius = selectRadius(level);
@@ -45,7 +45,16 @@ export function clampLevel(level: number, { minLevel = 0, maxLevel = Number.POSI
   return Math.min(maxLevel, Math.max(minLevel, level));
 }
 
-export function selectLevel(cameraDistance: number): number {
+export function selectLevel(cameraDistance: number, maxLevel = 9): number {
+  if (cameraDistance < 1.18 && maxLevel > 6) {
+    const highLodStartDistance = 1.18;
+    const minimumCameraDistance = 1.08;
+    const step = (highLodStartDistance - minimumCameraDistance) / (maxLevel - 5);
+    const clampedDistance = Math.max(cameraDistance, minimumCameraDistance);
+    const extraLevels = Math.floor((highLodStartDistance - clampedDistance) / step + 1e-9);
+    return Math.min(maxLevel, 6 + Math.max(0, extraLevels));
+  }
+
   if (cameraDistance < 1.18) {
     return 6;
   }
