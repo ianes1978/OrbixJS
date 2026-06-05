@@ -44,7 +44,7 @@ export const roadmap: RoadmapPhase[] = [
     step: "Fase 4",
     title: "glTF",
     items: [
-      { label: "Caricamento GLB", done: false },
+      { label: "Caricamento GLB", done: true },
       { label: "Materiali PBR", done: false },
       { label: "Texture", done: false },
       { label: "Posizionamento geografico", done: false },
