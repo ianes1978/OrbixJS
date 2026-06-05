@@ -1,0 +1,51 @@
+export const globeVertexShader = `#version 300 es
+in vec3 position;
+in vec3 normal;
+in vec3 geodeticNormal;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform mat4 uModel;
+
+out vec3 vNormal;
+out vec3 vGeodeticNormal;
+out vec3 vPosition;
+
+void main() {
+  vec4 worldPosition = uModel * vec4(position, 1.0);
+  vPosition = worldPosition.xyz;
+  vNormal = mat3(uModel) * normal;
+  vGeodeticNormal = geodeticNormal;
+  gl_Position = uProjection * uView * worldPosition;
+}
+`;
+
+export const globeFragmentShader = `#version 300 es
+precision highp float;
+
+in vec3 vNormal;
+in vec3 vGeodeticNormal;
+in vec3 vPosition;
+
+out vec4 outColor;
+
+void main() {
+  vec3 normal = normalize(vNormal);
+  vec3 geo = normalize(vGeodeticNormal);
+  vec3 light = normalize(vec3(-0.25, 0.52, 0.82));
+  float diffuse = max(dot(normal, light), 0.0);
+  float latitudeBands = smoothstep(-0.3, 0.45, sin(geo.y * 8.0));
+  float longitudeBands = smoothstep(-0.25, 0.35, cos(geo.x * 9.0 + geo.z * 4.0));
+  float landMask = latitudeBands * longitudeBands;
+  vec3 ocean = vec3(0.025, 0.22, 0.32);
+  vec3 land = vec3(0.18, 0.48, 0.30);
+  vec3 grid = vec3(0.42, 0.78, 0.82);
+  vec3 base = mix(ocean, land, landMask * 0.55);
+  float meridian = smoothstep(0.985, 1.0, abs(sin(atan(geo.z, geo.x) * 12.0)));
+  float parallel = smoothstep(0.985, 1.0, abs(sin(asin(geo.y) * 12.0)));
+  float line = max(meridian, parallel) * 0.18;
+  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
+  vec3 color = mix(base, grid, line) * (0.28 + diffuse * 0.85) + rim * vec3(0.28, 0.72, 0.9);
+  outColor = vec4(color, 1.0);
+}
+`;

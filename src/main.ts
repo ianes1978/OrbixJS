@@ -1,5 +1,5 @@
 import "./styles.css";
-import { createGlobeDemo } from "./renderer/globe";
+import { GeoViewer } from "./engine/geo-viewer";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -12,11 +12,12 @@ app.innerHTML = `
   <main class="shell">
     <section class="workspace" aria-label="OrbixJS development viewer">
       <div class="viewport">
-        <canvas id="globe" aria-label="WebGL2 globe preview"></canvas>
+        <div id="globe" class="globe-host"></div>
         <div class="hud">
           <div>
             <span class="eyebrow">MVP 1</span>
             <h1>OrbixJS</h1>
+            <p class="hint">Drag per orbitare, rotellina per zoomare</p>
           </div>
           <div class="metric">
             <span>Renderer</span>
@@ -91,11 +92,11 @@ list.innerHTML = roadmap
   })
   .join("");
 
-const canvas = document.querySelector<HTMLCanvasElement>("#globe");
+const globeHost = document.querySelector<HTMLElement>("#globe");
 
-if (!canvas) {
-  throw new Error("Missing globe canvas");
+if (!globeHost) {
+  throw new Error("Missing globe host");
 }
 
-const demo = createGlobeDemo(canvas);
-rendererStatus.textContent = demo.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
+const viewer = new GeoViewer({ container: globeHost, renderer: "webgl2" });
+rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";

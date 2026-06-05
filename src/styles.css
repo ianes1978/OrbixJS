@@ -50,10 +50,24 @@ select {
   background: #05090b;
 }
 
-canvas {
+.globe-host,
+.geo-canvas {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.globe-host {
+  min-height: inherit;
+}
+
+.geo-canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.geo-canvas:active {
+  cursor: grabbing;
 }
 
 .hud {
@@ -86,6 +100,13 @@ h2 {
 
 h1 {
   font-size: clamp(2.4rem, 7vw, 6rem);
+}
+
+.hint {
+  max-width: 280px;
+  margin: 10px 0 0;
+  color: #aebdc0;
+  font-size: 0.95rem;
 }
 
 h2 {

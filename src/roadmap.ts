@@ -14,9 +14,9 @@ export const roadmap: RoadmapPhase[] = [
     items: [
       { label: "Ambiente Vite + TypeScript", done: true },
       { label: "Renderer WebGL2 iniziale", done: true },
-      { label: "Canvas navigabile", done: false },
-      { label: "Ellissoide WGS84", done: false },
-      { label: "Scene graph", done: false },
+      { label: "Canvas navigabile", done: true },
+      { label: "Ellissoide WGS84", done: true },
+      { label: "Scene graph", done: true },
     ],
   },
   {

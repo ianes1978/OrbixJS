@@ -7,6 +7,7 @@ Ambiente di sviluppo per il piano in `Plan.md`.
 ```powershell
 npm install
 npm run dev
+npm test
 npm run build
 ```
 
@@ -31,3 +32,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-dev.ps1
 ```
 
 La pagina mostra una prima preview WebGL2 del globo e una roadmap aggiornata dalle fasi MVP del piano.
+
+## Fase 1
+
+La Fase 1 include:
+
+- renderer WebGL2
+- scene graph minimale
+- camera orbitale
+- input mouse per orbitare e zoomare
+- ellissoide WGS84
+- globo vuoto navigabile
+
+I test coprono math, geodesia WGS84, camera, scene graph e mesh ellissoidale.
