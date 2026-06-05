@@ -72,7 +72,7 @@ describe("OrbitCamera", () => {
     far.pan(100, 0);
 
     expect(near.target[0]).toBeGreaterThan(0);
-    expect(far.target[0]).toBeGreaterThan(near.target[0] * 100);
+    expect(far.target[0]).toBeGreaterThan(near.target[0] * 1000);
   });
 
   it("keeps pan target near the globe", () => {

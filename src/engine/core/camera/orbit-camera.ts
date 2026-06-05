@@ -62,7 +62,8 @@ export class OrbitCamera {
     const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
     const altitude = Math.max(this.distance - 1, this.minDistance - 1);
-    const distanceScale = Math.max(altitude, 0.002) * 0.004;
+    const normalizedAltitude = clamp(altitude / 2.2, 0, 1);
+    const distanceScale = 0.000004 + Math.pow(normalizedAltitude, 1.7) * 0.008;
     const movement = add(scale(right, deltaX * distanceScale), scale(up, deltaY * distanceScale));
     const nextTarget = add(this.target, movement);
     const targetLimit = 0.85;
