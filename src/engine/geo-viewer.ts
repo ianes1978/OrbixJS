@@ -1,5 +1,6 @@
 import { OrbitCamera } from "./core/camera/orbit-camera";
 import { type CameraFlyToOptions } from "./core/camera/orbit-camera";
+import { sunDirectionFromDate } from "./core/astro/sun-position";
 import { PointerController } from "./core/events/pointer-controller";
 import { Ellipsoid } from "./core/geodesy/ellipsoid";
 import { invert, multiply, transformPoint } from "./core/math/mat4";
@@ -18,6 +19,7 @@ import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 export type GeoViewerOptions = {
   container: HTMLElement | string;
   renderer?: "webgl2";
+  date?: Date;
   onImageryStats?: (stats: {
     level: number;
     activeTiles: number;
@@ -87,6 +89,7 @@ export class GeoViewer {
   private lastActiveTileIds: string[] = [];
   private frame = 0;
   private disposed = false;
+  private date: Date;
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
@@ -110,6 +113,8 @@ export class GeoViewer {
     container.append(this.canvas);
 
     this.renderer = new WebGL2Renderer(this.canvas);
+    this.date = new Date(options.date ?? Date.now());
+    this.renderer.setSunDirection(sunDirectionFromDate(this.date));
     this.imagery = new ImageryLayerCollection({
       onTextureReady: (texture) => {
         try {
@@ -161,6 +166,15 @@ export class GeoViewer {
   setDebugModelVisible(enabled: boolean): void {
     this.debugModelVisible = enabled;
     this.renderer.setDebugModelVisible(enabled);
+  }
+
+  setDate(date: Date): void {
+    this.date = new Date(date);
+    this.renderer.setSunDirection(sunDirectionFromDate(this.date));
+  }
+
+  getDate(): Date {
+    return new Date(this.date);
   }
 
   setDebugModelMesh(mesh: {

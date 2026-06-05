@@ -22,6 +22,7 @@ type GlobeProgram = {
   uModel: WebGLUniformLocation;
   uImageryEnabled: WebGLUniformLocation;
   uImagery: WebGLUniformLocation;
+  uSunDirection: WebGLUniformLocation;
 };
 
 type TileProgram = {
@@ -30,6 +31,7 @@ type TileProgram = {
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
   uImagery: WebGLUniformLocation;
+  uSunDirection: WebGLUniformLocation;
 };
 
 type VectorProgram = {
@@ -48,6 +50,7 @@ type ModelProgram = {
   uBaseColorFactor: WebGLUniformLocation;
   uTextureEnabled: WebGLUniformLocation;
   uBaseColorTexture: WebGLUniformLocation;
+  uSunDirection: WebGLUniformLocation;
 };
 
 type GpuMesh = {
@@ -89,6 +92,7 @@ export class WebGL2Renderer implements Renderer {
   private vectorLinesVisible = false;
   private debugModelVisible = false;
   private debugModelBaseColorFactor: [number, number, number, number] = [1, 0.75, 0.15, 1];
+  private sunDirection: Vec3 = normalize([-0.25, 0.52, 0.82]);
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
 
@@ -173,6 +177,10 @@ export class WebGL2Renderer implements Renderer {
 
   setDebugModelVisible(visible: boolean): void {
     this.debugModelVisible = visible;
+  }
+
+  setSunDirection(direction: Vec3): void {
+    this.sunDirection = normalize(direction);
   }
 
   setDebugModelMesh(mesh: {
@@ -267,6 +275,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
     this.gl.uniform1i(this.program.uImagery, 0);
     this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
+    this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
     this.gl.bindVertexArray(this.globe.vao);
 
     for (const node of scene.visibleNodes) {
@@ -342,6 +351,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
+    this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
 
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
@@ -393,6 +403,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.modelProgram.uModel, false, identityMatrix());
     this.gl.uniform4fv(this.modelProgram.uBaseColorFactor, this.debugModelBaseColorFactor);
     this.gl.uniform1i(this.modelProgram.uTextureEnabled, this.debugModel.textureEnabled ? 1 : 0);
+    this.gl.uniform3fv(this.modelProgram.uSunDirection, this.sunDirection);
     this.gl.activeTexture(this.gl.TEXTURE0);
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.debugModel.texture ?? null);
     this.gl.uniform1i(this.modelProgram.uBaseColorTexture, 0);
@@ -450,12 +461,13 @@ function createGlobeProgram(gl: WebGL2RenderingContext): GlobeProgram {
   const uModel = gl.getUniformLocation(program, "uModel");
   const uImageryEnabled = gl.getUniformLocation(program, "uImageryEnabled");
   const uImagery = gl.getUniformLocation(program, "uImagery");
+  const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
 
-  if (!uProjection || !uView || !uModel || !uImageryEnabled || !uImagery) {
+  if (!uProjection || !uView || !uModel || !uImageryEnabled || !uImagery || !uSunDirection) {
     throw new Error("Missing WebGL2 uniform");
   }
 
-  return { program, uProjection, uView, uModel, uImageryEnabled, uImagery };
+  return { program, uProjection, uView, uModel, uImageryEnabled, uImagery, uSunDirection };
 }
 
 function createTileProgram(gl: WebGL2RenderingContext): TileProgram {
@@ -484,12 +496,13 @@ function createTileProgram(gl: WebGL2RenderingContext): TileProgram {
   const uView = gl.getUniformLocation(program, "uView");
   const uModel = gl.getUniformLocation(program, "uModel");
   const uImagery = gl.getUniformLocation(program, "uImagery");
+  const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
 
-  if (!uProjection || !uView || !uModel || !uImagery) {
+  if (!uProjection || !uView || !uModel || !uImagery || !uSunDirection) {
     throw new Error("Missing WebGL2 tile uniform");
   }
 
-  return { program, uProjection, uView, uModel, uImagery };
+  return { program, uProjection, uView, uModel, uImagery, uSunDirection };
 }
 
 function createVectorProgram(gl: WebGL2RenderingContext): VectorProgram {
@@ -550,12 +563,30 @@ function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
   const uBaseColorFactor = gl.getUniformLocation(program, "uBaseColorFactor");
   const uTextureEnabled = gl.getUniformLocation(program, "uTextureEnabled");
   const uBaseColorTexture = gl.getUniformLocation(program, "uBaseColorTexture");
+  const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
 
-  if (!uProjection || !uView || !uModel || !uBaseColorFactor || !uTextureEnabled || !uBaseColorTexture) {
+  if (
+    !uProjection ||
+    !uView ||
+    !uModel ||
+    !uBaseColorFactor ||
+    !uTextureEnabled ||
+    !uBaseColorTexture ||
+    !uSunDirection
+  ) {
     throw new Error("Missing WebGL2 model uniform");
   }
 
-  return { program, uProjection, uView, uModel, uBaseColorFactor, uTextureEnabled, uBaseColorTexture };
+  return {
+    program,
+    uProjection,
+    uView,
+    uModel,
+    uBaseColorFactor,
+    uTextureEnabled,
+    uBaseColorTexture,
+    uSunDirection,
+  };
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {

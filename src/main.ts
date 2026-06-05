@@ -41,6 +41,10 @@ app.innerHTML = `
           <span>Picking</span>
           <strong id="picking-status">click globo</strong>
         </div>
+        <label class="metric wide scene-date">
+          <span>Data sole</span>
+          <input id="scene-date" type="datetime-local" value="2026-06-05T12:00" />
+        </label>
         <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
           LOD overlay
         </button>
@@ -88,6 +92,7 @@ const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
+const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 
 if (
@@ -102,6 +107,7 @@ if (
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
+  !sceneDateInput ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
@@ -158,6 +164,7 @@ const imageryStatusElement = imageryStatus;
 const viewer = new GeoViewer({
   container: globeHost,
   renderer: "webgl2",
+  date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
     const mode = debugTileOverlay ? "overlay" : "base";
@@ -172,6 +179,15 @@ const viewer = new GeoViewer({
 });
 rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
 imageryStatus.textContent = "Ortofoto";
+
+sceneDateInput.addEventListener("change", () => {
+  const date = new Date(sceneDateInput.value);
+
+  if (!Number.isNaN(date.getTime())) {
+    viewer.setDate(date);
+  }
+});
+
 void loadDemoProject();
 viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").catch(() => {
   coastlineToggle.textContent = "Coastline -";

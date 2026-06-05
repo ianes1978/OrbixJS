@@ -24,7 +24,8 @@ OrbixJS deve diventare un motore geospaziale 3D web capace di:
 - renderizzare un globo WGS84 con imagery e terrain reale
 - diventare uno strumento GIS 3D, non solo un viewer
 - supportare editing geospaziale 2D/3D: punti, linee, poligoni, volumi, attributi e snapping
-- gestire layer, feature, selezione, query, filtri, stili e transazioni
+- gestire layer, feature, selezione, query, filtri, visibilita, opacita, blending, stili e transazioni
+- pianificare e riprodurre voli in soggettiva con camera paths, keyframe e transizioni fluide
 - supportare terrain 3D con LOD, normali, skirt, morphing e picking
 - caricare e visualizzare glTF/GLB in coordinate geografiche
 - implementare progressivamente OGC 3D Tiles
@@ -68,10 +69,10 @@ OrbixJS deve puntare a:
 | --- | --- | --- |
 | Globo | WGS84 globale maturo | WGS84 modulare, WebGL2/WebGPU |
 | Terrain | terrain globale, exaggeration, materiali | terrain provider astratto, mesh LOD, COG/OGC API Tiles/heightmap |
-| Imagery | molti provider e layer multipli | XYZ, WMTS, OGC API Tiles, layer blending e color controls |
+| Imagery | molti provider e layer multipli | XYZ, WMTS, OGC API Tiles, layer state, blending e color controls |
 | 3D Tiles | streaming, styling, point cloud, metadata | subset 1.0 solido, poi 1.1, metadata, implicit tiling, styling |
 | glTF | PBR, animazioni, skins, morph targets | PBR prima, poi animazioni e feature avanzate |
-| Camera | flyTo, controller maturi, scene modes | camera 3D moderna, terrain collision, fly paths fluidi |
+| Camera | flyTo, controller maturi, scene modes | camera 3D moderna, terrain collision, voli in soggettiva, camera paths fluidi |
 | Picking | primitive, terrain, 3D Tiles features | picking unificato: globe, terrain, mesh, feature, metadata |
 | Data layers | GeoJSON, KML, CZML, entities | GeoJSON prima, entity layer opzionale, CZML/KML post-core |
 | GIS editing | non e il focus principale del viewer | editing 2D/3D, snapping, attributi, transazioni, validazione |
@@ -112,6 +113,9 @@ viewer.terrain.setProvider(provider);
 viewer.scene.addTileset({ url: "/tileset.json" });
 viewer.scene.addGltf({ url: "/model.glb", lon, lat, height });
 viewer.camera.flyTo({ lon, lat, height });
+const path = viewer.camera.paths.create({ mode: "first-person" });
+path.addKeyframe({ lon, lat, height, heading, pitch, duration: 3 });
+await viewer.camera.paths.play(path, { easing: "smoothstep" });
 const hit = viewer.pick({ x, y });
 
 const edit = viewer.editing.startSession();
@@ -181,6 +185,192 @@ Per il terrain non conviene aspettare un unico standard perfetto. Conviene proge
 
 Il motore deve convertire queste sorgenti in una pipeline comune di tile terrain.
 
+### CRS e sistemi di coordinate sono core
+
+OrbixJS deve supportare i CRS piu comuni in ambito GIS e Digital Twin. Non basta supportare WGS84 e Web Mercator: ogni layer deve dichiarare il proprio CRS, il motore deve trasformare i dati in modo verificabile e la GPU deve lavorare in coordinate locali stabili.
+
+Supporto target iniziale:
+
+- `EPSG:4326` WGS84 geografico, con gestione esplicita dell'axis order
+- `EPSG:4979` WGS84 3D per coordinate geografiche con quota ellissoidica
+- `EPSG:4978` WGS84 geocentrico/ECEF come base globale interna
+- `EPSG:3857` Web Mercator per tile web, XYZ e molti servizi demo
+- UTM WGS84: famiglia `EPSG:326xx` e `EPSG:327xx`, con priorita a `EPSG:32632` e `EPSG:32633` per l'Italia
+- ETRS89 / UTM Europa: famiglia `EPSG:258xx`, con priorita a `EPSG:25832` per Alto Adige e ortofoto 2023
+- CRS italiani storici/comuni dove utili per interoperabilita GIS, per esempio Gauss-Boaga `EPSG:3003` e `EPSG:3004`
+- sistemi locali di progetto per Digital Twin, cantieri, edifici, BIM e Blender, basati su origine georeferenziata e frame ENU
+
+Componenti da progettare:
+
+- `CrsDefinition` con authority, code, unita, axis order, extent, datum e datum verticale quando noto
+- `CrsRegistry` con definizioni built-in e possibilita di registrare CRS custom/proj string/WKT
+- `CoordinateTransformer` per trasformazioni punto, bounding box, tile extent e geometrie
+- `TileMatrixSet` generico per WMTS/OGC Tiles non Web Mercator
+- `ProjectFrame` o `LocalFrame` per coordinate locali ad alta precisione in GPU, editing e export Blender
+- gestione delle quote: ellissoidica, ortometrica, terrain height e offset locali dichiarati per layer
+- test round-trip e tolleranze numeriche per ogni CRS supportato
+
+Regola architetturale: il renderer non deve conoscere direttamente il CRS sorgente. Imagery, terrain, feature, 3D Tiles e Digital Twin asset entrano con CRS dichiarato, vengono trasformati in WGS84/ECEF o nel frame locale attivo, e solo dopo arrivano alla pipeline GPU.
+
+### Layer state, blending e compositing
+
+La rappresentazione dei layer deve essere uniforme tra imagery, terrain overlay, feature vettoriali, meteo, Digital Twin overlay e debug layer. Ogni layer deve avere uno stato visuale dichiarato e serializzabile, non parametri sparsi dentro provider diversi.
+
+Componenti chiave:
+
+- `LayerState` per stato operativo: `visible`, `opacity`, `zIndex`, `enabled`, `locked`, `pickable`
+- `LayerStyle` per resa visiva: `blendMode`, color controls, filtri, maschere e classificazione
+- `LayerMetadata` per titolo, descrizione, sorgente, CRS, licenza, tempo, legenda e attribution
+- `LayerGroup` per accendere/spegnere gruppi, ordinare stack e gestire preset della demo
+- eventi `layer:change`, `layer:visibility`, `layer:style` per UI esterne e dashboard
+
+Blend mode target:
+
+- `normal`
+- `multiply`
+- `screen`
+- `overlay`
+- `add`
+- `subtract`
+- `lighten`
+- `darken`
+- `alpha`
+- `mask`
+
+Parametri visuali minimi:
+
+- `visible`
+- `opacity`
+- `blendMode`
+- `zIndex` o ordine nello stack
+- `minZoom` / `maxZoom`
+- `brightness`, `contrast`, `saturation`, `gamma`
+- `tintColor` e `colorRamp` per layer analitici
+- `timeRange` per layer meteo/time-dynamic
+- `legend` e `attribution`
+
+Nota renderer: `normal` e `alpha` possono usare blending tradizionale, ma `multiply`, `screen`, `overlay` e color controls richiedono un compositing pass o shader dedicati per essere coerenti tra WebGL2 e WebGPU. Il compositing deve dichiarare spazio colore, premultiplied alpha e ordine dei layer, altrimenti la stessa scena puo apparire diversa tra backend.
+
+### Formato progetto e sessione
+
+OrbixJS deve poter salvare, riaprire e condividere uno stato di lavoro completo. Senza un formato progetto, la demo resta una configurazione hardcoded e il GIS editor non diventa uno strumento operativo.
+
+Formato target:
+
+- `OrbixProject` come documento JSON versionato e validabile
+- `schemaVersion` e migrazioni tra versioni
+- CRS di progetto, `ProjectFrame`, origine locale e height reference
+- camera, preset vista, bookmarks, `CameraPath`, keyframe e voli in soggettiva
+- stack layer con sorgenti, ordine, `LayerState`, `LayerStyle`, legenda e attribution
+- riferimenti a catalogo dati, asset locali/remoti e output di preprocessing
+- terrain provider, imagery provider, 3D Tiles, glTF, feature layers, weather layers e Digital Twin layers
+- timeline, time range attivo, forecast step e stato animazioni
+- editing session opzionale: change set, undo/redo serializzabile, lock e dirty state
+- regole parametriche, parametri risolti e mapping feature -> mesh derivata
+- preferenze demo/UI salvabili fuori dal core, senza rendere il renderer dipendente dalla UI
+
+Formati pratici:
+
+- `.orbix.json` come formato leggibile e versionabile in Git
+- cartella progetto `.orbix/` per asset, cache metadata, thumbnail, manifest preprocessing e sidecar
+- pacchetto `.orbixpkg` futuro per condividere progetto, asset leggeri e manifest riproducibile
+
+Regola: il progetto salva riferimenti, metadata, regole e manifest; non deve duplicare asset pesanti se possono essere referenziati, rigenerati o scaricati in modo controllato.
+
+### Catalogo dati
+
+OrbixJS deve avere un catalogo dati per registrare, cercare, validare e riusare sorgenti geospaziali. Il catalogo evita che ogni layer sia configurato a mano e diventa il punto in cui si conservano licenza, attribution, CRS, extent, tempo, autenticazione e policy di cache.
+
+Componenti chiave:
+
+- `DataCatalog` per dataset registrati e sorgenti remote/locali
+- `DataSourceDescriptor` con tipo, URL, CRS, extent, time extent, layer id, formati, licenza e attribution
+- `CatalogProvider` per caricare cataloghi locali, JSON statici, servizi OGC e STAC
+- validazione capability: WMS, WMTS, WFS, WCS, OGC API - Features, OGC API - Tiles, OGC API - EDR, STAC
+- supporto file: GeoJSON, FlatGeobuf, GeoTIFF/COG, glTF/GLB, 3D Tiles, CityGML/IFC via preprocess
+- health check e preview: thumbnail, sample tile, legenda, bounding box, livelli zoom e time steps
+- gestione auth/cors/cors-proxy policy senza nasconderla dentro il renderer
+- tagging e preset: basemap, terrain, meteo, edifici, sottoservizi, sensori, debug
+
+Per la demo Alto Adige il catalogo deve includere almeno:
+
+- DTM 2,5m come dataset terrain/preprocess
+- Orthofoto 2023 come basemap WMTS `EPSG:25832`
+- eventuali layer debug: hillshade, slope, exposition, confini, preset camera
+- camera paths demo: sorvolo Bolzano, Dolomiti, Val Venosta, Brennero, Merano e volo terrain-follow
+- fallback imagery/terrain minimo per GitHub Pages
+
+### Preprocessing pipeline
+
+Molti dati GIS e Digital Twin non sono pronti per il rendering realtime nel browser. OrbixJS deve prevedere una pipeline di preprocessing riproducibile, anche se all'inizio minima, per trasformare dataset grandi o complessi in asset ottimizzati.
+
+Componenti chiave:
+
+- CLI `orbix-preprocess` o script equivalente per generare asset runtime
+- `PreprocessJob` descrivibile in JSON, versionato e rieseguibile
+- manifest output con input, hash, CRS, extent, risoluzione, tempo, licenza, tool version e parametri
+- cache deterministica: se input e parametri non cambiano, l'output non viene rigenerato
+- validazione NoData, range quote, tile coverage, attributi richiesti e CRS
+- output piccoli per demo GitHub e output piu pesanti fuori repository
+
+Job iniziali utili:
+
+- DTM/GeoTIFF/WCS/COG -> heightmap tiled, mesh terrain o formato terrain interno
+- hillshade/slope/aspect -> raster analitici per layer debug
+- WMTS/imagery -> manifest tile matrix, metadata e fallback preview
+- GeoJSON/FlatGeobuf -> feature tiles, spatial index e schema attributi
+- feature parametriche -> glTF/3D Tiles derivati, mantenendo regole e metadata
+- glTF/GLB -> compressione, texture resize, meshopt/Draco dove opportuno
+- 3D Tiles -> validazione tileset, bounding volumes, metadata e budget LOD
+- GRIB/NetCDF/Zarr meteo -> tile/texture temporali per vento, nuvole e precipitazione
+- thumbnail, legend e metadata summary per catalogo dati
+
+Regola: il preprocessing non sostituisce i dati sorgente. Produce asset runtime ripetibili e tracciabili, con provenance chiara.
+
+### Camera path planning e voli in soggettiva
+
+OrbixJS deve permettere di creare, modificare, salvare ed eseguire voli in soggettiva. La camera non deve essere solo un controllo interattivo o un `flyTo`: deve diventare uno strumento di regia tecnica per demo, analisi GIS, Digital Twin, ispezioni infrastrutturali e video esportabili.
+
+Componenti chiave:
+
+- `CameraPath` come sequenza versionata di keyframe, segmenti e vincoli
+- `CameraKeyframe` con posizione, orientamento, target/lookAt, FOV, timestamp/duration e metadata
+- `CameraTransition` con easing, durata, velocita, accelerazione e continuita tra segmenti
+- `CameraRig` per modalita orbitale, first-person, look-at target, follow feature e terrain-follow
+- `CameraPathEditor` opzionale sopra il core per creare, selezionare, spostare e riordinare keyframe
+- `CameraPlayback` con play, pause, stop, scrub, loop, reverse, speed multiplier e callbacks
+- salvataggio dei percorsi dentro `OrbixProject` e, per export, nel sidecar Blender/glTF
+
+Transizioni e interpolazione:
+
+- interpolazione posizione con lineare, Catmull-Rom, Bezier o spline geodesica
+- interpolazione orientamento con quaternion/slerp per evitare scatti
+- easing: linear, ease-in, ease-out, ease-in-out, smoothstep e custom curve
+- continuita su velocita e accelerazione per evitare cambi improvvisi
+- opzione "constant speed" lungo il percorso
+- eventi su timeline: trigger layer, meteo, annotazioni, highlight feature o cambio stile
+
+Vincoli per voli GIS/Digital Twin:
+
+- clearance minima sopra terrain e 3D Tiles
+- collision avoidance base con terrain/building dove disponibile
+- clamp/follow terrain con offset verticale
+- look-at su feature, asset Digital Twin, punto geospaziale o target animato
+- limiti su pitch/roll/FOV per evitare nausea e movimenti poco leggibili
+- smoothing quando cambiano LOD terrain o 3D Tiles durante il volo
+- fallback se un tile o un dataset non e ancora caricato
+
+Workflow target:
+
+- registrare un volo manuale e trasformarlo in keyframe editabili
+- disegnare un percorso su mappa/terrain e generare keyframe automatici
+- modificare quota, velocita, easing, target e pause in punti specifici
+- preview realtime con scrubber
+- esportare camera path per Blender, video render offline e presentazioni Digital Twin
+- usare preset demo: sorvolo valle, avvicinamento urbano, ispezione infrastruttura, volo meteo
+
+Regola: il percorso camera e dato di progetto, non animazione effimera. Deve essere salvabile, validabile, esportabile e rieseguibile in modo deterministico.
+
 ### Ray tracing: ambizione realistica
 
 WebGPU oggi e una base eccellente per compute e rendering moderno, ma il ray tracing hardware standard nel browser non va promesso come feature immediata. La strada giusta e:
@@ -224,12 +414,45 @@ Componenti chiave:
 - editing attributi con schema e validazione
 - validazione topologica: self-intersection, ring orientation, overlap, gap, containment
 - misure 3D: distanza, area, volume, profilo altimetrico, visibilita
-- supporto CRS e trasformazioni coordinate
+- supporto CRS per layer, trasformazioni coordinate, snapping e misure coerenti nel CRS di progetto
 - esportazione/importazione GeoJSON e, in seguito, GeoPackage/FlatGeobuf
 - adapter OGC API - Features per query e modifiche dove supportate
 - salvataggio remoto con conflitti, versioning e rollback
 
 Il principio: editing alto livello sopra primitive e data layers, mai dentro il renderer.
+
+### Modellazione parametrica da feature e metadati
+
+OrbixJS deve permettere di generare geometria 3D a partire da feature GIS, attributi e metadata. Questo e fondamentale per passare da "dati caricati" a "modello operativo": un poligono catastale puo diventare un edificio estruso, una linea puo diventare una strada o una tubazione, un punto puo istanziare un sensore, un albero, una lampada o un elemento BIM semplificato.
+
+Componenti chiave:
+
+- `ParametricFeatureRule` per collegare feature, metadata e generazione geometrica
+- `ParameterSchema` per dichiarare parametri, tipi, unita, default, domini e vincoli
+- expression binding tra attributi e parametri: `height`, `floors`, `roofType`, `usage`, `year`, `status`, `material`
+- generazione non distruttiva: la geometria derivata si aggiorna quando cambiano feature o metadata
+- preview interattiva prima del commit dentro `EditingSession`
+- cache della mesh generata con invalidazione per feature/rule/metadata
+- salvataggio della regola, non solo della mesh finale, per mantenere il modello modificabile
+
+Strumenti iniziali utili:
+
+- estrusione da poligono con altezza fissa, attributo o numero piani
+- estrusione con setback, offset, altezza minima/massima e base terrain-relative
+- generazione tetti: flat, gable, hip, shed e roof pitch da metadata
+- facade rules semplici: divisione per piani, finestre procedural, materiali per uso edificio
+- buffer 2D/3D e corridor generation da linee per strade, argini, piste, cavidotti e tubazioni
+- sweep lungo linea con profilo: pipe, tunnel, barriere, ringhiere, condotte, cavi
+- loft tra sezioni o profili per ponti, gallerie e strutture lineari
+- drape e conform to terrain per feature che seguono il DTM
+- cut/fill e volume analysis per scavi, riporti, bacini e opere di terra
+- instancing da punti con regole: alberi, pali luce, sensori, segnaletica, arredo urbano
+- labels e billboards guidati da attributi e stato operativo
+- conversione feature-to-3D Tiles/glTF per dataset derivati pesanti
+- vincoli parametrici: altezza massima da zoning, materiali ammessi, pendenza massima, distanza da vincoli
+- scenari what-if: cambiare parametri e confrontare volume, ombre, esposizione, visibilita o impatto meteo
+
+Il principio: la mesh renderizzata e un prodotto derivato. La verita resta nella feature, nei metadata e nella regola parametrica che l'ha generata.
 
 ### Digital Twin renderer/runtime
 
@@ -238,6 +461,8 @@ OrbixJS deve diventare un renderizzatore e runtime per Digital Twin, cioe una sc
 Componenti chiave:
 
 - `DigitalTwinScene` come composizione di asset, layer, sensori e simulazioni
+- `ProjectFrame` georeferenziato per collegare CRS GIS, coordinate locali BIM e coordinate GPU
+- asset derivati da feature tramite regole parametriche e metadata operativi
 - asset geospaziali via 3D Tiles e glTF
 - modelli urbani semantici via CityGML o conversione verso 3D Tiles/glTF
 - asset BIM/openBIM via IFC preprocessato verso glTF/3D Tiles e metadata
@@ -262,14 +487,32 @@ Dataset iniziale:
 - licenza open data CC0 indicata dal portale dati
 - risorse ufficiali WMS/WCS da GeoServer CIVIS
 - tile sperimentali indicati da:
-  `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/`
+  `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json`
+
+Basemap demo candidata:
+
+- `2023 Orthofoto`
+- identifier: `PROV-ORTHOPHOTO-2023`
+- server: `P_BZ-ORTHOIMAGERY`
+- servizio WMTS: `https://geoservices.buergernetz.bz.it/mapproxy/p_bz-Orthoimagery/ows`
+- layer: `Aerial-2023-RGB`
+- matrix set: `EPSG_25832`
+- CRS: `EPSG:25832`
+- formato: `image/png`
+- tile: 256x256, 18 livelli zoom
+- top left corner dichiarato: `[449092.4, 5424522.8]`
+- autenticazione: non richiesta
+
+Nota tecnica: questa basemap non va collegata direttamente al provider WMTS attuale se la pipeline resta Web Mercator. Prima serve supporto a `TileMatrixSet` custom, CRS per layer e trasformazioni EPSG:25832, oppure va trovato un endpoint/fallback EPSG:3857/XYZ equivalente per la prima demo pubblica.
 
 Obiettivo demo:
 
 - aprire direttamente sull'Alto Adige
+- usare l'ortofoto 2023 come basemap ad alta leggibilita quando il supporto CRS lo consente
 - usare il DTM 2,5m come terreno reale
 - mostrare hillshade, slope o exposition come layer debug/analisi
 - aggiungere camera presets: Bolzano, Dolomiti, Val Venosta, Brennero, Merano
+- aggiungere voli in soggettiva pianificati: sorvolo valle, avvicinamento urbano, ispezione terrain e volo meteo
 - dimostrare picking terrain con quota reale
 - dimostrare profilo altimetrico e pendenza
 - preparare terreno per meteo alpino: vento, nuvole e precipitazione
@@ -279,7 +522,7 @@ Prima di implementare va verificato il formato esatto delle tile statiche: encod
 
 ### Export verso Blender
 
-Blender deve essere trattato come destinazione di rendering offline, non come backend realtime. OrbixJS deve poter esportare una scena geospaziale o Digital Twin in un pacchetto riproducibile.
+Blender deve essere trattato come destinazione di rendering offline, non come backend realtime. L'implementazione concreta va tenuta tra le fasi finali, ma durante lo sviluppo bisogna conservare le informazioni che renderanno possibile esportare bene: camera, luci, materiali, metadata, timeline, coordinate locali e mapping tra oggetti renderizzati e oggetti semantici.
 
 Strategia:
 
@@ -294,7 +537,7 @@ Strategia:
 - export camera path e timeline per animazioni
 - preset Cycles/Eevee: preview veloce, render tecnico, render cinematico
 
-Il principio: il web resta interattivo e performante; Blender produce immagini, video, tavole e materiali di presentazione con qualita superiore.
+Il principio: il web resta interattivo e performante; Blender produce immagini, video, tavole e materiali di presentazione con qualita superiore. Si progetta con questa uscita in mente, ma non si implementa prima di avere renderer, terrain, GIS editing, Digital Twin e demo solidi.
 
 ## 5. Definition of Done per la base 0.1
 
@@ -376,6 +619,103 @@ Criterio di uscita:
 - WebGPU raggiunge parita minima con il globo WebGL2
 - il backend WebGPU ha test o smoke test dedicati
 
+### Fase trasversale - CRS, proiezioni e precisione
+
+Obiettivo: rendere OrbixJS affidabile con dati GIS e Digital Twin in CRS diversi, senza vincolare il runtime a Web Mercator.
+
+Step:
+
+- definire `CrsDefinition`, `CrsRegistry` e `CoordinateTransformer`
+- supportare almeno `EPSG:4326`, `EPSG:4979`, `EPSG:4978`, `EPSG:3857`, UTM WGS84, ETRS89/UTM `EPSG:258xx` e Gauss-Boaga `EPSG:3003`/`EPSG:3004`
+- introdurre `TileMatrixSet` generico per WMTS e OGC API - Tiles in CRS non Web Mercator
+- dichiarare `sourceCrs`, `targetCrs`, axis order, unita e height reference su ogni layer dati
+- trasformare bounding box, tile extent, feature vettoriali, terrain sample e coordinate di picking
+- introdurre `LocalFrame`/ENU per GPU, editing, misure 3D, Digital Twin e Blender
+- gestire quote ellissoidiche, ortometriche, terrain-relative e offset locali come metadata espliciti
+- aggiungere test round-trip e casi reali: Web Mercator, Alto Adige `EPSG:25832`, UTM Italia e coordinate locali di progetto
+
+Criterio di uscita:
+
+- una basemap WMTS `EPSG:25832` puo essere caricata senza scorciatoie Web Mercator
+- feature GIS e asset Digital Twin possono dichiarare CRS diversi e apparire nello stesso frame locale
+- picking, misure e export conservano CRS originale e coordinate trasformate
+
+### Fase trasversale - Project format, catalogo dati e preprocessing
+
+Obiettivo: dare a OrbixJS una spina dorsale operativa per salvare progetti, registrare dataset e preparare asset runtime riproducibili.
+
+Step 1: formato progetto
+
+- definire `OrbixProject`
+- definire schema JSON versionato e migrazioni
+- salvare camera, CRS, project frame, layer stack, styling, catalog refs, timeline e preset
+- salvare editing change set e regole parametriche senza perdere metadata sorgenti
+- distinguere progetto leggibile `.orbix.json`, cartella `.orbix/` e futuro pacchetto `.orbixpkg`
+- aggiungere validazione schema e messaggi errore utili
+
+Step 2: catalogo dati
+
+- definire `DataCatalog`, `DataSourceDescriptor` e `CatalogProvider`
+- registrare sorgenti WMS, WMTS, WFS, WCS, OGC API Features/Tiles/EDR, STAC e file locali
+- salvare licenza, attribution, CRS, extent, time extent, cache policy e auth requirements
+- aggiungere preview metadata: thumbnail, sample tile, legenda e livelli disponibili
+- creare catalogo demo Alto Adige con DTM, Orthofoto 2023 e fallback
+
+Step 3: preprocessing pipeline
+
+- definire `PreprocessJob` e manifest output
+- creare CLI/script iniziale `orbix-preprocess`
+- supportare DTM/GeoTIFF/WCS/COG verso terrain runtime
+- generare hillshade, slope e aspect per analisi demo
+- generare asset demo piccoli e versionabili quando i servizi remoti non bastano
+- preprocessare feature, glTF/3D Tiles e meteo in fasi progressive
+- salvare provenance: input, hash, CRS, extent, tool version, parametri e licenza
+
+Criterio di uscita:
+
+- un progetto demo puo essere salvato, riaperto e validato
+- i dataset della demo Alto Adige sono descritti in un catalogo, non hardcoded solo nel codice
+- almeno un job di preprocessing produce asset runtime o manifest verificabile per DTM/terrain
+
+### Fase trasversale - Camera paths e flight planning
+
+Obiettivo: creare voli in soggettiva pianificabili, salvabili e riproducibili con transizioni fluide.
+
+Step 1: modello dati
+
+- definire `CameraPath`, `CameraKeyframe`, `CameraTransition` e `CameraRig`
+- salvare path, keyframe, easing e vincoli dentro `OrbixProject`
+- supportare modalita first-person, look-at, orbit, follow feature e terrain-follow
+- definire validazione: durata, keyframe mancanti, CRS, height reference e limiti camera
+
+Step 2: interpolazione e playback
+
+- implementare interpolazione posizione con lineare, Catmull-Rom e Bezier
+- implementare interpolazione orientamento con quaternion/slerp
+- aggiungere easing e constant-speed mode
+- aggiungere play, pause, stop, scrub, loop, reverse e speed multiplier
+- sincronizzare path con timeline meteo/Digital Twin e trigger eventi
+
+Step 3: vincoli geospaziali
+
+- mantenere clearance minima da terrain
+- supportare collision avoidance base con terrain e, in seguito, 3D Tiles
+- gestire smoothing quando cambiano LOD terrain/tiles
+- supportare look-at su feature, asset Digital Twin o punto geospaziale
+
+Step 4: authoring e export
+
+- registrare un volo manuale come keyframe editabili
+- generare path da polilinea o punti selezionati
+- aggiungere preview con scrubber
+- esportare camera path verso Blender e sidecar glTF/USD
+
+Criterio di uscita:
+
+- la demo puo eseguire almeno un volo in soggettiva fluido sull'Alto Adige
+- il volo resta stabile sopra terrain e non attraversa il suolo
+- il path puo essere salvato in `OrbixProject`, riaperto ed esportato verso Blender
+
 ### Fase 4 - Terrain 3D
 
 Obiettivo: passare da ellissoide texturizzato a superficie terrestre 3D.
@@ -454,6 +794,11 @@ Step:
 - aggiungere batching e instancing per primitive ripetute
 - supportare clamping su terrain e 3D Tiles
 - aggiungere primitive classification dove utile
+- definire `Layer`, `LayerState`, `LayerStyle`, `LayerMetadata` e `LayerGroup`
+- supportare parametri comuni: `visible`, `opacity`, `blendMode`, `zIndex`, `pickable`, `locked`
+- supportare blend mode iniziali: `normal`, `multiply`, `screen`, `overlay`, `add`, `subtract`, `lighten`, `darken`, `mask`
+- supportare color controls: brightness, contrast, saturation, gamma, tint e color ramp
+- definire ordinamento e compositing pass per imagery, vector overlay, meteo e debug layer
 - introdurre `DataSource` come layer opzionale sopra il core
 - supportare GeoJSON come primo formato vettoriale
 - valutare KML e CZML dopo GeoJSON e time system
@@ -464,6 +809,7 @@ Step:
 Criterio di uscita:
 
 - OrbixJS puo mostrare marker, linee, poligoni e label georeferenziati
+- i layer possono essere accesi/spenti, ordinati, resi trasparenti e composti con blend mode diversi
 - un'app Cesium-like puo essere costruita senza scrivere direttamente shader o mesh
 - lo strato entity resta opzionale e non rallenta la pipeline low-level
 
@@ -479,6 +825,7 @@ Step 1: feature model
 - mantenere attributi tipizzati e validabili
 - collegare feature a primitive renderizzabili
 - collegare feature a metadata e picking
+- collegare feature a regole parametriche opzionali
 
 Step 2: editing session
 
@@ -499,7 +846,20 @@ Step 3: strumenti interattivi
 - vincoli: altezza, distanza, angolo, ortogonalita, clamp to terrain
 - selezione singola, multipla, box/lasso e gerarchica
 
-Step 4: validazione e analisi
+Step 4: modellazione parametrica da metadata
+
+- definire `ParametricFeatureRule`
+- definire `ParameterSchema` con unita, default, min/max, enum e binding ad attributi
+- implementare estrusione da poligono con height/floors/baseHeight/terrainOffset
+- implementare setback e offset per volumi edilizi
+- implementare roof generator base: flat, gable, hip e shed
+- implementare sweep lungo linea con profilo per pipe, tunnel, barriere e cavi
+- implementare instancing da punti per alberi, lampioni, sensori e arredo urbano
+- implementare preview non distruttiva e commit dentro `EditingSession`
+- aggiornare la mesh derivata quando cambiano feature, attributi o regola
+- mantenere metadata e regola esportabili in glTF/3D Tiles sidecar
+
+Step 5: validazione e analisi
 
 - validazione topologica 2D e 3D
 - self-intersection, overlap, gap, ring orientation e duplicate vertices
@@ -514,6 +874,7 @@ Criterio di uscita:
 - la demo permette di creare e modificare feature su globo/terrain
 - le modifiche hanno undo/redo e possono essere salvate o annullate
 - snapping e validazione evitano errori geometrici banali
+- una feature puo generare un volume 3D parametrico modificabile dai suoi metadata
 - il layer GIS resta indipendente dal renderer
 
 ### Fase 8 - Digital Twin renderer/runtime
@@ -632,16 +993,20 @@ Step:
 - gestire sRGB, linear e tone mapping
 - implementare PBR glTF piu completo
 - aggiungere directional light solare
+- calcolare la posizione del sole in funzione di data/ora della scena
 - aggiungere luce ambiente controllata
 - aggiungere image-based lighting
 - aggiungere atmospheric scattering
 - aggiungere esposizione e gamma correction
+- aggiungere compositing layer con blend mode coerenti tra WebGL2 e WebGPU
+- gestire premultiplied alpha, sRGB/linear e ordine dei layer in modo esplicito
 - gestire materiali metallic/roughness
 - preparare materiali terrain e imagery in modo coerente
 
 Criterio di uscita:
 
 - modelli glTF appaiono plausibili con luci e materiali
+- cambiare data/ora sposta la direzione della luce solare in modo coerente
 - terrain, globo e modelli condividono una pipeline colore coerente
 - la scena non sembra piatta anche senza texture perfette
 
@@ -700,6 +1065,7 @@ Step:
 - cache CPU e GPU con budget separati
 - Web Workers per parsing e mesh generation
 - metriche runtime per frame time, tile, upload GPU e memoria stimata
+- job preprocessing eseguibili fuori dal render loop e, dove utile, in worker
 - profili performance WebGL2 e WebGPU
 - stress test con navigazione rapida
 
@@ -709,9 +1075,66 @@ Criterio di uscita:
 - i tile lontani o obsoleti vengono scartati
 - la demo resta fluida con dataset piu pesanti
 
-### Fase 14 - Export Blender e render offline
+### Fase 14 - API, packaging e documentazione
 
-Obiettivo: esportare scene OrbixJS verso Blender per render fotorealistici, animazioni e presentazioni Digital Twin.
+Obiettivo: rendere OrbixJS usabile da altri progetti.
+
+Step:
+
+- stabilire entrypoint pubblici
+- esportare tipi principali
+- creare build ESM
+- generare declaration TypeScript
+- aggiungere esempi indipendenti
+- documentare WebGL2/WebGPU
+- documentare terrain provider
+- documentare formato progetto, catalogo dati e preprocessing pipeline
+- documentare GIS editing, feature model e transazioni
+- documentare Digital Twin scene, asset, metadata e sensori
+- documentare 3D Tiles supportato
+- documentare export Blender, glTF/USD e script Python generati
+- documentare rendering avanzato, meteo e limiti
+- preparare changelog e release notes
+
+Criterio di uscita:
+
+- un progetto Vite esterno puo installare OrbixJS e creare una scena geospaziale
+- le API pubbliche non richiedono import da path interni
+- ogni feature importante ha un esempio
+
+### Fase 15 - Demo pubblica da GitHub
+
+Obiettivo: quando OrbixJS sara su GitHub, ogni push stabile deve poter pubblicare una demo funzionante.
+
+Step:
+
+- mantenere la demo come build statica Vite
+- usare `base: "./"` in Vite per supportare GitHub Pages sotto sottocartella
+- aggiungere workflow GitHub Actions per test, build e deploy
+- pubblicare `dist` con GitHub Pages
+- mantenere asset demo piccoli e versionati
+- evitare dipendenze remote indispensabili per il primo render
+- caricare la demo da un `OrbixProject` e da un catalogo dati statico
+- includere manifest di preprocessing per DTM, fallback e layer debug
+- usare l'ortofoto 2023 `Aerial-2023-RGB` come basemap quando il supporto WMTS `EPSG:25832` e pronto
+- mettere il focus iniziale sull'Alto Adige/Südtirol
+- usare il DTM 2,5m come primo terrain reale della demo
+- mostrare nella demo lo stato di WebGL2/WebGPU, terrain Alto Adige, imagery, 3D Tiles e picking
+- aggiungere preset camera per aree altoatesine
+- aggiungere camera paths salvati nel progetto demo e riproducibili da UI/shortcut
+- aggiungere badge README per build/deploy quando il repository pubblico esiste
+- documentare l'URL della demo nel README
+
+Criterio di uscita:
+
+- un push su `main` genera una demo pubblica aggiornata
+- il deploy fallisce se test o build falliscono
+- la demo online mostra almeno l'Alto Adige navigabile con fallback terrain/imagery senza configurazioni esterne
+- progetto, catalogo e manifest preprocessing della demo sono versionati e riproducibili
+
+### Fase 16 - Export Blender e render offline
+
+Obiettivo: esportare scene OrbixJS verso Blender per render fotorealistici, animazioni e presentazioni Digital Twin. Questa fase resta tra le ultime, ma beneficia delle scelte fatte prima su coordinate locali, metadata, materiali, camera e timeline.
 
 Step 1: formato export
 
@@ -765,57 +1188,6 @@ Criterio di uscita:
 - il pacchetto include script Blender riproducibile
 - un render offline puo mostrare un Digital Twin o scenario meteo con qualita superiore al realtime
 
-### Fase 15 - API, packaging e documentazione
-
-Obiettivo: rendere OrbixJS usabile da altri progetti.
-
-Step:
-
-- stabilire entrypoint pubblici
-- esportare tipi principali
-- creare build ESM
-- generare declaration TypeScript
-- aggiungere esempi indipendenti
-- documentare WebGL2/WebGPU
-- documentare terrain provider
-- documentare GIS editing, feature model e transazioni
-- documentare Digital Twin scene, asset, metadata e sensori
-- documentare 3D Tiles supportato
-- documentare export Blender, glTF/USD e script Python generati
-- documentare rendering avanzato, meteo e limiti
-- preparare changelog e release notes
-
-Criterio di uscita:
-
-- un progetto Vite esterno puo installare OrbixJS e creare una scena geospaziale
-- le API pubbliche non richiedono import da path interni
-- ogni feature importante ha un esempio
-
-### Fase 16 - Demo pubblica da GitHub
-
-Obiettivo: quando OrbixJS sara su GitHub, ogni push stabile deve poter pubblicare una demo funzionante.
-
-Step:
-
-- mantenere la demo come build statica Vite
-- usare `base: "./"` in Vite per supportare GitHub Pages sotto sottocartella
-- aggiungere workflow GitHub Actions per test, build e deploy
-- pubblicare `dist` con GitHub Pages
-- mantenere asset demo piccoli e versionati
-- evitare dipendenze remote indispensabili per il primo render
-- mettere il focus iniziale sull'Alto Adige/Südtirol
-- usare il DTM 2,5m come primo terrain reale della demo
-- mostrare nella demo lo stato di WebGL2/WebGPU, terrain Alto Adige, imagery, 3D Tiles e picking
-- aggiungere preset camera per aree altoatesine
-- aggiungere badge README per build/deploy quando il repository pubblico esiste
-- documentare l'URL della demo nel README
-
-Criterio di uscita:
-
-- un push su `main` genera una demo pubblica aggiornata
-- il deploy fallisce se test o build falliscono
-- la demo online mostra almeno l'Alto Adige navigabile con fallback terrain/imagery senza configurazioni esterne
-
 ## 7. Sprint consigliati
 
 | Sprint | Focus | Output |
@@ -824,20 +1196,24 @@ Criterio di uscita:
 | 2 | Renderer interface v2 | Core separato dal backend WebGL2 |
 | 3 | WebGPU base | Globo WebGPU con WGSL |
 | 4 | WebGPU parity | Imagery e mesh glTF su WebGPU |
-| 5 | Terrain Alto Adige | DTM 2,5m, mesh terrain, picking quota |
-| 6 | OGC 3D Tiles base | Tileset reali con SSE e culling |
-| 7 | Primitives e data layers | Point, polyline, polygon, label, GeoJSON |
-| 8 | GIS editing base | Feature model, editing session, snapping, undo/redo |
-| 9 | Digital Twin runtime | Twin assets, metadata, sensors, time-series |
-| 10 | Weather engine | WeatherProvider, vento particellare, cloud layer |
-| 11 | PBR e luci | Pipeline colore, sole, IBL, materiali |
-| 12 | Ombre | CSM, contact shadows, debug view |
-| 13 | 3D Tiles 1.1 | Metadata, implicit tiling, feature picking |
-| 14 | Ray tracing sperimentale | WebGPU compute AO/reflections/path tracing |
-| 15 | Performance | Scheduler, workers, cache budget |
-| 16 | Blender export | GLB/USD, script Python, camera, terrain, metadata |
-| 17 | Demo GitHub Pages | Workflow test/build/deploy e demo pubblica |
-| 18 | Release evolutiva | Packaging, docs, esempi, changelog |
+| 5 | Project format e catalogo dati | `OrbixProject`, `DataCatalog`, catalogo demo Alto Adige |
+| 6 | Preprocessing pipeline | `PreprocessJob`, DTM manifest, fallback demo, provenance |
+| 7 | Camera flight planning | `CameraPath`, keyframe, easing, first-person playback, export path |
+| 8 | CRS e basemap Alto Adige | `CrsRegistry`, CRS comuni GIS/Digital Twin, WMTS Orthofoto 2023 `EPSG:25832` |
+| 9 | Terrain Alto Adige | DTM 2,5m, mesh terrain, picking quota |
+| 10 | OGC 3D Tiles base | Tileset reali con SSE e culling |
+| 11 | Primitives, data layers e compositing | Point, polyline, polygon, label, GeoJSON, visibilita/opacita/blend mode |
+| 12 | GIS editing e modellazione parametrica | Feature model, editing session, extrusion/rules da metadata, snapping, undo/redo |
+| 13 | Digital Twin runtime | Twin assets, metadata, sensors, time-series |
+| 14 | Weather engine | WeatherProvider, vento particellare, cloud layer |
+| 15 | PBR e luci | Pipeline colore, sole, IBL, materiali |
+| 16 | Ombre | CSM, contact shadows, debug view |
+| 17 | 3D Tiles 1.1 | Metadata, implicit tiling, feature picking |
+| 18 | Ray tracing sperimentale | WebGPU compute AO/reflections/path tracing |
+| 19 | Performance | Scheduler, workers, cache budget |
+| 20 | Demo GitHub Pages | Workflow test/build/deploy e demo pubblica |
+| 21 | Blender export | GLB/USD, script Python, camera, terrain, metadata |
+| 22 | Release evolutiva | Packaging, docs, esempi, changelog |
 
 ## 8. Priorita immediata aggiornata
 
@@ -849,14 +1225,21 @@ La prossima sequenza migliore e:
 4. progettare `Renderer` v2 con WebGPU in mente
 5. creare skeleton `renderer/webgpu`
 6. portare il globo vuoto in WGSL
-7. iniziare `TerrainProvider` partendo dal DTM 2,5m Alto Adige
-8. definire subset OGC 3D Tiles da supportare per primo
-9. progettare `Primitive` e `Entity` come layer separati, non come cuore del renderer
-10. progettare `FeatureLayer` e `EditingSession`
-11. progettare `DigitalTwinScene` e mapping asset/metadata/sensori
-12. progettare `WeatherProvider` e formato interno per vector field vento
-13. progettare `SceneExport` per Blender con glTF/GLB e script Python
-14. mantenere la demo sempre pubblicabile da GitHub Pages
+7. definire `OrbixProject`, schema JSON, serializer, validator e migrazioni
+8. definire `DataCatalog` e registrare DTM, Orthofoto 2023, fallback e layer debug Alto Adige
+9. definire `PreprocessJob` e manifest output per DTM/fallback demo
+10. progettare `CameraPath`, `CameraKeyframe`, easing, first-person playback e salvataggio dei voli in `OrbixProject`
+11. introdurre `CrsRegistry`, `CoordinateTransformer`, `TileMatrixSet` custom e CRS comuni GIS/Digital Twin, usando l'ortofoto 2023 `EPSG:25832` come primo caso reale
+12. iniziare `TerrainProvider` partendo dal DTM 2,5m Alto Adige
+13. definire subset OGC 3D Tiles da supportare per primo
+14. progettare `LayerState` e `LayerStyle` comuni con `visible`, `opacity`, `blendMode`, `zIndex`, color controls e compositing pass
+15. progettare `Primitive` e `Entity` come layer separati, non come cuore del renderer
+16. progettare `FeatureLayer` e `EditingSession`
+17. progettare `ParametricFeatureRule` per estrusione, sweep, roof, instancing e mesh derivate dai metadata
+18. progettare `DigitalTwinScene` e mapping asset/metadata/sensori
+19. progettare `WeatherProvider` e formato interno per vector field vento
+20. mantenere camera, materiali, metadata, timeline e coordinate locali esportabili in futuro
+21. mantenere la demo sempre pubblicabile da GitHub Pages
 
 Questa sequenza non congela il prodotto: costruisce le fondamenta per WebGPU, terrain e rendering avanzato.
 
@@ -886,6 +1269,12 @@ Rischio: le tile statiche o i servizi WMS/WCS espongono dati ottimi per GIS ma n
 
 Mitigazione: separare sorgente e runtime; validare encoding e schema tile, poi usare preprocessing verso heightmap tiled, mesh terrain o formato interno ottimizzato.
 
+### Basemap Alto Adige in CRS diverso
+
+Rischio: l'ortofoto 2023 e un WMTS in `EPSG:25832`, mentre il tiling runtime attuale e orientato a Web Mercator.
+
+Mitigazione: implementare `TileMatrixSet` custom, CRS per layer e trasformazioni locali prima di abilitarla come basemap principale; per la demo pubblica mantenere un fallback imagery EPSG:3857/XYZ o un asset offline minimo.
+
 ### 3D Tiles troppo ampio
 
 Rischio: provare a implementare tutto lo standard subito.
@@ -898,23 +1287,59 @@ Rischio: replicare anche la complessita storica di CesiumJS.
 
 Mitigazione: copiare i casi d'uso, non l'architettura; entity e data sources devono restare layer opzionali sopra primitive e renderer.
 
+### Blending layer incoerente
+
+Rischio: `multiply`, `screen`, trasparenze e color controls producono risultati diversi tra WebGL2, WebGPU, imagery, vettoriali e layer meteo.
+
+Mitigazione: centralizzare `LayerState`/`LayerStyle`, usare un compositing pass dichiarato, testare blend mode con immagini fixture e fissare spazio colore, premultiplied alpha, z-order e fallback.
+
 ### Editing GIS fragile
 
 Rischio: offrire strumenti di editing belli ma capaci di generare geometrie invalide o dati incoerenti.
 
 Mitigazione: usare `EditingSession`, validazione topologica, schema attributi, undo/redo, change set e commit transazionali.
 
+### Modellazione parametrica opaca
+
+Rischio: generare mesh spettacolari ma perdere il legame con feature, attributi, CRS, regole e motivazione tecnica della geometria.
+
+Mitigazione: salvare sempre feature sorgente, metadata, `ParametricFeatureRule`, parametri risolti e versione della regola; la mesh deve essere rigenerabile e validabile, non diventare l'unica fonte di verita.
+
 ### CRS e precisione sottovalutati
 
-Rischio: un GIS 3D richiede precisione, trasformazioni coordinate e gestione di scale molto diverse.
+Rischio: un GIS 3D e un Digital Twin reale richiedono CRS diversi, quote diverse, precisione locale e gestione di scale molto diverse.
 
-Mitigazione: mantenere WGS84/ECEF come base, definire CRS per layer, testare trasformazioni e separare coordinate geografiche, locali e GPU.
+Mitigazione: mantenere WGS84/ECEF come base globale, definire CRS per layer, usare frame locali ENU per GPU/editing/Blender, testare trasformazioni round-trip e mantenere metadata su axis order, unita e height reference.
 
 ### Digital Twin ridotto a buzzword
 
 Rischio: chiamare Digital Twin una semplice scena 3D.
 
 Mitigazione: ogni twin deve collegare geometria, asset semantici, relazioni, stato, sensori, tempo e almeno una forma di interrogazione operativa.
+
+### Progetti non riproducibili
+
+Rischio: una demo funziona solo perche lo stato e hardcoded nel codice o nella memoria del browser.
+
+Mitigazione: introdurre presto `OrbixProject` versionato, validazione schema, migrazioni e salvataggio esplicito di camera, CRS, layer, catalog refs, timeline, editing state e regole parametriche.
+
+### Camera path non fluido
+
+Rischio: i voli in soggettiva mostrano scatti, cambi bruschi di orientamento, collisioni con terrain/edifici o differenze tra una riproduzione e l'altra.
+
+Mitigazione: usare keyframe validati, interpolazione spline/quaternion, easing dichiarato, limiti su velocita/accelerazione, clearance terrain, smoothing su LOD e test di playback deterministico.
+
+### Catalogo dati disordinato
+
+Rischio: URL, licenze, CRS, attribution, auth e cache policy restano sparsi tra codice, README e configurazioni manuali.
+
+Mitigazione: centralizzare tutto in `DataCatalog` e `DataSourceDescriptor`, con health check, preview, metadata obbligatori e catalogo demo Alto Adige versionato.
+
+### Preprocessing non tracciabile
+
+Rischio: asset terrain, meteo, 3D Tiles o glTF vengono generati una volta e poi non si sa piu da quali dati, parametri e versioni derivino.
+
+Mitigazione: ogni `PreprocessJob` deve produrre manifest con input, hash, CRS, extent, licenza, tool version, parametri e output; gli asset derivati devono essere rigenerabili.
 
 ### Demo pubblica fragile
 
@@ -952,9 +1377,17 @@ Mitigazione: esportare in coordinate locali rispetto a un'origine georeferenziat
 - OGC 3D Tiles 1.1 Specification: `https://docs.ogc.org/cs/22-025r4/22-025r4.html`
 - OGC API - Tiles: `https://ogcapi.ogc.org/tiles/`
 - OGC API - Features: `https://www.ogc.org/publications/standard/ogcapi-features/`
+- OGC API - Environmental Data Retrieval: `https://ogcapi.ogc.org/edr/`
+- OGC Web Map Tile Service: `https://www.ogc.org/standards/wmts/`
+- SpatioTemporal Asset Catalogs: `https://stacspec.org/`
+- JSON Schema: `https://json-schema.org/`
+- FlatGeobuf: `https://flatgeobuf.org/`
+- EPSG Geodetic Parameter Dataset: `https://epsg.org/`
+- PROJ coordinate transformation library: `https://proj.org/`
 - OGC Cloud Optimized GeoTIFF: `https://www.ogc.org/announcement/cloud-optimized-geotiff-cog-published-as-official-ogc-standard/`
 - DTM 2,5m Alto Adige dataset: `https://data.civis.bz.it/it/dataset/modello-digitale-del-terreno-dtm-25m`
-- DTM 2,5m Alto Adige tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/`
+- DTM 2,5m Alto Adige tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json`
+- Orthofoto 2023 Alto Adige WMTS: `https://geoservices.buergernetz.bz.it/mapproxy/p_bz-Orthoimagery/ows`, layer `Aerial-2023-RGB`, matrix set `EPSG_25832`, CRS `EPSG:25832`
 - OGC CityGML: `https://www.ogc.org/standards/citygml/`
 - OGC SensorThings API: `https://www.ogc.org/publications/standard/sensorthings/`
 - WebGPU specification: `https://gpuweb.github.io/gpuweb/`
@@ -975,12 +1408,18 @@ Mitigazione: esportare in coordinate locali rispetto a un'origine georeferenziat
 OrbixJS deve diventare un motore geospaziale 3D web capace di partire leggero ma crescere verso:
 
 - WebGPU-first
+- formato progetto/sessione `OrbixProject` versionato e riproducibile
+- catalogo dati per sorgenti, licenze, CRS, attribution, preview e fallback
+- preprocessing pipeline per terrain, imagery, feature, meteo, 3D Tiles e asset demo
+- camera flight planning con voli in soggettiva, keyframe, easing, terrain-follow ed export camera path
 - GIS 3D con editing, validazione, snapping, transazioni e analisi
+- modellazione parametrica da feature e metadata: extrusion, sweep, roof, instancing e regole non distruttive
 - terrain 3D reale
 - demo flagship Alto Adige/Südtirol con DTM 2,5m
 - OGC 3D Tiles progressivamente completo
 - Digital Twin renderer/runtime per BIM, GIS, IoT, sensori e time-series
 - primitives, entities e data layers in stile CesiumJS, ma opzionali
+- layer compositing con visibilita, opacita, blend mode, ordine, filtri e color controls
 - rendering PBR con luci e ombre moderne
 - sistema meteo con vento particellare, nuvole e dati atmosferici reali
 - streaming massivo

@@ -135,6 +135,22 @@ h2 {
   min-width: 250px;
 }
 
+.scene-date {
+  display: block;
+}
+
+.scene-date input {
+  width: 100%;
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  outline: none;
+}
+
 .debug-toggle {
   min-width: 118px;
   height: 44px;

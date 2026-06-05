@@ -31,6 +31,7 @@ export {
   type OrbixProject,
   type OrbixProjectLayer,
 } from "./engine/project/orbix-project";
+export { sunDirectionFromDate } from "./engine/core/astro/sun-position";
 export {
   type Renderer,
   type RendererBackend,

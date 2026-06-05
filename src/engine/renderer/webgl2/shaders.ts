@@ -33,13 +33,14 @@ in vec2 vImageryUv;
 
 uniform bool uImageryEnabled;
 uniform sampler2D uImagery;
+uniform vec3 uSunDirection;
 
 out vec4 outColor;
 
 void main() {
   vec3 normal = normalize(vNormal);
   vec3 geo = normalize(vGeodeticNormal);
-  vec3 light = normalize(vec3(-0.25, 0.52, 0.82));
+  vec3 light = normalize(uSunDirection);
   float diffuse = max(dot(normal, light), 0.0);
   float latitudeBands = smoothstep(-0.3, 0.45, sin(geo.y * 8.0));
   float longitudeBands = smoothstep(-0.25, 0.35, cos(geo.x * 9.0 + geo.z * 4.0));
@@ -95,12 +96,13 @@ in vec3 vPosition;
 in vec2 vUv;
 
 uniform sampler2D uImagery;
+uniform vec3 uSunDirection;
 
 out vec4 outColor;
 
 void main() {
   vec3 normal = normalize(vNormal);
-  vec3 light = normalize(vec3(-0.25, 0.52, 0.82));
+  vec3 light = normalize(uSunDirection);
   float diffuse = max(dot(normal, light), 0.0);
   float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
   vec3 imagery = texture(uImagery, vUv).rgb;
@@ -176,14 +178,16 @@ in vec2 vUv;
 uniform vec4 uBaseColorFactor;
 uniform bool uTextureEnabled;
 uniform sampler2D uBaseColorTexture;
+uniform vec3 uSunDirection;
 
 out vec4 outColor;
 
 void main() {
   float pulse = 0.5 + 0.5 * smoothstep(-0.2, 0.8, normalize(vPosition).y);
+  float diffuse = max(dot(normalize(vPosition), normalize(uSunDirection)), 0.0);
   vec4 textureColor = uTextureEnabled ? texture(uBaseColorTexture, vUv) : vec4(1.0);
   vec4 material = uBaseColorFactor * textureColor;
-  vec3 color = material.rgb * (0.72 + pulse * 0.28);
+  vec3 color = material.rgb * (0.38 + diffuse * 0.48 + pulse * 0.14);
   outColor = vec4(color, material.a);
 }
 `;
