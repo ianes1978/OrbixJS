@@ -60,4 +60,25 @@ describe("OrbitCamera", () => {
 
     expect(Math.hypot(...camera.target)).toBeCloseTo(0.85);
   });
+
+  it("tilts the camera view without moving the orbit target", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+    const before = camera.viewMatrix();
+
+    camera.tilt(0.4);
+
+    expect(camera.tiltOffset).toBeCloseTo(0.4);
+    expect(camera.target).toEqual([0, 0, 0]);
+    expect(camera.viewMatrix()).not.toEqual(before);
+  });
+
+  it("clamps and resets tilt", () => {
+    const camera = new OrbitCamera();
+
+    camera.tilt(10);
+    expect(camera.tiltOffset).toBe(1.4);
+
+    camera.flyTo({ lon: 12.5, lat: 42.5 });
+    expect(camera.tiltOffset).toBe(0);
+  });
 });

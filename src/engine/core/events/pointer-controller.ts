@@ -41,6 +41,11 @@ export class PointerController {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
 
+    if (event.altKey) {
+      this.camera.tilt(deltaY * 0.005);
+      return;
+    }
+
     if (event.shiftKey) {
       this.camera.pan(-deltaX, deltaY);
       return;

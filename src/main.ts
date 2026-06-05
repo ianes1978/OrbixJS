@@ -17,7 +17,7 @@ app.innerHTML = `
           <div>
             <span class="eyebrow">MVP 1</span>
             <h1>OrbixJS</h1>
-            <p class="hint">Drag per orbitare, Shift+drag per pan, rotellina per zoomare</p>
+            <p class="hint">Drag orbit, Shift+drag pan, Alt+drag tilt, rotellina zoom</p>
           </div>
         <div class="metric">
           <span>Renderer</span>

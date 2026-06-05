@@ -23,6 +23,7 @@ export class OrbitCamera {
   maxDistance: number;
   yaw: number;
   pitch: number;
+  tiltOffset = 0;
   fov = (45 * Math.PI) / 180;
   near = 0.01;
   far = 100;
@@ -48,6 +49,10 @@ export class OrbitCamera {
 
   zoom(delta: number): void {
     this.distance = clamp(this.distance * Math.exp(delta), this.minDistance, this.maxDistance);
+  }
+
+  tilt(delta: number): void {
+    this.tiltOffset = clamp(this.tiltOffset + delta, -1.4, 1.4);
   }
 
   pan(deltaX: number, deltaY: number): void {
@@ -78,6 +83,7 @@ export class OrbitCamera {
 
     this.yaw = Math.atan2(direction[0], direction[2]);
     this.pitch = clamp(Math.asin(direction[1]), -1.42, 1.42);
+    this.tiltOffset = 0;
     this.distance = clamp(1 + height / 6_378_137, this.minDistance, this.maxDistance);
   }
 
@@ -91,11 +97,23 @@ export class OrbitCamera {
   }
 
   viewMatrix(): Mat4 {
-    return lookAt(this.position, this.target, [0, 1, 0]);
+    return lookAt(this.position, this.lookTarget(), [0, 1, 0]);
   }
 
   projectionMatrix(aspect: number): Mat4 {
     return perspective(this.fov, aspect, this.near, this.far);
+  }
+
+  private lookTarget(): MutableVec3 {
+    if (this.tiltOffset === 0) {
+      return this.target;
+    }
+
+    const position = this.position;
+    const forward = normalize(subtract(this.target, position));
+    const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
+    const up = safeNormalize(cross(right, forward), [0, 1, 0]);
+    return add(this.target, scale(up, this.tiltOffset * this.distance * 0.45));
   }
 }
 
