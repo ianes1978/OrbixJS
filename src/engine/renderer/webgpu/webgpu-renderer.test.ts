@@ -33,7 +33,12 @@ describe("WebGPURenderer", () => {
     expect(canvas.height).toBe(360);
     expect(device.createRenderPipeline).toHaveBeenCalled();
     expect(device.createBindGroup).toHaveBeenCalled();
-    expect(device.createTexture).not.toHaveBeenCalled();
+    expect(device.createTexture).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU depth texture",
+      size: [640, 360],
+      format: "depth24plus",
+      usage: 16,
+    });
     expect(device.createSampler).not.toHaveBeenCalled();
     expect(configure).toHaveBeenCalledWith({
       device,
@@ -66,6 +71,15 @@ describe("WebGPURenderer", () => {
     expect(device.pass.setVertexBuffer).toHaveBeenCalled();
     expect(device.pass.setIndexBuffer).toHaveBeenCalledWith(expect.anything(), "uint16");
     expect(device.pass.drawIndexed).toHaveBeenCalledWith(expect.any(Number));
+    expect(device.commandEncoder.beginRenderPass).toHaveBeenCalledWith(
+      expect.objectContaining({
+        depthStencilAttachment: expect.objectContaining({
+          depthClearValue: 1,
+          depthLoadOp: "clear",
+          depthStoreOp: "store",
+        }),
+      }),
+    );
     expect(device.queue.submit).toHaveBeenCalledWith(["command-buffer"]);
   });
 
@@ -85,7 +99,8 @@ describe("WebGPURenderer", () => {
     renderer.setImagery({ width: 512, height: 256 } as TexImageSource);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
 
-    expect(device.createTexture).not.toHaveBeenCalled();
+    expect(device.createTexture).toHaveBeenCalledTimes(1);
+    expect(device.createSampler).not.toHaveBeenCalled();
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
 
@@ -126,6 +141,10 @@ function createDeviceMock() {
     drawIndexed: vi.fn(),
     end: vi.fn(),
   };
+  const commandEncoder = {
+    beginRenderPass: vi.fn(() => pass),
+    finish: vi.fn(() => "command-buffer"),
+  };
   return {
     queue: {
       writeBuffer: vi.fn(),
@@ -138,12 +157,10 @@ function createDeviceMock() {
       getBindGroupLayout: vi.fn(() => "bind-group-layout"),
     })),
     createBuffer: vi.fn((options) => ({ options, destroy: vi.fn() })),
-    createTexture: vi.fn(),
+    createTexture: vi.fn(() => ({ createView: vi.fn(() => "depth-view"), destroy: vi.fn() })),
     createSampler: vi.fn(),
     createBindGroup: vi.fn((options) => ({ options })),
-    createCommandEncoder: vi.fn(() => ({
-      beginRenderPass: vi.fn(() => pass),
-      finish: vi.fn(() => "command-buffer"),
-    })),
+    commandEncoder,
+    createCommandEncoder: vi.fn(() => commandEncoder),
   };
 }

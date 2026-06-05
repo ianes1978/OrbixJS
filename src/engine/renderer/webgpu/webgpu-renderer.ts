@@ -13,6 +13,12 @@ const webGpuBufferUsage = {
   copyDst: 0x08,
 } as const;
 
+const webGpuTextureUsage = {
+  renderAttachment: 0x10,
+} as const;
+
+const webGpuDepthFormat = "depth24plus";
+
 const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
 
 type NavigatorWithGpu = Navigator & {
@@ -39,6 +45,12 @@ type WebGpuDeviceLike = {
   createShaderModule(options: { label?: string; code: string }): WebGpuShaderModuleLike;
   createRenderPipeline(options: WebGpuRenderPipelineDescriptorLike): WebGpuRenderPipelineLike;
   createBuffer(options: { label?: string; size: number; usage: number }): WebGpuBufferLike;
+  createTexture(options: {
+    label?: string;
+    size: [number, number];
+    format: typeof webGpuDepthFormat;
+    usage: number;
+  }): WebGpuTextureLike;
   createBindGroup(options: {
     label?: string;
     layout: unknown;
@@ -80,6 +92,11 @@ type WebGpuBufferLike = {
   destroy?: () => void;
 };
 
+type WebGpuTextureLike = {
+  createView(): unknown;
+  destroy?: () => void;
+};
+
 type WebGpuRenderPipelineLike = {
   getBindGroupLayout(index: number): unknown;
 };
@@ -95,6 +112,12 @@ type WebGpuCommandEncoderLike = {
       loadOp: "clear";
       storeOp: "store";
     }>;
+    depthStencilAttachment?: {
+      view: unknown;
+      depthClearValue: number;
+      depthLoadOp: "clear";
+      depthStoreOp: "store";
+    };
   }): WebGpuRenderPassEncoderLike;
   finish(): unknown;
 };
@@ -146,6 +169,11 @@ type WebGpuRenderPipelineDescriptorLike = {
     topology: "triangle-list";
     cullMode: "back" | "none";
   };
+  depthStencil?: {
+    format: typeof webGpuDepthFormat;
+    depthWriteEnabled: boolean;
+    depthCompare: "less";
+  };
 };
 
 type WebGpuCanvas = HTMLCanvasElement & {
@@ -173,6 +201,8 @@ export class WebGPURenderer implements Renderer {
   private globeVertexBuffer: WebGpuBufferLike | undefined;
   private globeIndexBuffer: WebGpuBufferLike | undefined;
   private globeUniformBuffer: WebGpuBufferLike | undefined;
+  private depthTexture: WebGpuTextureLike | undefined;
+  private depthTextureSize: readonly [number, number] | undefined;
   private globeIndexCount = 0;
 
   constructor(
@@ -282,6 +312,8 @@ export class WebGPURenderer implements Renderer {
       this.canvas.width = width;
       this.canvas.height = height;
     }
+
+    this.ensureDepthTexture();
   }
 
   render(frame: RendererFrame): void {
@@ -299,6 +331,7 @@ export class WebGPURenderer implements Renderer {
     ) {
       return;
     }
+    this.ensureDepthTexture();
 
     const aspect = this.canvas.width / this.canvas.height;
     const viewProjection = webGpuViewProjection(frame, aspect);
@@ -316,6 +349,14 @@ export class WebGPURenderer implements Renderer {
           storeOp: "store",
         },
       ],
+      depthStencilAttachment: this.depthTexture
+        ? {
+            view: this.depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: "clear",
+            depthStoreOp: "store",
+          }
+        : undefined,
     });
 
     pass.setPipeline(this.globePipeline);
@@ -333,6 +374,7 @@ export class WebGPURenderer implements Renderer {
     this.globeVertexBuffer?.destroy?.();
     this.globeIndexBuffer?.destroy?.();
     this.globeUniformBuffer?.destroy?.();
+    this.depthTexture?.destroy?.();
     this.device?.destroy?.();
     this.initialized = false;
     this.context = undefined;
@@ -343,6 +385,8 @@ export class WebGPURenderer implements Renderer {
     this.globeVertexBuffer = undefined;
     this.globeIndexBuffer = undefined;
     this.globeUniformBuffer = undefined;
+    this.depthTexture = undefined;
+    this.depthTextureSize = undefined;
     this.globeIndexCount = 0;
   }
 
@@ -415,9 +459,35 @@ export class WebGPURenderer implements Renderer {
         topology: "triangle-list",
         cullMode: "none",
       },
+      depthStencil: {
+        format: webGpuDepthFormat,
+        depthWriteEnabled: true,
+        depthCompare: "less",
+      },
     });
     this.createGlobeBindGroup();
     this.globeIndexCount = mesh.indices.length;
+  }
+
+  private ensureDepthTexture(): void {
+    if (!this.device || this.canvas.width <= 0 || this.canvas.height <= 0) {
+      return;
+    }
+
+    const size = [this.canvas.width, this.canvas.height] as const;
+
+    if (this.depthTexture && this.depthTextureSize?.[0] === size[0] && this.depthTextureSize[1] === size[1]) {
+      return;
+    }
+
+    this.depthTexture?.destroy?.();
+    this.depthTexture = this.device.createTexture({
+      label: "OrbixJS WebGPU depth texture",
+      size: [size[0], size[1]],
+      format: webGpuDepthFormat,
+      usage: webGpuTextureUsage.renderAttachment,
+    });
+    this.depthTextureSize = size;
   }
 
   private createGlobeBindGroup(): void {
