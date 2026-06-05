@@ -1,5 +1,15 @@
+import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
+import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
+import { webGpuGlobeProgram } from "./wgsl-shaders";
+
+const webGpuBufferUsage = {
+  vertex: 0x20,
+  index: 0x10,
+  uniform: 0x40,
+  copyDst: 0x08,
+} as const;
 
 type NavigatorWithGpu = Navigator & {
   gpu?: WebGpuLike;
@@ -21,6 +31,21 @@ type WebGpuAdapterLike = {
 };
 
 type WebGpuDeviceLike = {
+  queue: WebGpuQueueLike;
+  createShaderModule(options: { label?: string; code: string }): WebGpuShaderModuleLike;
+  createRenderPipeline(options: WebGpuRenderPipelineDescriptorLike): WebGpuRenderPipelineLike;
+  createBuffer(options: { label?: string; size: number; usage: number }): WebGpuBufferLike;
+  createBindGroup(options: {
+    label?: string;
+    layout: unknown;
+    entries: Array<{
+      binding: number;
+      resource: {
+        buffer: WebGpuBufferLike;
+      };
+    }>;
+  }): WebGpuBindGroupLike;
+  createCommandEncoder(options?: { label?: string }): WebGpuCommandEncoderLike;
   destroy?: () => void;
 };
 
@@ -30,7 +55,83 @@ type WebGpuCanvasContextLike = {
     format: string;
     alphaMode?: "opaque" | "premultiplied";
   }): void;
+  getCurrentTexture(): {
+    createView(): unknown;
+  };
   unconfigure?: () => void;
+};
+
+type WebGpuQueueLike = {
+  writeBuffer(
+    buffer: WebGpuBufferLike,
+    bufferOffset: number,
+    data: ArrayBuffer | ArrayBufferView,
+    dataOffset?: number,
+    size?: number,
+  ): void;
+  submit(commandBuffers: readonly unknown[]): void;
+};
+
+type WebGpuShaderModuleLike = unknown;
+
+type WebGpuBufferLike = {
+  destroy?: () => void;
+};
+
+type WebGpuRenderPipelineLike = {
+  getBindGroupLayout(index: number): unknown;
+};
+
+type WebGpuBindGroupLike = unknown;
+
+type WebGpuCommandEncoderLike = {
+  beginRenderPass(options: {
+    label?: string;
+    colorAttachments: Array<{
+      view: unknown;
+      clearValue: { r: number; g: number; b: number; a: number };
+      loadOp: "clear";
+      storeOp: "store";
+    }>;
+  }): WebGpuRenderPassEncoderLike;
+  finish(): unknown;
+};
+
+type WebGpuRenderPassEncoderLike = {
+  setPipeline(pipeline: WebGpuRenderPipelineLike): void;
+  setBindGroup(index: number, bindGroup: WebGpuBindGroupLike): void;
+  setVertexBuffer(slot: number, buffer: WebGpuBufferLike): void;
+  setIndexBuffer(buffer: WebGpuBufferLike, indexFormat: "uint16"): void;
+  drawIndexed(indexCount: number): void;
+  end(): void;
+};
+
+type WebGpuRenderPipelineDescriptorLike = {
+  label?: string;
+  layout: "auto";
+  vertex: {
+    module: WebGpuShaderModuleLike;
+    entryPoint: string;
+    buffers: Array<{
+      arrayStride: number;
+      attributes: Array<{
+        shaderLocation: number;
+        offset: number;
+        format: "float32x3";
+      }>;
+    }>;
+  };
+  fragment: {
+    module: WebGpuShaderModuleLike;
+    entryPoint: string;
+    targets: Array<{
+      format: string;
+    }>;
+  };
+  primitive: {
+    topology: "triangle-list";
+    cullMode: "back";
+  };
 };
 
 type WebGpuCanvas = HTMLCanvasElement & {
@@ -53,6 +154,12 @@ export class WebGPURenderer implements Renderer {
   private context: WebGpuCanvasContextLike | undefined;
   private format: string | undefined;
   private initialized = false;
+  private globePipeline: WebGpuRenderPipelineLike | undefined;
+  private globeBindGroup: WebGpuBindGroupLike | undefined;
+  private globeVertexBuffer: WebGpuBufferLike | undefined;
+  private globeIndexBuffer: WebGpuBufferLike | undefined;
+  private globeUniformBuffer: WebGpuBufferLike | undefined;
+  private globeIndexCount = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -101,6 +208,7 @@ export class WebGPURenderer implements Renderer {
     this.capabilities.supportsFloatTextures = adapter.features?.has("float32-filterable") ?? true;
     this.resize();
     this.configureCanvas();
+    this.createGlobeResources();
     this.initialized = true;
     return true;
   }
@@ -116,17 +224,66 @@ export class WebGPURenderer implements Renderer {
     }
   }
 
-  render(_frame: RendererFrame): void {
+  render(frame: RendererFrame): void {
     this.resize();
+
+    if (
+      !this.initialized ||
+      !this.device ||
+      !this.context ||
+      !this.globePipeline ||
+      !this.globeBindGroup ||
+      !this.globeVertexBuffer ||
+      !this.globeIndexBuffer ||
+      !this.globeUniformBuffer
+    ) {
+      return;
+    }
+
+    const aspect = this.canvas.width / this.canvas.height;
+    const viewProjection = multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix());
+    this.device.queue.writeBuffer(this.globeUniformBuffer, 0, viewProjection);
+
+    const view = this.context.getCurrentTexture().createView();
+    const encoder = this.device.createCommandEncoder({ label: "OrbixJS WebGPU frame" });
+    const pass = encoder.beginRenderPass({
+      label: "OrbixJS WebGPU globe pass",
+      colorAttachments: [
+        {
+          view,
+          clearValue: { r: 0.012, g: 0.022, b: 0.028, a: 1 },
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+    });
+
+    pass.setPipeline(this.globePipeline);
+    pass.setBindGroup(0, this.globeBindGroup);
+    pass.setVertexBuffer(0, this.globeVertexBuffer);
+    pass.setIndexBuffer(this.globeIndexBuffer, "uint16");
+    pass.drawIndexed(this.globeIndexCount);
+    pass.end();
+
+    this.device.queue.submit([encoder.finish()]);
   }
 
   destroy(): void {
     this.context?.unconfigure?.();
+    this.globeVertexBuffer?.destroy?.();
+    this.globeIndexBuffer?.destroy?.();
+    this.globeUniformBuffer?.destroy?.();
     this.device?.destroy?.();
     this.initialized = false;
     this.context = undefined;
     this.device = undefined;
     this.adapter = undefined;
+    this.globePipeline = undefined;
+    this.globeBindGroup = undefined;
+    this.globeVertexBuffer = undefined;
+    this.globeIndexBuffer = undefined;
+    this.globeUniformBuffer = undefined;
+    this.globeIndexCount = 0;
   }
 
   private configureCanvas(): void {
@@ -139,5 +296,79 @@ export class WebGPURenderer implements Renderer {
       format: this.format,
       alphaMode: "opaque",
     });
+  }
+
+  private createGlobeResources(): void {
+    if (!this.device || !this.format) {
+      return;
+    }
+
+    const mesh = createEllipsoidMesh();
+    const vertexModule = this.device.createShaderModule({
+      label: webGpuGlobeProgram.vertex.id,
+      code: webGpuGlobeProgram.vertex.source,
+    });
+    const fragmentModule = this.device.createShaderModule({
+      label: webGpuGlobeProgram.fragment.id,
+      code: webGpuGlobeProgram.fragment.source,
+    });
+
+    this.globeVertexBuffer = this.device.createBuffer({
+      label: "OrbixJS globe vertices",
+      size: mesh.vertices.byteLength,
+      usage: webGpuBufferUsage.vertex | webGpuBufferUsage.copyDst,
+    });
+    this.globeIndexBuffer = this.device.createBuffer({
+      label: "OrbixJS globe indices",
+      size: mesh.indices.byteLength,
+      usage: webGpuBufferUsage.index | webGpuBufferUsage.copyDst,
+    });
+    this.globeUniformBuffer = this.device.createBuffer({
+      label: "OrbixJS globe uniforms",
+      size: 16 * Float32Array.BYTES_PER_ELEMENT,
+      usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
+    });
+    this.device.queue.writeBuffer(this.globeVertexBuffer, 0, mesh.vertices);
+    this.device.queue.writeBuffer(this.globeIndexBuffer, 0, mesh.indices);
+
+    this.globePipeline = this.device.createRenderPipeline({
+      label: "OrbixJS WebGPU globe pipeline",
+      layout: "auto",
+      vertex: {
+        module: vertexModule,
+        entryPoint: "main",
+        buffers: [
+          {
+            arrayStride: mesh.vertexStride * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x3" },
+              { shaderLocation: 1, offset: 3 * Float32Array.BYTES_PER_ELEMENT, format: "float32x3" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "main",
+        targets: [{ format: this.format }],
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "back",
+      },
+    });
+    this.globeBindGroup = this.device.createBindGroup({
+      label: "OrbixJS globe bind group",
+      layout: this.globePipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.globeUniformBuffer,
+          },
+        },
+      ],
+    });
+    this.globeIndexCount = mesh.indices.length;
   }
 }
