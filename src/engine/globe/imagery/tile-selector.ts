@@ -45,11 +45,11 @@ export function clampLevel(level: number, { minLevel = 0, maxLevel = Number.POSI
   return Math.min(maxLevel, Math.max(minLevel, level));
 }
 
-export function selectLevel(cameraDistance: number, maxLevel = 9): number {
-  if (cameraDistance < 1.18 && maxLevel > 6) {
-    const highLodStartDistance = 1.18;
+export function selectLevel(cameraDistance: number, maxLevel = 6): number {
+  if (cameraDistance < 1.35 && maxLevel > 6) {
+    const highLodStartDistance = 1.35;
     const minimumCameraDistance = 1.08;
-    const step = (highLodStartDistance - minimumCameraDistance) / (maxLevel - 5);
+    const step = (highLodStartDistance - minimumCameraDistance) / Math.max(1, maxLevel - 5);
     const clampedDistance = Math.max(cameraDistance, minimumCameraDistance);
     const extraLevels = Math.floor((highLodStartDistance - clampedDistance) / step + 1e-9);
     return Math.min(maxLevel, 6 + Math.max(0, extraLevels));

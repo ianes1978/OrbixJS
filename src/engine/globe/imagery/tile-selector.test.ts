@@ -8,10 +8,15 @@ describe("CameraTileSelector", () => {
     expect(selectLevel(1.5)).toBe(4);
     expect(selectLevel(1.25)).toBe(5);
     expect(selectLevel(1.16)).toBe(6);
-    expect(selectLevel(1.14)).toBe(7);
-    expect(selectLevel(1.12)).toBe(8);
-    expect(selectLevel(1.09)).toBe(9);
-    expect(selectLevel(1.09, 15)).toBe(15);
+    expect(selectLevel(1.09)).toBe(6);
+  });
+
+  it("spreads catalog-driven high LOD levels across the close zoom range", () => {
+    expect(selectLevel(1.34, 10)).toBe(6);
+    expect(selectLevel(1.29, 10)).toBe(7);
+    expect(selectLevel(1.23, 10)).toBe(8);
+    expect(selectLevel(1.18, 10)).toBe(9);
+    expect(selectLevel(1.13, 10)).toBe(10);
     expect(selectLevel(1.08, 15)).toBe(15);
   });
 
@@ -28,7 +33,7 @@ describe("CameraTileSelector", () => {
     const selector = new CameraTileSelector();
     const selection = selector.select(0, 0, 1.09);
 
-    expect(selection.level).toBe(9);
+    expect(selection.level).toBe(6);
     expect(selection.tiles).toHaveLength(121);
   });
 
