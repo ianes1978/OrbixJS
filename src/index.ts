@@ -25,13 +25,16 @@ export {
 } from "./engine/catalog/data-catalog";
 export {
   loadOrbixProject,
+  migrateOrbixProject,
   parseOrbixProject,
   resolveOrbixLayerCrs,
   serializeOrbixProject,
   ORBIX_PROJECT_SCHEMA_VERSION,
+  ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS,
   type OrbixLayerCrsResolution,
   type OrbixProject,
   type OrbixProjectLayer,
+  type OrbixProjectSchemaVersion,
 } from "./engine/project/orbix-project";
 export { sunDirectionFromDate } from "./engine/core/astro/sun-position";
 export {

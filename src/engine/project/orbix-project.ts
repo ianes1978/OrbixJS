@@ -1,6 +1,9 @@
 import { type DataSourceDescriptor } from "../catalog/data-catalog";
 
 export const ORBIX_PROJECT_SCHEMA_VERSION = "0.1";
+export const ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS = ["0.0", ORBIX_PROJECT_SCHEMA_VERSION] as const;
+
+export type OrbixProjectSchemaVersion = (typeof ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS)[number];
 
 export type OrbixProject = {
   schemaVersion: typeof ORBIX_PROJECT_SCHEMA_VERSION;
@@ -54,7 +57,7 @@ type RawOrbixProjectLayer = {
 };
 
 export function parseOrbixProject(json: unknown): OrbixProject {
-  const project = expectObject<RawOrbixProject>(json, "project");
+  const project = expectObject<RawOrbixProject>(migrateOrbixProject(json), "project");
   const schemaVersion = expectString(project.schemaVersion, "project.schemaVersion");
 
   if (schemaVersion !== ORBIX_PROJECT_SCHEMA_VERSION) {
@@ -71,6 +74,21 @@ export function parseOrbixProject(json: unknown): OrbixProject {
   };
 }
 
+export function migrateOrbixProject(json: unknown): unknown {
+  const project = expectObject<RawOrbixProject>(json, "project");
+  const schemaVersion = expectString(project.schemaVersion, "project.schemaVersion");
+
+  if (schemaVersion === ORBIX_PROJECT_SCHEMA_VERSION) {
+    return project;
+  }
+
+  if (schemaVersion === "0.0") {
+    return migrateProjectV0ToV01(project);
+  }
+
+  throw new Error(`Unsupported OrbixProject schema version: ${schemaVersion}`);
+}
+
 export async function loadOrbixProject(url: string): Promise<OrbixProject> {
   const response = await fetch(url);
 
@@ -83,6 +101,19 @@ export async function loadOrbixProject(url: string): Promise<OrbixProject> {
 
 export function serializeOrbixProject(project: OrbixProject): string {
   return `${JSON.stringify(project, null, 2)}\n`;
+}
+
+function migrateProjectV0ToV01(project: RawOrbixProject): RawOrbixProject {
+  const crs =
+    typeof project.crs === "string"
+      ? { project: project.crs, heightReference: "ellipsoid" }
+      : project.crs ?? { project: "EPSG:4326", heightReference: "ellipsoid" };
+
+  return {
+    ...project,
+    schemaVersion: ORBIX_PROJECT_SCHEMA_VERSION,
+    crs,
+  };
 }
 
 function parseProjectCrs(value: unknown): OrbixProject["crs"] {

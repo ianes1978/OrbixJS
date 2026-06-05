@@ -61,7 +61,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "OrbixProject JSON", done: true },
       { label: "DataCatalog", done: true },
       { label: "Demo project/catalog", done: true },
-      { label: "Schema e migrazioni", done: false },
+      { label: "Schema e migrazioni", done: true },
       { label: "Preprocess manifest", done: false },
     ],
   },

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ORBIX_PROJECT_SCHEMA_VERSION, parseOrbixProject, resolveOrbixLayerCrs, serializeOrbixProject } from "./orbix-project";
+import {
+  migrateOrbixProject,
+  ORBIX_PROJECT_SCHEMA_VERSION,
+  ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS,
+  parseOrbixProject,
+  resolveOrbixLayerCrs,
+  serializeOrbixProject,
+} from "./orbix-project";
 
 describe("parseOrbixProject", () => {
   it("parses a versioned project document", () => {
@@ -51,6 +58,34 @@ describe("parseOrbixProject", () => {
         layers: [],
       }),
     ).toThrow("Unsupported OrbixProject schema version");
+  });
+
+  it("migrates legacy project documents before validation", () => {
+    const project = parseOrbixProject({
+      schemaVersion: "0.0",
+      name: "Legacy",
+      crs: "EPSG:4326",
+      layers: [],
+    });
+
+    expect(project.schemaVersion).toBe(ORBIX_PROJECT_SCHEMA_VERSION);
+    expect(project.crs).toEqual({ project: "EPSG:4326", heightReference: "ellipsoid" });
+  });
+
+  it("exposes supported schema versions", () => {
+    expect(ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS).toContain("0.0");
+    expect(ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS).toContain(ORBIX_PROJECT_SCHEMA_VERSION);
+  });
+
+  it("keeps current project documents unchanged during migration", () => {
+    const current = {
+      schemaVersion: ORBIX_PROJECT_SCHEMA_VERSION,
+      name: "Current",
+      crs: { project: "EPSG:4326" },
+      layers: [],
+    };
+
+    expect(migrateOrbixProject(current)).toBe(current);
   });
 
   it("serializes deterministically", () => {
