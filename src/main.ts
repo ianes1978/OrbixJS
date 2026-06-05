@@ -169,10 +169,11 @@ if (!globeHost) {
 const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
 const imageryStatusElement = imageryStatus;
+const rendererBackend = new URLSearchParams(window.location.search).get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 
 const viewer = new GeoViewer({
   container: globeHost,
-  renderer: "webgl2",
+  renderer: rendererBackend,
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
@@ -186,7 +187,9 @@ const viewer = new GeoViewer({
     imageryStatusElement.textContent = "fallback";
   },
 });
-rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
+rendererStatus.textContent = viewer.renderer.supported
+  ? `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} attivo`
+  : `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} non disponibile`;
 imageryStatus.textContent = "Ortofoto";
 
 sceneDateInput.addEventListener("change", () => {

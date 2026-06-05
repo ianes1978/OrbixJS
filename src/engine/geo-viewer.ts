@@ -16,10 +16,11 @@ import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
+import { WebGPURenderer } from "./renderer/webgpu/webgpu-renderer";
 
 export type GeoViewerOptions = {
   container: HTMLElement | string;
-  renderer?: "webgl2";
+  renderer?: "webgl2" | "webgpu";
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -63,7 +64,7 @@ export class GeoViewer {
   readonly canvas: HTMLCanvasElement;
   readonly scene = new Scene();
   readonly camera = new OrbitCamera();
-  readonly renderer: WebGL2Renderer;
+  readonly renderer: WebGL2Renderer | WebGPURenderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
   private readonly imageryTiling = new WebMercatorTilingScheme();
@@ -105,7 +106,7 @@ export class GeoViewer {
       throw new Error("GeoViewer container not found");
     }
 
-    if (options.renderer && options.renderer !== "webgl2") {
+    if (options.renderer && options.renderer !== "webgl2" && options.renderer !== "webgpu") {
       throw new Error(`Unsupported renderer: ${options.renderer}`);
     }
 
@@ -114,7 +115,12 @@ export class GeoViewer {
     this.canvas.setAttribute("aria-label", "OrbixJS WGS84 globe");
     container.append(this.canvas);
 
-    this.renderer = new WebGL2Renderer(this.canvas);
+    this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
+    if (this.renderer instanceof WebGPURenderer) {
+      void this.renderer.initialize().catch((error: unknown) => {
+        console.warn("WebGPU initialization failed", error);
+      });
+    }
     this.date = new Date(options.date ?? Date.now());
     this.renderer.setSunDirection(sunDirectionFromDate(this.date));
     this.imagery = new ImageryLayerCollection({

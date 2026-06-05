@@ -1,4 +1,6 @@
+import { type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
+import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
@@ -179,6 +181,52 @@ export class WebGPURenderer implements Renderer {
 
   get ready(): boolean {
     return this.initialized;
+  }
+
+  setImagery(_image: TexImageSource): void {
+    // Imagery upload lands in the next WebGPU milestone.
+  }
+
+  setImageryTile(_tile: QuadtreeTile, _image: TexImageSource): void {
+    // Imagery upload lands in the next WebGPU milestone.
+  }
+
+  ensureDebugImageryTile(_tile: QuadtreeTile): void {
+    // Imagery upload lands in the next WebGPU milestone.
+  }
+
+  setActiveImageryTiles(_ids: readonly string[]): void {
+    // Imagery upload lands in the next WebGPU milestone.
+  }
+
+  setVectorLines(_lines: readonly (readonly [number, number])[][]): void {
+    // Vector overlay support is WebGL2-only for now.
+  }
+
+  setVectorLinesVisible(_visible: boolean): void {
+    // Vector overlay support is WebGL2-only for now.
+  }
+
+  setDebugModelVisible(_visible: boolean): void {
+    // Model rendering support is WebGL2-only for now.
+  }
+
+  setDebugModelMesh(_mesh: {
+    positions: Float32Array;
+    texcoords?: Float32Array;
+    indices?: Uint16Array | Uint32Array;
+    lon: number;
+    lat: number;
+    height?: number;
+    scale?: number;
+    baseColorFactor?: [number, number, number, number];
+    baseColorTexture?: TexImageSource;
+  }): void {
+    // Model rendering support is WebGL2-only for now.
+  }
+
+  setSunDirection(_direction: Vec3): void {
+    // Sun uniforms land after the first textured WebGPU pass.
   }
 
   async initialize(): Promise<boolean> {
