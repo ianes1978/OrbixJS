@@ -74,6 +74,8 @@ type TileEntry = {
 
 export class WebGL2Renderer implements Renderer {
   readonly supported: boolean;
+  readonly backend = "webgl2" as const;
+  readonly capabilities: Renderer["capabilities"];
   private readonly gl: WebGL2RenderingContext | null;
   private readonly program: GlobeProgram | null = null;
   private readonly tileProgram: TileProgram | null = null;
@@ -93,6 +95,19 @@ export class WebGL2Renderer implements Renderer {
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
     this.supported = this.gl !== null;
+    this.capabilities = this.gl
+      ? {
+          backend: this.backend,
+          maxTextureSize: this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number,
+          supportsInstancing: true,
+          supportsFloatTextures: this.gl.getExtension("EXT_color_buffer_float") !== null,
+        }
+      : {
+          backend: this.backend,
+          maxTextureSize: 0,
+          supportsInstancing: false,
+          supportsFloatTextures: false,
+        };
 
     if (!this.gl) {
       return;
