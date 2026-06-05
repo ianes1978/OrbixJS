@@ -26,6 +26,7 @@
       "title": "South Tyrol DTM 2.5m candidate",
       "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json",
       "crs": "EPSG:25832",
+      "preprocessManifestUrl": "preprocess/demo-preprocess.json",
       "attribution": "Autonomous Province of Bolzano/Bozen",
       "license": "To be verified before runtime use"
     }

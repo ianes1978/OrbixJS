@@ -25,6 +25,7 @@ export type DataSourceDescriptor = {
   maxLevel?: number;
   tileSize?: number;
   tileMatrixSet?: TileMatrixSetDescriptor;
+  preprocessManifestUrl?: string;
 };
 
 type RawDataCatalog = {
@@ -44,6 +45,7 @@ type RawDataSourceDescriptor = {
   maxLevel?: unknown;
   tileSize?: unknown;
   tileMatrixSet?: unknown;
+  preprocessManifestUrl?: unknown;
 };
 
 type RawTileMatrixSetDescriptor = {
@@ -132,6 +134,7 @@ function parseSource(value: unknown, index: number): DataSourceDescriptor {
     maxLevel,
     tileSize,
     tileMatrixSet,
+    preprocessManifestUrl: optionalString(source.preprocessManifestUrl, `catalog.sources[${index}].preprocessManifestUrl`),
   };
 }
 

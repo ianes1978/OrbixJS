@@ -16,6 +16,7 @@ describe("parseDataCatalog", () => {
           maxLevel: 6,
           tileSize: 256,
           tileMatrixSet: "WebMercatorQuad",
+          preprocessManifestUrl: "preprocess/world-imagery.json",
         },
       ],
     });
@@ -25,6 +26,7 @@ describe("parseDataCatalog", () => {
       minLevel: 0,
       maxLevel: 6,
       tileSize: 256,
+      preprocessManifestUrl: "preprocess/world-imagery.json",
       tileMatrixSet: {
         id: "WebMercatorQuad",
         crs: "EPSG:3857",

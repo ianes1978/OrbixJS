@@ -62,7 +62,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "DataCatalog", done: true },
       { label: "Demo project/catalog", done: true },
       { label: "Schema e migrazioni", done: true },
-      { label: "Preprocess manifest", done: false },
+      { label: "Preprocess manifest", done: true },
     ],
   },
   {

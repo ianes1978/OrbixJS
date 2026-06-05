@@ -85,6 +85,7 @@ Project/data pipeline target:
 - `DataCatalog` per dataset, URL, CRS, extent, licenza, attribution, auth, cache policy, preview e fallback
 - `PreprocessJob` per trasformare DTM/GeoTIFF/WCS/COG, feature, glTF/3D Tiles e meteo in asset runtime riproducibili
 - manifest preprocessing con input, hash, CRS, extent, tool version, parametri, licenza e output
+- manifest demo: `public/preprocess/demo-preprocess.json`
 - catalogo demo Alto Adige con DTM 2,5m, Orthofoto 2023, layer debug e fallback GitHub Pages
 
 Camera flight target:

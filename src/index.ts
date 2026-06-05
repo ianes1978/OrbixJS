@@ -91,5 +91,19 @@ export {
   type TileMatrixSetDescriptor,
   type TileMatrixSetId,
 } from "./engine/globe/tiling/tile-matrix-set";
+export {
+  findPreprocessJob,
+  loadPreprocessManifest,
+  parsePreprocessManifest,
+  PREPROCESS_MANIFEST_SCHEMA_VERSION,
+  serializePreprocessManifest,
+  type PreprocessArtifact,
+  type PreprocessExtent,
+  type PreprocessJob,
+  type PreprocessJobType,
+  type PreprocessManifest,
+  type PreprocessParameters,
+  type PreprocessProvenance,
+} from "./engine/preprocess/preprocess-manifest";
 export { WebGPURenderer } from "./engine/renderer/webgpu/webgpu-renderer";
 export { webGpuGlobeProgram } from "./engine/renderer/webgpu/wgsl-shaders";

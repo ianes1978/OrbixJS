@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "0.1",
+  "jobs": [
+    {
+      "id": "south-tyrol-dtm-25m-heightmap",
+      "type": "terrain-heightmap",
+      "title": "South Tyrol DTM 2.5m runtime terrain candidate",
+      "inputs": [
+        {
+          "id": "civis-dtm-layer-json",
+          "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json",
+          "format": "civis-layer-json",
+          "crs": "EPSG:25832"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "orbix-heightmap-manifest",
+          "url": "terrain/south-tyrol-dtm-25m/manifest.json",
+          "format": "orbix-heightmap-manifest",
+          "crs": "EPSG:25832",
+          "tileMatrixSet": "EPSG_25832"
+        }
+      ],
+      "crs": "EPSG:25832",
+      "extent": {
+        "west": 580000,
+        "south": 5120000,
+        "east": 760000,
+        "north": 5225000,
+        "crs": "EPSG:25832"
+      },
+      "parameters": {
+        "tileSize": 256,
+        "heightEncoding": "float32",
+        "heightReference": "orthometric",
+        "noData": null,
+        "requiresValidation": true
+      },
+      "provenance": {
+        "tool": "orbix-preprocess",
+        "toolVersion": "0.1.0"
+      },
+      "attribution": "Autonomous Province of Bolzano/Bozen",
+      "license": "To be verified before runtime use"
+    }
+  ]
+}
