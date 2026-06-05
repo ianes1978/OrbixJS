@@ -21,6 +21,8 @@ const webGpuTextureUsage = {
 } as const;
 
 const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
+const uniformFloatCount = 20;
+const uniformBufferByteLength = uniformFloatCount * Float32Array.BYTES_PER_ELEMENT;
 
 type NavigatorWithGpu = Navigator & {
   gpu?: WebGpuLike;
@@ -230,6 +232,7 @@ export class WebGPURenderer implements Renderer {
   private readonly activeTileIds = new Set<string>();
   private pendingImagery: TexImageSource | undefined;
   private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
+  private globeImageryReady = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -334,6 +337,7 @@ export class WebGPURenderer implements Renderer {
       usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
     });
     this.device.queue.copyExternalImageToTexture({ source: image }, { texture: this.imageryTexture }, size);
+    this.globeImageryReady = true;
     this.createGlobeBindGroup();
     this.pendingImagery = undefined;
   }
@@ -426,7 +430,7 @@ export class WebGPURenderer implements Renderer {
 
     const aspect = this.canvas.width / this.canvas.height;
     const viewProjection = webGpuViewProjection(frame, aspect);
-    this.device.queue.writeBuffer(this.globeUniformBuffer, 0, viewProjection);
+    writeUniforms(this.device.queue, this.globeUniformBuffer, viewProjection, this.globeImageryReady ? 1 : 0);
 
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder({ label: "OrbixJS WebGPU frame" });
@@ -457,7 +461,7 @@ export class WebGPURenderer implements Renderer {
         continue;
       }
 
-      this.device.queue.writeBuffer(entry.uniformBuffer, 0, viewProjection);
+      writeUniforms(this.device.queue, entry.uniformBuffer, viewProjection, 1);
       pass.setBindGroup(0, entry.bindGroup);
       pass.setVertexBuffer(0, entry.vertexBuffer);
       pass.setIndexBuffer(entry.indexBuffer, "uint16");
@@ -494,6 +498,7 @@ export class WebGPURenderer implements Renderer {
     this.imageryTexture = undefined;
     this.imagerySampler = undefined;
     this.globeIndexCount = 0;
+    this.globeImageryReady = false;
     this.tilePipeline = undefined;
     this.tileEntries.clear();
     this.activeTileIds.clear();
@@ -548,7 +553,7 @@ export class WebGPURenderer implements Renderer {
     });
     this.globeUniformBuffer = this.device.createBuffer({
       label: "OrbixJS globe uniforms",
-      size: 16 * Float32Array.BYTES_PER_ELEMENT,
+      size: uniformBufferByteLength,
       usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
     });
     this.imagerySampler = this.device.createSampler({
@@ -607,7 +612,7 @@ export class WebGPURenderer implements Renderer {
       usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
     });
     const data = new Uint8Array(256);
-    data.set([18, 42, 50, 255]);
+    data.set([20, 118, 142, 255]);
     this.device.queue.writeTexture({ texture }, data, { bytesPerRow: 256, rowsPerImage: 1 }, [1, 1]);
     return texture;
   }
@@ -705,7 +710,7 @@ export class WebGPURenderer implements Renderer {
     });
     const uniformBuffer = this.device.createBuffer({
       label: `OrbixJS WebGPU tile uniforms ${tile.id}`,
-      size: 16 * Float32Array.BYTES_PER_ELEMENT,
+      size: uniformBufferByteLength,
       usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
     });
     const texture = this.createPlaceholderTexture();
@@ -787,4 +792,11 @@ function textureSourceSize(source: TexImageSource): [number, number] | undefined
 
 function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {
   return multiply(webGpuClipSpaceCorrection, multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix()));
+}
+
+function writeUniforms(queue: WebGpuQueueLike, buffer: WebGpuBufferLike, viewProjection: Float32Array, imageryReady: number): void {
+  const uniforms = new Float32Array(uniformFloatCount);
+  uniforms.set(viewProjection, 0);
+  uniforms[16] = imageryReady;
+  queue.writeBuffer(buffer, 0, uniforms);
 }

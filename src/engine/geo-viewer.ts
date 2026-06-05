@@ -64,7 +64,7 @@ export class GeoViewer {
   readonly canvas: HTMLCanvasElement;
   readonly scene = new Scene();
   readonly camera = new OrbitCamera();
-  readonly renderer: WebGL2Renderer | WebGPURenderer;
+  renderer: WebGL2Renderer | WebGPURenderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
   private readonly imageryTiling = new WebMercatorTilingScheme();
@@ -117,8 +117,23 @@ export class GeoViewer {
 
     this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
     if (this.renderer instanceof WebGPURenderer) {
-      void this.renderer.initialize().catch((error: unknown) => {
-        console.warn("WebGPU initialization failed", error);
+      void this.renderer
+        .initialize()
+        .then((initialized) => {
+          if (!initialized) {
+            this.fallbackToWebGL2("WebGPU initialization returned false");
+            return;
+          }
+
+          this.dispatchRendererChanged();
+        })
+        .catch((error: unknown) => {
+          console.warn("WebGPU initialization failed", error);
+          this.fallbackToWebGL2(error);
+        });
+    } else {
+      queueMicrotask(() => {
+        this.dispatchRendererChanged();
       });
     }
     this.date = new Date(options.date ?? Date.now());
@@ -348,6 +363,30 @@ export class GeoViewer {
     };
 
     this.frame = requestAnimationFrame(render);
+  }
+
+  private fallbackToWebGL2(reason: unknown): void {
+    if (this.disposed) {
+      return;
+    }
+
+    console.warn("Falling back to WebGL2 renderer", reason);
+    this.renderer.destroy();
+    this.renderer = new WebGL2Renderer(this.canvas);
+    this.renderer.setSunDirection(sunDirectionFromDate(this.date));
+    this.dispatchRendererChanged();
+  }
+
+  private dispatchRendererChanged(): void {
+    this.canvas.dispatchEvent(
+      new CustomEvent("orbix:renderer-changed", {
+        detail: {
+          backend: this.renderer.backend,
+          supported: this.renderer.supported,
+          ready: this.renderer instanceof WebGPURenderer ? this.renderer.ready : true,
+        },
+      }),
+    );
   }
 
   private onImageryStats(stats: Parameters<NonNullable<GeoViewerOptions["onImageryStats"]>>[0]): void {

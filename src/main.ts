@@ -188,9 +188,15 @@ const viewer = new GeoViewer({
   },
 });
 rendererStatus.textContent = viewer.renderer.supported
-  ? `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} attivo`
+  ? `${viewer.renderer.backend === "webgpu" ? "WebGPU init" : "WebGL2"} attivo`
   : `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} non disponibile`;
 imageryStatus.textContent = "Ortofoto";
+
+viewer.canvas.addEventListener("orbix:renderer-changed", (event) => {
+  const detail = (event as CustomEvent<{ backend: "webgl2" | "webgpu"; supported: boolean; ready: boolean }>).detail;
+  const label = detail.backend === "webgpu" ? "WebGPU" : "WebGL2";
+  rendererStatus.textContent = detail.supported && detail.ready ? `${label} attivo` : `${label} non disponibile`;
+});
 
 sceneDateInput.addEventListener("change", () => {
   const date = new Date(sceneDateInput.value);
