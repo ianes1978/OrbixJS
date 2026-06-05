@@ -7,6 +7,7 @@ describe("WebMercatorTilingScheme", () => {
 
     expect(tiling.tileCount(0)).toBe(1);
     expect(tiling.tileCount(3)).toBe(8);
+    expect(tiling.matrixSet.id).toBe("WebMercatorQuad");
   });
 
   it("maps lon/lat to tile coordinates", () => {

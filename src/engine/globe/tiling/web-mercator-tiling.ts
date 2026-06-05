@@ -1,3 +1,5 @@
+import { createWebMercatorQuadMatrixSet, tileMatrixAtLevel, type TileMatrixSetDescriptor } from "./tile-matrix-set";
+
 export type TileCoordinate = {
   x: number;
   y: number;
@@ -14,8 +16,14 @@ export type RectangleRadians = {
 const maxLatitude = 85.0511287798066 * (Math.PI / 180);
 
 export class WebMercatorTilingScheme {
+  readonly matrixSet: TileMatrixSetDescriptor;
+
+  constructor(maxLevel = 22, tileSize = 256) {
+    this.matrixSet = createWebMercatorQuadMatrixSet(maxLevel, tileSize);
+  }
+
   tileCount(level: number): number {
-    return 2 ** level;
+    return tileMatrixAtLevel(this.matrixSet, level)?.matrixWidth ?? 2 ** level;
   }
 
   tileXYToRectangle({ x, y, z }: TileCoordinate): RectangleRadians {

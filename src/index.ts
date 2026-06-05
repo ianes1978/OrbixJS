@@ -71,5 +71,12 @@ export {
   type CrsCoordinate,
   type SupportedCrs,
 } from "./engine/core/geodesy/crs-transform";
+export {
+  createWebMercatorQuadMatrixSet,
+  tileMatrixAtLevel,
+  type TileMatrixDescriptor,
+  type TileMatrixSetDescriptor,
+  type TileMatrixSetId,
+} from "./engine/globe/tiling/tile-matrix-set";
 export { WebGPURenderer } from "./engine/renderer/webgpu/webgpu-renderer";
 export { webGpuGlobeProgram } from "./engine/renderer/webgpu/wgsl-shaders";
