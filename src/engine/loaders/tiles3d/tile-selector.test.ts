@@ -8,6 +8,10 @@ describe("selectTilesetTile", () => {
 
     const selected = selectTilesetTile(tileset.root, 3.2);
 
+    if (!selected) {
+      throw new Error("Expected root tile to be selected");
+    }
+
     expect(selected.depth).toBe(0);
     expect(selected.tile.content?.uri).toBe("root.glb");
   });
@@ -17,8 +21,23 @@ describe("selectTilesetTile", () => {
 
     const selected = selectTilesetTile(tileset.root, 1.2);
 
+    if (!selected) {
+      throw new Error("Expected child tile to be selected");
+    }
+
     expect(selected.depth).toBe(1);
     expect(selected.tile.content?.uri).toBe("child.glb");
+  });
+
+  it("culls the tileset when its root center is behind the camera", () => {
+    const tileset = createTwoLevelTileset();
+
+    const selected = selectTilesetTile(tileset.root, 1.2, {
+      cameraPosition: [0, 0, 3],
+      cameraTarget: [0, 0, 0],
+    });
+
+    expect(selected).toBeUndefined();
   });
 });
 

@@ -39,6 +39,10 @@ app.innerHTML = `
           <span>3D Tiles</span>
           <strong id="tiles3d-status">tileset -</strong>
         </div>
+        <div class="metric wide">
+          <span>Picking</span>
+          <strong id="picking-status">click globo</strong>
+        </div>
         <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
           LOD overlay
         </button>
@@ -82,6 +86,7 @@ const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
+const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
@@ -95,6 +100,7 @@ if (
   !imageryStatus ||
   !tileStatus ||
   !tiles3dStatus ||
+  !pickingStatus ||
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
@@ -148,9 +154,16 @@ if (!globeHost) {
 }
 
 const tiles3dStatusElement = tiles3dStatus;
+const pickingStatusElement = pickingStatus;
 let demoTileset: TilesetJson | undefined;
 let activeTilesetContentKey: string | undefined;
 let pendingTilesetContentKey: string | undefined;
+let activeModelPickSphere:
+  | {
+      center: [number, number, number];
+      radius: number;
+    }
+  | undefined;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -217,6 +230,37 @@ flyPresetButtons.forEach((button) => {
   });
 });
 
+let pickStart: { x: number; y: number } | undefined;
+viewer.canvas.addEventListener("pointerdown", (event) => {
+  pickStart = { x: event.clientX, y: event.clientY };
+});
+viewer.canvas.addEventListener("pointerup", (event) => {
+  if (!pickStart || event.altKey || event.shiftKey) {
+    return;
+  }
+
+  const moved = Math.hypot(event.clientX - pickStart.x, event.clientY - pickStart.y);
+  pickStart = undefined;
+
+  if (moved > 4) {
+    return;
+  }
+
+  if (debugModelVisible && activeModelPickSphere && viewer.pickSphere(event.clientX, event.clientY, activeModelPickSphere)) {
+    pickingStatusElement.textContent = "mesh: demo marker";
+    return;
+  }
+
+  const hit = viewer.pickGlobe(event.clientX, event.clientY);
+
+  if (!hit) {
+    pickingStatusElement.textContent = "nessun hit";
+    return;
+  }
+
+  pickingStatusElement.textContent = `${toDegrees(hit.lat).toFixed(3)}, ${toDegrees(hit.lon).toFixed(3)}`;
+});
+
 async function loadDemoModel(
   url: string,
   placement: {
@@ -246,6 +290,10 @@ async function loadDemoModel(
       baseColorFactor: demoPrimitive.baseColorFactor,
       baseColorTexture,
     });
+    activeModelPickSphere = {
+      center: viewer.cartographicToUnitSphere(placement),
+      radius: 230000 / 6_378_137,
+    };
   } catch (error) {
     console.warn("Demo GLB failed", error);
     modelToggle!.textContent = "Model -";
@@ -269,7 +317,20 @@ async function syncDemoTilesetContent(): Promise<void> {
     return;
   }
 
-  const selected = selectTilesetTile(demoTileset.root, viewer.camera.distance);
+  const selected = selectTilesetTile(demoTileset.root, viewer.camera.distance, {
+    cameraPosition: viewer.camera.position,
+    cameraTarget: viewer.camera.target,
+  });
+
+  if (!selected) {
+    tiles3dStatusElement.textContent = "culled";
+    activeTilesetContentKey = undefined;
+    activeModelPickSphere = undefined;
+    viewer.setDebugModelVisible(false);
+    return;
+  }
+
+  viewer.setDebugModelVisible(debugModelVisible);
   const contentUri = selected.tile.content?.resolvedUri;
 
   if (!contentUri) {
@@ -301,4 +362,8 @@ async function syncDemoTilesetContent(): Promise<void> {
   activeTilesetContentKey = contentKey;
   pendingTilesetContentKey = undefined;
   tiles3dStatusElement.textContent = `LOD ${selected.depth}: GLB`;
+}
+
+function toDegrees(value: number): number {
+  return (value * 180) / Math.PI;
 }

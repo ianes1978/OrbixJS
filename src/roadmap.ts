@@ -56,7 +56,7 @@ export const roadmap: RoadmapPhase[] = [
     items: [
       { label: "tileset.json", done: true },
       { label: "LOD base", done: true },
-      { label: "Frustum culling", done: false },
+      { label: "Frustum culling", done: true },
       { label: "Caricamento tile", done: true },
     ],
   },
@@ -64,9 +64,9 @@ export const roadmap: RoadmapPhase[] = [
     step: "Fase 6",
     title: "Picking",
     items: [
-      { label: "Picking globo", done: false },
-      { label: "Picking mesh", done: false },
-      { label: "Coordinate geografiche", done: false },
+      { label: "Picking globo", done: true },
+      { label: "Picking mesh", done: true },
+      { label: "Coordinate geografiche", done: true },
     ],
   },
 ];
