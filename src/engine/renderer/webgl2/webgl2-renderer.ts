@@ -7,6 +7,8 @@ type GlobeProgram = {
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
+  uImagery: WebGLUniformLocation;
+  uImageryEnabled: WebGLUniformLocation;
 };
 
 type GpuMesh = {
@@ -21,6 +23,8 @@ export class WebGL2Renderer implements Renderer {
   private readonly gl: WebGL2RenderingContext | null;
   private readonly program: GlobeProgram | null = null;
   private readonly globe: GpuMesh | null = null;
+  private imageryTexture: WebGLTexture | null = null;
+  private imageryEnabled = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
@@ -32,8 +36,21 @@ export class WebGL2Renderer implements Renderer {
 
     this.program = createGlobeProgram(this.gl);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh());
+    this.imageryTexture = createPlaceholderTexture(this.gl);
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.enable(this.gl.CULL_FACE);
+  }
+
+  setImagery(image: TexImageSource): void {
+    if (!this.gl || !this.imageryTexture) {
+      return;
+    }
+
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
+    this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, false);
+    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
+    this.gl.generateMipmap(this.gl.TEXTURE_2D);
+    this.imageryEnabled = true;
   }
 
   resize(): void {
@@ -69,6 +86,10 @@ export class WebGL2Renderer implements Renderer {
     this.gl.useProgram(this.program.program);
     this.gl.uniformMatrix4fv(this.program.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.program.uView, false, view);
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
+    this.gl.uniform1i(this.program.uImagery, 0);
+    this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
     this.gl.bindVertexArray(this.globe.vao);
 
     for (const node of scene.visibleNodes) {
@@ -85,6 +106,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.deleteVertexArray(this.globe.vao);
     this.gl.deleteBuffer(this.globe.vertexBuffer);
     this.gl.deleteBuffer(this.globe.indexBuffer);
+    this.gl.deleteTexture(this.imageryTexture);
     this.gl.deleteProgram(this.program.program);
   }
 }
@@ -103,6 +125,7 @@ function createGlobeProgram(gl: WebGL2RenderingContext): GlobeProgram {
   gl.bindAttribLocation(program, 0, "position");
   gl.bindAttribLocation(program, 1, "normal");
   gl.bindAttribLocation(program, 2, "geodeticNormal");
+  gl.bindAttribLocation(program, 3, "imageryUv");
   gl.linkProgram(program);
   gl.deleteShader(vertex);
   gl.deleteShader(fragment);
@@ -114,12 +137,14 @@ function createGlobeProgram(gl: WebGL2RenderingContext): GlobeProgram {
   const uProjection = gl.getUniformLocation(program, "uProjection");
   const uView = gl.getUniformLocation(program, "uView");
   const uModel = gl.getUniformLocation(program, "uModel");
+  const uImagery = gl.getUniformLocation(program, "uImagery");
+  const uImageryEnabled = gl.getUniformLocation(program, "uImageryEnabled");
 
-  if (!uProjection || !uView || !uModel) {
+  if (!uProjection || !uView || !uModel || !uImagery || !uImageryEnabled) {
     throw new Error("Missing WebGL2 uniform");
   }
 
-  return { program, uProjection, uView, uModel };
+  return { program, uProjection, uView, uModel, uImagery, uImageryEnabled };
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -159,6 +184,8 @@ function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEl
   gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 3 * Float32Array.BYTES_PER_ELEMENT);
   gl.enableVertexAttribArray(2);
   gl.vertexAttribPointer(2, 3, gl.FLOAT, false, stride, 6 * Float32Array.BYTES_PER_ELEMENT);
+  gl.enableVertexAttribArray(3);
+  gl.vertexAttribPointer(3, 2, gl.FLOAT, false, stride, 9 * Float32Array.BYTES_PER_ELEMENT);
 
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
@@ -169,4 +196,31 @@ function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEl
     indexBuffer,
     indexCount: mesh.indices.length,
   };
+}
+
+function createPlaceholderTexture(gl: WebGL2RenderingContext): WebGLTexture {
+  const texture = gl.createTexture();
+
+  if (!texture) {
+    throw new Error("Unable to allocate imagery texture");
+  }
+
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([18, 42, 50, 255]),
+  );
+  gl.generateMipmap(gl.TEXTURE_2D);
+  return texture;
 }

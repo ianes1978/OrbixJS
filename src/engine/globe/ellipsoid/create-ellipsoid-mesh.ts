@@ -1,5 +1,6 @@
 import { Ellipsoid } from "../../core/geodesy/ellipsoid";
 import { normalize } from "../../core/math/vec3";
+import { lonLatToWebMercatorUv } from "../tiling/web-mercator-tiling";
 
 export type MeshData = {
   vertices: Float32Array;
@@ -31,6 +32,8 @@ export function createEllipsoidMesh(
         position[2] / maxRadius,
       ] as const;
       const renderNormal = normalize(scaledPosition);
+      const [, mercatorV] = lonLatToWebMercatorUv(0, lat);
+      const uv = [u, mercatorV] as const;
 
       vertices.push(
         scaledPosition[0],
@@ -42,6 +45,8 @@ export function createEllipsoidMesh(
         normal[0],
         normal[1],
         normal[2],
+        uv[0],
+        uv[1],
       );
     }
   }
@@ -57,6 +62,6 @@ export function createEllipsoidMesh(
   return {
     vertices: new Float32Array(vertices),
     indices: new Uint16Array(indices),
-    vertexStride: 9,
+    vertexStride: 11,
   };
 }

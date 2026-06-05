@@ -19,11 +19,15 @@ app.innerHTML = `
             <h1>OrbixJS</h1>
             <p class="hint">Drag per orbitare, rotellina per zoomare</p>
           </div>
-          <div class="metric">
-            <span>Renderer</span>
-            <strong id="renderer-status">WebGL2</strong>
-          </div>
+        <div class="metric">
+          <span>Renderer</span>
+          <strong id="renderer-status">WebGL2</strong>
         </div>
+        <div class="metric">
+          <span>Imagery</span>
+          <strong id="imagery-status">XYZ</strong>
+        </div>
+      </div>
       </div>
       <aside class="panel" aria-label="Roadmap progress">
         <header>
@@ -49,8 +53,9 @@ const list = document.querySelector<HTMLOListElement>("#roadmap");
 const overallProgress = document.querySelector<HTMLElement>("#overall-progress");
 const overallBar = document.querySelector<HTMLElement>("#overall-bar");
 const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
+const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 
-if (!list || !overallProgress || !overallBar || !rendererStatus) {
+if (!list || !overallProgress || !overallBar || !rendererStatus || !imageryStatus) {
   throw new Error("Missing progress UI element");
 }
 
@@ -98,5 +103,19 @@ if (!globeHost) {
   throw new Error("Missing globe host");
 }
 
-const viewer = new GeoViewer({ container: globeHost, renderer: "webgl2" });
+const viewer = new GeoViewer({
+  container: globeHost,
+  renderer: "webgl2",
+  onImageryReady: (loadedTiles, expectedTiles) => {
+    imageryStatus.textContent = `${loadedTiles}/${expectedTiles} tile`;
+  },
+  onImageryError: () => {
+    imageryStatus.textContent = "fallback";
+  },
+});
 rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
+imageryStatus.textContent = "caricamento";
+viewer.imagery.addXYZLayer({
+  url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  level: 2,
+});

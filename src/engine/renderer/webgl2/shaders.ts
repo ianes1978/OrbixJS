@@ -2,6 +2,7 @@ export const globeVertexShader = `#version 300 es
 in vec3 position;
 in vec3 normal;
 in vec3 geodeticNormal;
+in vec2 imageryUv;
 
 uniform mat4 uProjection;
 uniform mat4 uView;
@@ -10,12 +11,14 @@ uniform mat4 uModel;
 out vec3 vNormal;
 out vec3 vGeodeticNormal;
 out vec3 vPosition;
+out vec2 vImageryUv;
 
 void main() {
   vec4 worldPosition = uModel * vec4(position, 1.0);
   vPosition = worldPosition.xyz;
   vNormal = mat3(uModel) * normal;
   vGeodeticNormal = geodeticNormal;
+  vImageryUv = imageryUv;
   gl_Position = uProjection * uView * worldPosition;
 }
 `;
@@ -26,6 +29,10 @@ precision highp float;
 in vec3 vNormal;
 in vec3 vGeodeticNormal;
 in vec3 vPosition;
+in vec2 vImageryUv;
+
+uniform sampler2D uImagery;
+uniform bool uImageryEnabled;
 
 out vec4 outColor;
 
@@ -45,7 +52,9 @@ void main() {
   float parallel = smoothstep(0.985, 1.0, abs(sin(asin(geo.y) * 12.0)));
   float line = max(meridian, parallel) * 0.18;
   float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
-  vec3 color = mix(base, grid, line) * (0.28 + diffuse * 0.85) + rim * vec3(0.28, 0.72, 0.9);
+  vec3 imagery = texture(uImagery, vImageryUv).rgb;
+  vec3 surface = uImageryEnabled ? mix(base, imagery, 0.86) : mix(base, grid, line);
+  vec3 color = surface * (0.28 + diffuse * 0.85) + rim * vec3(0.28, 0.72, 0.9);
   outColor = vec4(color, 1.0);
 }
 `;

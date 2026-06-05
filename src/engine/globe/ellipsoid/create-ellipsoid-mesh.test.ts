@@ -8,8 +8,8 @@ describe("createEllipsoidMesh", () => {
     const latitudeSegments = 4;
     const mesh = createEllipsoidMesh(undefined, longitudeSegments, latitudeSegments);
 
-    expect(mesh.vertexStride).toBe(9);
-    expect(mesh.vertices.length).toBe((longitudeSegments + 1) * (latitudeSegments + 1) * 9);
+    expect(mesh.vertexStride).toBe(11);
+    expect(mesh.vertices.length).toBe((longitudeSegments + 1) * (latitudeSegments + 1) * 11);
     expect(mesh.indices.length).toBe(longitudeSegments * latitudeSegments * 6);
     expect(mesh.indices[0]).toBe(0);
   });

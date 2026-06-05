@@ -45,3 +45,14 @@ La Fase 1 include:
 - globo vuoto navigabile
 
 I test coprono math, geodesia WGS84, camera, scene graph e mesh ellissoidale.
+
+## Fase 2 in corso
+
+Lo step imagery iniziale include:
+
+- provider XYZ
+- cache LRU base per tile
+- tiling Web Mercator
+- texture raster globale applicata al globo
+
+Il quadtree e il caricamento tile per viewport saranno il prossimo raffinamento.

@@ -1,11 +1,14 @@
 import { OrbitCamera } from "./core/camera/orbit-camera";
 import { PointerController } from "./core/events/pointer-controller";
 import { Scene } from "./core/scene/scene";
+import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 
 export type GeoViewerOptions = {
   container: HTMLElement | string;
   renderer?: "webgl2";
+  onImageryReady?: (loadedTiles: number, expectedTiles: number) => void;
+  onImageryError?: (error: unknown) => void;
 };
 
 export class GeoViewer {
@@ -13,6 +16,7 @@ export class GeoViewer {
   readonly scene = new Scene();
   readonly camera = new OrbitCamera();
   readonly renderer: WebGL2Renderer;
+  readonly imagery: ImageryLayerCollection;
   private readonly controller: PointerController;
   private frame = 0;
   private disposed = false;
@@ -37,6 +41,21 @@ export class GeoViewer {
     container.append(this.canvas);
 
     this.renderer = new WebGL2Renderer(this.canvas);
+    this.imagery = new ImageryLayerCollection({
+      onTextureReady: (texture) => {
+        try {
+          this.renderer.setImagery(texture.image);
+          options.onImageryReady?.(texture.loadedTiles, texture.expectedTiles);
+        } catch (error) {
+          console.warn("Imagery texture upload failed", error);
+          options.onImageryError?.(error);
+        }
+      },
+      onLayerError: (error) => {
+        console.warn("Imagery layer failed", error);
+        options.onImageryError?.(error);
+      },
+    });
     this.controller = new PointerController(this.canvas, this.camera);
     this.scene.addNode({ id: "wgs84-globe" });
     this.start();
