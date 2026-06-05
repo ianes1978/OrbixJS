@@ -1,3 +1,4 @@
+import { Ellipsoid } from "../../core/geodesy/ellipsoid";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
@@ -7,6 +8,8 @@ import {
   globeVertexShader,
   imageryTileFragmentShader,
   imageryTileVertexShader,
+  vectorLineFragmentShader,
+  vectorLineVertexShader,
 } from "./shaders";
 
 type GlobeProgram = {
@@ -26,6 +29,14 @@ type TileProgram = {
   uImagery: WebGLUniformLocation;
 };
 
+type VectorProgram = {
+  program: WebGLProgram;
+  uProjection: WebGLUniformLocation;
+  uView: WebGLUniformLocation;
+  uModel: WebGLUniformLocation;
+  uCameraPosition: WebGLUniformLocation;
+};
+
 type GpuMesh = {
   vao: WebGLVertexArrayObject;
   vertexBuffer: WebGLBuffer;
@@ -33,9 +44,16 @@ type GpuMesh = {
   indexCount: number;
 };
 
+type GpuLineMesh = {
+  vao: WebGLVertexArrayObject;
+  vertexBuffer: WebGLBuffer;
+  vertexCount: number;
+};
+
 type TileEntry = {
   mesh: GpuMesh;
   texture: WebGLTexture;
+  ready: boolean;
 };
 
 export class WebGL2Renderer implements Renderer {
@@ -43,9 +61,12 @@ export class WebGL2Renderer implements Renderer {
   private readonly gl: WebGL2RenderingContext | null;
   private readonly program: GlobeProgram | null = null;
   private readonly tileProgram: TileProgram | null = null;
+  private readonly vectorProgram: VectorProgram | null = null;
   private readonly globe: GpuMesh | null = null;
   private imageryTexture: WebGLTexture | null = null;
   private imageryEnabled = false;
+  private vectorLines: GpuLineMesh | null = null;
+  private vectorLinesVisible = false;
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
 
@@ -59,6 +80,7 @@ export class WebGL2Renderer implements Renderer {
 
     this.program = createGlobeProgram(this.gl);
     this.tileProgram = createTileProgram(this.gl);
+    this.vectorProgram = createVectorProgram(this.gl);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh());
     this.imageryTexture = createPlaceholderTexture(this.gl);
     this.gl.enable(this.gl.DEPTH_TEST);
@@ -70,15 +92,21 @@ export class WebGL2Renderer implements Renderer {
       return;
     }
 
-    const existing = this.tileEntries.get(tile.id);
-    const mesh = existing?.mesh ?? uploadTileMesh(this.gl, createEllipsoidTileMesh(tile));
-    const texture = existing?.texture ?? createTileTexture(this.gl);
+    const entry = this.ensureTileEntry(tile);
 
-    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, entry.texture);
     this.gl.pixelStorei(this.gl.UNPACK_FLIP_Y_WEBGL, false);
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
     this.gl.generateMipmap(this.gl.TEXTURE_2D);
-    this.tileEntries.set(tile.id, { mesh, texture });
+    entry.ready = true;
+  }
+
+  ensureDebugImageryTile(tile: QuadtreeTile): void {
+    if (!this.gl) {
+      return;
+    }
+
+    this.ensureTileEntry(tile);
   }
 
   setActiveImageryTiles(ids: readonly string[]): void {
@@ -87,6 +115,24 @@ export class WebGL2Renderer implements Renderer {
     for (const id of ids) {
       this.activeTileIds.add(id);
     }
+  }
+
+  setVectorLines(lines: readonly (readonly [number, number])[][]): void {
+    if (!this.gl) {
+      return;
+    }
+
+    if (this.vectorLines) {
+      this.gl.deleteVertexArray(this.vectorLines.vao);
+      this.gl.deleteBuffer(this.vectorLines.vertexBuffer);
+      this.vectorLines = null;
+    }
+
+    this.vectorLines = uploadLineMesh(this.gl, lines);
+  }
+
+  setVectorLinesVisible(visible: boolean): void {
+    this.vectorLinesVisible = visible;
   }
 
   setImagery(image: TexImageSource): void {
@@ -145,7 +191,12 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.gl.UNSIGNED_SHORT, 0);
     }
 
-    this.renderImageryTiles(projection, view);
+    if (this.imageryEnabled && this.activeTileIds.size > 0) {
+      this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
+      this.renderImageryTiles(projection, view);
+    }
+
+    this.renderVectorLines(projection, view, camera.position);
   }
 
   destroy(): void {
@@ -163,6 +214,15 @@ export class WebGL2Renderer implements Renderer {
       this.gl.deleteProgram(this.tileProgram.program);
     }
 
+    if (this.vectorProgram) {
+      this.gl.deleteProgram(this.vectorProgram.program);
+    }
+
+    if (this.vectorLines) {
+      this.gl.deleteVertexArray(this.vectorLines.vao);
+      this.gl.deleteBuffer(this.vectorLines.vertexBuffer);
+    }
+
     for (const entry of this.tileEntries.values()) {
       this.gl.deleteVertexArray(entry.mesh.vao);
       this.gl.deleteBuffer(entry.mesh.vertexBuffer);
@@ -178,6 +238,9 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.useProgram(this.tileProgram.program);
     this.gl.enable(this.gl.POLYGON_OFFSET_FILL);
+    this.gl.enable(this.gl.BLEND);
+    this.gl.depthMask(false);
+    this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
     this.gl.polygonOffset(-1, -1);
     this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
@@ -186,7 +249,7 @@ export class WebGL2Renderer implements Renderer {
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
 
-      if (!entry) {
+      if (!entry?.ready) {
         continue;
       }
 
@@ -197,7 +260,48 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, this.gl.UNSIGNED_SHORT, 0);
     }
 
+    this.gl.depthMask(true);
+    this.gl.disable(this.gl.BLEND);
     this.gl.disable(this.gl.POLYGON_OFFSET_FILL);
+  }
+
+  private renderVectorLines(projection: Float32Array, view: Float32Array, cameraPosition: readonly [number, number, number]): void {
+    if (!this.gl || !this.vectorProgram || !this.vectorLines || !this.vectorLinesVisible) {
+      return;
+    }
+
+    this.gl.useProgram(this.vectorProgram.program);
+    this.gl.disable(this.gl.DEPTH_TEST);
+    this.gl.enable(this.gl.BLEND);
+    this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+    this.gl.uniformMatrix4fv(this.vectorProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.vectorProgram.uView, false, view);
+    this.gl.uniformMatrix4fv(this.vectorProgram.uModel, false, identityMatrix());
+    this.gl.uniform3fv(this.vectorProgram.uCameraPosition, cameraPosition);
+    this.gl.bindVertexArray(this.vectorLines.vao);
+    this.gl.drawArrays(this.gl.LINES, 0, this.vectorLines.vertexCount);
+    this.gl.disable(this.gl.BLEND);
+    this.gl.enable(this.gl.DEPTH_TEST);
+  }
+
+  private ensureTileEntry(tile: QuadtreeTile): TileEntry {
+    if (!this.gl) {
+      throw new Error("WebGL2 is not available");
+    }
+
+    const existing = this.tileEntries.get(tile.id);
+
+    if (existing) {
+      return existing;
+    }
+
+    const entry = {
+      mesh: uploadTileMesh(this.gl, createEllipsoidTileMesh(tile)),
+      texture: createDebugTileTexture(this.gl),
+      ready: false,
+    };
+    this.tileEntries.set(tile.id, entry);
+    return entry;
   }
 }
 
@@ -269,6 +373,38 @@ function createTileProgram(gl: WebGL2RenderingContext): TileProgram {
   }
 
   return { program, uProjection, uView, uModel, uImagery };
+}
+
+function createVectorProgram(gl: WebGL2RenderingContext): VectorProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, vectorLineVertexShader);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, vectorLineFragmentShader);
+  const program = gl.createProgram();
+
+  if (!program) {
+    throw new Error("Unable to create WebGL2 vector program");
+  }
+
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.bindAttribLocation(program, 0, "position");
+  gl.linkProgram(program);
+  gl.deleteShader(vertex);
+  gl.deleteShader(fragment);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 vector program");
+  }
+
+  const uProjection = gl.getUniformLocation(program, "uProjection");
+  const uView = gl.getUniformLocation(program, "uView");
+  const uModel = gl.getUniformLocation(program, "uModel");
+  const uCameraPosition = gl.getUniformLocation(program, "uCameraPosition");
+
+  if (!uProjection || !uView || !uModel || !uCameraPosition) {
+    throw new Error("Missing WebGL2 vector uniform");
+  }
+
+  return { program, uProjection, uView, uModel, uCameraPosition };
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -357,6 +493,68 @@ function uploadTileMesh(
   };
 }
 
+function uploadLineMesh(
+  gl: WebGL2RenderingContext,
+  lines: readonly (readonly [number, number])[][],
+  ellipsoid = Ellipsoid.WGS84,
+): GpuLineMesh {
+  const vertices: number[] = [];
+  const maxRadius = ellipsoid.maximumRadius;
+
+  for (const line of lines) {
+    for (let index = 0; index < line.length - 1; index += 1) {
+      const current = line[index];
+      const next = line[index + 1];
+
+      if (Math.abs(next[0] - current[0]) > 180) {
+        continue;
+      }
+
+      pushLineVertex(vertices, current[0], current[1], ellipsoid, maxRadius);
+      pushLineVertex(vertices, next[0], next[1], ellipsoid, maxRadius);
+    }
+  }
+
+  const vao = gl.createVertexArray();
+  const vertexBuffer = gl.createBuffer();
+
+  if (!vao || !vertexBuffer) {
+    throw new Error("Unable to allocate WebGL2 vector mesh");
+  }
+
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 3 * Float32Array.BYTES_PER_ELEMENT, 0);
+
+  return {
+    vao,
+    vertexBuffer,
+    vertexCount: vertices.length / 3,
+  };
+}
+
+function pushLineVertex(
+  vertices: number[],
+  lonDegrees: number,
+  latDegrees: number,
+  ellipsoid: Ellipsoid,
+  maxRadius: number,
+): void {
+  const position = ellipsoid.cartographicToCartesian({
+    lon: lonDegrees * (Math.PI / 180),
+    lat: latDegrees * (Math.PI / 180),
+    height: 12000,
+  });
+
+  vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
+}
+
+function identityMatrix(): Float32Array {
+  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+
 function createPlaceholderTexture(gl: WebGL2RenderingContext): WebGLTexture {
   const texture = gl.createTexture();
 
@@ -390,5 +588,23 @@ function createTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return texture;
+}
+
+function createDebugTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
+  const texture = createPlaceholderTexture(gl);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([255, 40, 20, 210]),
+  );
+  gl.generateMipmap(gl.TEXTURE_2D);
   return texture;
 }

@@ -10,7 +10,7 @@ describe("CameraTileSelector", () => {
 
   it("selects a stable neighborhood around the visible camera center", () => {
     const selector = new CameraTileSelector();
-    const selection = selector.select([1, 0, 0], 4);
+    const selection = selector.select(0, 0, 4);
 
     expect(selection.level).toBe(2);
     expect(selection.tiles).toHaveLength(9);

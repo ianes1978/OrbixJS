@@ -31,6 +31,12 @@ app.innerHTML = `
           <span>Tile runtime</span>
           <strong id="tile-status">LOD -</strong>
         </div>
+        <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
+          LOD overlay
+        </button>
+        <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
+          Coastline
+        </button>
       </div>
       </div>
       <aside class="panel" aria-label="Roadmap progress">
@@ -59,8 +65,19 @@ const overallBar = document.querySelector<HTMLElement>("#overall-bar");
 const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
+const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
+const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 
-if (!list || !overallProgress || !overallBar || !rendererStatus || !imageryStatus || !tileStatus) {
+if (
+  !list ||
+  !overallProgress ||
+  !overallBar ||
+  !rendererStatus ||
+  !imageryStatus ||
+  !tileStatus ||
+  !tileDebugToggle ||
+  !coastlineToggle
+) {
   throw new Error("Missing progress UI element");
 }
 
@@ -113,7 +130,8 @@ const viewer = new GeoViewer({
   renderer: "webgl2",
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
-    tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}`;
+    const mode = debugTileOverlay ? "overlay 3x3" : "base";
+    tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
   },
   onImageryError: () => {
     imageryStatus.textContent = "fallback";
@@ -124,4 +142,24 @@ imageryStatus.textContent = "Ortofoto";
 viewer.imagery.addXYZLayer({
   url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   level: 2,
+});
+viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").catch(() => {
+  coastlineToggle.textContent = "Coastline -";
+  coastlineToggle.disabled = true;
+});
+
+let debugTileOverlay = false;
+tileDebugToggle.addEventListener("click", () => {
+  debugTileOverlay = !debugTileOverlay;
+  viewer.setDebugTileOverlay(debugTileOverlay);
+  tileDebugToggle.setAttribute("aria-pressed", String(debugTileOverlay));
+  tileDebugToggle.textContent = debugTileOverlay ? "LOD ON" : "LOD overlay";
+});
+
+let coastlineOverlay = false;
+coastlineToggle.addEventListener("click", () => {
+  coastlineOverlay = !coastlineOverlay;
+  viewer.setCoastlineOverlay(coastlineOverlay);
+  coastlineToggle.setAttribute("aria-pressed", String(coastlineOverlay));
+  coastlineToggle.textContent = coastlineOverlay ? "Coast ON" : "Coastline";
 });

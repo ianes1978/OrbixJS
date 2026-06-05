@@ -1,4 +1,3 @@
-import { type Vec3 } from "../../core/math/vec3";
 import { ImageryLayer, type ImageryLayerStats, type ImageryTexture } from "./imagery-layer";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { XYZTileProvider, type XYZTileProviderOptions } from "./xyz-tile-provider";
@@ -31,19 +30,23 @@ export class ImageryLayerCollection {
     return layer;
   }
 
-  update(cameraPosition: Vec3, cameraDistance: number): ImageryLayerStats | undefined {
+  update(center: readonly [number, number, number], cameraDistance: number): ImageryLayerStats | undefined {
     const layer = this.layers[0];
 
     if (!layer) {
       return undefined;
     }
 
-    const stats = layer.update(cameraPosition, cameraDistance);
+    const stats = layer.update(center[0], center[1], cameraDistance);
     this.options.onActiveTilesChanged?.(layer.activeTileIds);
     return stats;
   }
 
   get size(): number {
     return this.layers.length;
+  }
+
+  findTile(id: string): QuadtreeTile | undefined {
+    return this.layers[0]?.findActiveTile(id);
   }
 }

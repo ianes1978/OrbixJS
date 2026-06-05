@@ -10,11 +10,21 @@ describe("Ellipsoid", () => {
 
   it("converts cartographic coordinates to cartesian positions", () => {
     const equator = Ellipsoid.WGS84.cartographicToCartesian({ lon: 0, lat: 0 });
+    const east = Ellipsoid.WGS84.cartographicToCartesian({ lon: Math.PI / 2, lat: 0 });
     const northPole = Ellipsoid.WGS84.cartographicToCartesian({ lon: 0, lat: Math.PI / 2 });
 
     expect(equator[0]).toBeCloseTo(Ellipsoid.WGS84.radii[0]);
     expect(equator[1]).toBeCloseTo(0);
     expect(equator[2]).toBeCloseTo(0);
+    expect(east[0]).toBeCloseTo(0);
+    expect(east[2]).toBeCloseTo(-Ellipsoid.WGS84.radii[2]);
     expect(northPole[1]).toBeCloseTo(Ellipsoid.WGS84.radii[1]);
+  });
+
+  it("converts surface normals back to cartographic coordinates", () => {
+    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic([0, 0, -1]);
+
+    expect(cartographic.lon).toBeCloseTo(Math.PI / 2);
+    expect(cartographic.lat).toBeCloseTo(0);
   });
 });

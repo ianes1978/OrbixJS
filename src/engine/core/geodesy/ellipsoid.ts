@@ -21,7 +21,7 @@ export class Ellipsoid {
 
   geodeticSurfaceNormal(lon: number, lat: number): MutableVec3 {
     const cosLat = Math.cos(lat);
-    return normalize([cosLat * Math.cos(lon), Math.sin(lat), cosLat * Math.sin(lon)]);
+    return normalize([cosLat * Math.cos(lon), Math.sin(lat), -cosLat * Math.sin(lon)]);
   }
 
   cartographicToCartesian({ lon, lat, height = 0 }: Cartographic): MutableVec3 {
@@ -33,6 +33,15 @@ export class Ellipsoid {
       normal[1] * (ry + height),
       normal[2] * (rz + height),
     ];
+  }
+
+  surfaceNormalToCartographic(normal: Vec3): Cartographic {
+    const unit = normalize(normal);
+    return {
+      lon: Math.atan2(-unit[2], unit[0]),
+      lat: Math.asin(unit[1]),
+      height: 0,
+    };
   }
 
   scaledToUnitSphere(position: Vec3): MutableVec3 {

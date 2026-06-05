@@ -1,6 +1,6 @@
 import { Ellipsoid } from "../../core/geodesy/ellipsoid";
 import { normalize } from "../../core/math/vec3";
-import { type TileCoordinate, WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
+import { type TileCoordinate, WebMercatorTilingScheme, webMercatorYToLatitude } from "../tiling/web-mercator-tiling";
 
 export type TileMeshData = {
   vertices: Float32Array;
@@ -18,10 +18,11 @@ export function createEllipsoidTileMesh(
   const vertices: number[] = [];
   const indices: number[] = [];
   const maxRadius = ellipsoid.maximumRadius;
+  const tileCount = tiling.tileCount(tile.z);
 
   for (let row = 0; row <= segments; row += 1) {
     const v = row / segments;
-    const lat = rectangle.north + (rectangle.south - rectangle.north) * v;
+    const lat = webMercatorYToLatitude((tile.y + v) / tileCount);
 
     for (let column = 0; column <= segments; column += 1) {
       const u = column / segments;
@@ -52,7 +53,7 @@ export function createEllipsoidTileMesh(
     for (let column = 0; column < segments; column += 1) {
       const first = row * (segments + 1) + column;
       const second = first + segments + 1;
-      indices.push(first, first + 1, second, second, first + 1, second + 1);
+      indices.push(first, second, first + 1, second, second + 1, first + 1);
     }
   }
 

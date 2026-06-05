@@ -1,4 +1,3 @@
-import { normalize, type Vec3 } from "../../core/math/vec3";
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
 import { createQuadtreeTile, type QuadtreeTile } from "./quadtree-tile";
 
@@ -10,12 +9,9 @@ export type TileSelection = {
 export class CameraTileSelector {
   private readonly tiling = new WebMercatorTilingScheme();
 
-  select(cameraPosition: Vec3, cameraDistance: number): TileSelection {
+  select(lon: number, lat: number, cameraDistance: number): TileSelection {
     const level = selectLevel(cameraDistance);
     const count = this.tiling.tileCount(level);
-    const viewDirection = normalize(cameraPosition);
-    const lon = Math.atan2(viewDirection[2], viewDirection[0]);
-    const lat = Math.asin(viewDirection[1]);
     const center = this.tiling.positionToTileXY(lon, lat, level);
     const radius = level >= 4 ? 2 : 1;
     const tiles: QuadtreeTile[] = [];

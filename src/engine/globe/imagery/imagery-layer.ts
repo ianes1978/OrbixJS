@@ -1,5 +1,4 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
-import { type Vec3 } from "../../core/math/vec3";
 import { CameraTileSelector } from "./tile-selector";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { XYZTileProvider } from "./xyz-tile-provider";
@@ -36,8 +35,8 @@ export class ImageryLayer {
     private readonly options: ImageryLayerOptions = {},
   ) {}
 
-  update(cameraPosition: Vec3, cameraDistance: number): ImageryLayerStats {
-    const selection = this.selector.select(cameraPosition, cameraDistance);
+  update(lon: number, lat: number, cameraDistance: number): ImageryLayerStats {
+    const selection = this.selector.select(lon, lat, cameraDistance);
     this.active.clear();
 
     for (const tile of selection.tiles) {
@@ -72,6 +71,22 @@ export class ImageryLayer {
 
   get activeTileIds(): string[] {
     return [...this.active];
+  }
+
+  findActiveTile(id: string): QuadtreeTile | undefined {
+    const selection = [...this.active];
+
+    if (!selection.includes(id)) {
+      return undefined;
+    }
+
+    const [z, x, y] = id.split("/").map(Number);
+
+    if ([z, x, y].some((value) => !Number.isFinite(value))) {
+      return undefined;
+    }
+
+    return { z, x, y, id };
   }
 
   async createTexture(): Promise<ImageryTexture> {

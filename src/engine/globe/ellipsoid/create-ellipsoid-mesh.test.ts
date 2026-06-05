@@ -24,10 +24,10 @@ describe("createEllipsoidMesh", () => {
     const eastQuarterU = mesh.vertices[equatorRowOffset + stride * 3 + 9];
     const eastDateLineU = mesh.vertices[equatorRowOffset + stride * 4 + 9];
 
-    expect(westDateLineU).toBeCloseTo(1);
+    expect(westDateLineU).toBeCloseTo(0);
     expect(primeMeridianU).toBeCloseTo(0.5);
-    expect(eastQuarterU).toBeCloseTo(0.25);
-    expect(eastDateLineU).toBeCloseTo(0);
+    expect(eastQuarterU).toBeCloseTo(0.75);
+    expect(eastDateLineU).toBeCloseTo(1);
   });
 
   it("keeps polar UVs clamped inside the Web Mercator imagery range", () => {

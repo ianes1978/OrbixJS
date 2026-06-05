@@ -82,6 +82,11 @@ select {
   pointer-events: none;
 }
 
+.hud .metric,
+.hud .debug-toggle {
+  pointer-events: auto;
+}
+
 .eyebrow {
   margin: 0 0 5px;
   color: #8fb1ad;
@@ -122,6 +127,22 @@ h2 {
 
 .metric.wide {
   min-width: 250px;
+}
+
+.debug-toggle {
+  min-width: 118px;
+  height: 44px;
+  border: 1px solid rgba(232, 237, 240, 0.18);
+  background: rgba(8, 17, 20, 0.72);
+  color: #e8edf0;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.debug-toggle[aria-pressed="true"] {
+  border-color: rgba(120, 212, 168, 0.72);
+  background: rgba(24, 78, 60, 0.72);
 }
 
 .metric span,

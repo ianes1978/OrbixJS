@@ -54,7 +54,12 @@ void main() {
   float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
   vec3 neutralBase = mix(ocean, land, landMask * 0.18);
   vec3 imagery = texture(uImagery, vImageryUv).rgb;
-  vec3 surface = uImageryEnabled ? imagery : mix(base, grid, line);
+  float polarMask = smoothstep(0.965, 0.998, abs(geo.y));
+  vec3 polarNorth = vec3(0.82, 0.93, 0.94);
+  vec3 polarSouth = vec3(0.72, 0.86, 0.90);
+  vec3 polar = geo.y > 0.0 ? polarNorth : polarSouth;
+  vec3 imagerySurface = mix(imagery, polar, polarMask);
+  vec3 surface = uImageryEnabled ? imagerySurface : mix(base, grid, line);
   vec3 color = surface * (0.28 + diffuse * 0.85) + rim * vec3(0.28, 0.72, 0.9);
   outColor = vec4(color, 1.0);
 }
@@ -100,6 +105,45 @@ void main() {
   float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
   vec3 imagery = texture(uImagery, vUv).rgb;
   vec3 color = imagery * (0.42 + diffuse * 0.72) + rim * vec3(0.18, 0.45, 0.55);
-  outColor = vec4(color, 1.0);
+  float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+  float edgeFade = smoothstep(0.0, 0.025, edgeDistance);
+  outColor = vec4(color, 0.86 * edgeFade);
+}
+`;
+
+export const vectorLineVertexShader = `#version 300 es
+in vec3 position;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform mat4 uModel;
+
+out vec3 vPosition;
+
+void main() {
+  vec4 worldPosition = uModel * vec4(position, 1.0);
+  vPosition = worldPosition.xyz;
+  gl_Position = uProjection * uView * worldPosition;
+}
+`;
+
+export const vectorLineFragmentShader = `#version 300 es
+precision highp float;
+
+in vec3 vPosition;
+
+uniform vec3 uCameraPosition;
+
+out vec4 outColor;
+
+void main() {
+  float facing = dot(normalize(vPosition), normalize(uCameraPosition));
+  float horizonFade = smoothstep(-0.02, 0.12, facing);
+
+  if (horizonFade <= 0.0) {
+    discard;
+  }
+
+  outColor = vec4(1.0, 0.88, 0.22, 0.82 * horizonFade);
 }
 `;

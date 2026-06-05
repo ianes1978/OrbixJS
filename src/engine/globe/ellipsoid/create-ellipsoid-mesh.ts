@@ -24,7 +24,7 @@ export function createEllipsoidMesh(
       const u = lonIndex / longitudeSegments;
       const lon = -Math.PI + u * Math.PI * 2;
       const [mercatorU, mercatorV] = lonLatToWebMercatorUv(lon, lat);
-      pushVertex(vertices, ellipsoid, maxRadius, lon, lat, clamp01(1 - mercatorU), clamp01(mercatorV));
+      pushVertex(vertices, ellipsoid, maxRadius, lon, lat, clamp01(mercatorU), clamp01(mercatorV));
     }
   }
 
@@ -32,7 +32,7 @@ export function createEllipsoidMesh(
     for (let lonIndex = 0; lonIndex < longitudeSegments; lonIndex += 1) {
       const first = latIndex * (longitudeSegments + 1) + lonIndex;
       const second = first + longitudeSegments + 1;
-      indices.push(first, first + 1, second, second, first + 1, second + 1);
+      indices.push(first, second, first + 1, second, second + 1, first + 1);
     }
   }
 

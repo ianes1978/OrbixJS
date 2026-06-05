@@ -50,13 +50,17 @@ export function lonLatToWebMercatorUv(lon: number, lat: number): [number, number
   return [u, v];
 }
 
+export function webMercatorYToLatitude(y: number): number {
+  const n = Math.PI - 2 * Math.PI * y;
+  return Math.atan(Math.sinh(n));
+}
+
 function tileXToLongitude(x: number, count: number): number {
   return (x / count) * 2 * Math.PI - Math.PI;
 }
 
 function tileYToLatitude(y: number, count: number): number {
-  const n = Math.PI - (2 * Math.PI * y) / count;
-  return Math.atan(Math.sinh(n));
+  return webMercatorYToLatitude(y / count);
 }
 
 function clamp(value: number, min: number, max: number): number {
