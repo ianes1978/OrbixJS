@@ -79,11 +79,19 @@ Layer styling target:
 
 Project/data pipeline target:
 
-- `OrbixProject` JSON versionato per camera, CRS, project frame, layer stack, timeline, editing state e regole parametriche
+- `OrbixProject` JSON versionato per camera, camera paths, CRS, project frame, layer stack, timeline, editing state e regole parametriche
 - `DataCatalog` per dataset, URL, CRS, extent, licenza, attribution, auth, cache policy, preview e fallback
 - `PreprocessJob` per trasformare DTM/GeoTIFF/WCS/COG, feature, glTF/3D Tiles e meteo in asset runtime riproducibili
 - manifest preprocessing con input, hash, CRS, extent, tool version, parametri, licenza e output
 - catalogo demo Alto Adige con DTM 2,5m, Orthofoto 2023, layer debug e fallback GitHub Pages
+
+Camera flight target:
+
+- voli in soggettiva con `CameraPath`, keyframe, easing e playback fluido
+- modalita first-person, look-at, orbit, follow feature e terrain-follow
+- play, pause, scrub, loop, speed multiplier e trigger su timeline
+- clearance minima dal terrain, smoothing LOD e prevenzione di scatti/collisioni
+- salvataggio nel progetto ed export verso Blender per video e presentazioni
 
 Prima dell'uso runtime va validato il formato delle tile terrain: schema, CRS, encoding quota e NoData. Per l'ortofoto 2023 serve inoltre supporto WMTS con `TileMatrixSet` custom/CRS `EPSG:25832`. Il motore deve mantenere CRS sorgente, CRS di progetto, quote e trasformazioni come metadata espliciti.
 
@@ -130,5 +138,6 @@ Sono completate le fasi iniziali definite in `Plan.md`:
 - glTF: GLB, materiale base, texture e posizionamento geografico
 - 3D Tiles: `tileset.json`, caricamento tile, LOD base e culling
 - Picking: globo, mesh demo e coordinate geografiche
+- Terrain: API `TerrainProvider` iniziale per heightmap tile
 
 I test coprono math, geodesia, camera, scene graph, tiling, imagery, glTF e 3D Tiles.

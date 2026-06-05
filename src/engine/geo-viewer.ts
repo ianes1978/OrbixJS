@@ -11,6 +11,7 @@ import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
 import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./loaders/tiles3d/tileset";
 import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
+import { type TerrainProvider } from "./globe/terrain/terrain-provider";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 
@@ -61,6 +62,7 @@ export class GeoViewer {
   readonly camera = new OrbitCamera();
   readonly renderer: WebGL2Renderer;
   readonly imagery: ImageryLayerCollection;
+  terrain: TerrainProvider | undefined;
   private readonly controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
   private readonly onTilesetStatsCallback?: GeoViewerOptions["onTilesetStats"];
@@ -216,6 +218,10 @@ export class GeoViewer {
       id: options.id ?? "tileset",
     };
     await this.syncDebugTilesetContent();
+  }
+
+  setTerrainProvider(provider: TerrainProvider | undefined): void {
+    this.terrain = provider;
   }
 
   flyTo(options: CameraFlyToOptions): void {
