@@ -34,7 +34,7 @@ export const roadmap: RoadmapPhase[] = [
     title: "Camera",
     items: [
       { label: "Zoom", done: true },
-      { label: "Pan", done: false },
+      { label: "Pan", done: true },
       { label: "Rotate", done: true },
       { label: "Tilt", done: false },
       { label: "flyTo", done: true },

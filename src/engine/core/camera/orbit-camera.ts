@@ -1,5 +1,5 @@
 import { lookAt, perspective, type Mat4 } from "../math/mat4";
-import { type MutableVec3 } from "../math/vec3";
+import { add, cross, length, normalize, scale, subtract, type MutableVec3, type Vec3 } from "../math/vec3";
 
 export type CameraFlyToOptions = {
   lon: number;
@@ -50,6 +50,22 @@ export class OrbitCamera {
     this.distance = clamp(this.distance * Math.exp(delta), this.minDistance, this.maxDistance);
   }
 
+  pan(deltaX: number, deltaY: number): void {
+    const forward = normalize(subtract(this.target, this.position));
+    const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
+    const up = safeNormalize(cross(right, forward), [0, 1, 0]);
+    const distanceScale = this.distance * 0.0015;
+    const movement = add(scale(right, deltaX * distanceScale), scale(up, deltaY * distanceScale));
+    const nextTarget = add(this.target, movement);
+    const targetLimit = 0.85;
+    const targetLength = length(nextTarget);
+    const clampedTarget = targetLength > targetLimit ? scale(normalize(nextTarget), targetLimit) : nextTarget;
+
+    this.target[0] = clampedTarget[0];
+    this.target[1] = clampedTarget[1];
+    this.target[2] = clampedTarget[2];
+  }
+
   flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
     const lonRadians = lon * (Math.PI / 180);
     const latRadians = lat * (Math.PI / 180);
@@ -85,4 +101,8 @@ export class OrbitCamera {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function safeNormalize(value: Vec3, fallback: MutableVec3): MutableVec3 {
+  return length(value) === 0 ? fallback : normalize(value);
 }

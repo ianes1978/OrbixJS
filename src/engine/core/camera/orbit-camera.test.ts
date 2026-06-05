@@ -42,4 +42,22 @@ describe("OrbitCamera", () => {
     expect(camera.pitch).toBeCloseTo(Math.PI / 4);
     expect(camera.distance).toBeCloseTo(1 + 1_000_000 / 6_378_137);
   });
+
+  it("pans the camera target in the view plane", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+
+    camera.pan(100, 0);
+
+    expect(camera.target[0]).toBeGreaterThan(0);
+    expect(camera.target[1]).toBeCloseTo(0);
+    expect(camera.target[2]).toBeCloseTo(0);
+  });
+
+  it("keeps pan target near the globe", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+
+    camera.pan(10000, 10000);
+
+    expect(Math.hypot(...camera.target)).toBeCloseTo(0.85);
+  });
 });

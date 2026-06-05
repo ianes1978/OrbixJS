@@ -40,6 +40,12 @@ export class PointerController {
     const deltaY = event.clientY - this.lastY;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
+
+    if (event.shiftKey) {
+      this.camera.pan(-deltaX, deltaY);
+      return;
+    }
+
     const sensitivity = 0.006 * this.camera.dragSensitivityScale();
     this.camera.orbit(-deltaX * sensitivity, deltaY * sensitivity);
   };
