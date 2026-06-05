@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "0.1",
+  "sources": [
+    {
+      "id": "world-imagery",
+      "type": "imagery-xyz",
+      "title": "Esri World Imagery fallback",
+      "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      "crs": "EPSG:3857",
+      "attribution": "Esri World Imagery"
+    },
+    {
+      "id": "demo-tileset",
+      "type": "tileset",
+      "title": "OrbixJS demo 3D Tiles",
+      "url": "/tilesets/demo/tileset.json",
+      "crs": "EPSG:4326"
+    },
+    {
+      "id": "south-tyrol-dtm-25m",
+      "type": "terrain-heightmap",
+      "title": "South Tyrol DTM 2.5m candidate",
+      "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json",
+      "crs": "EPSG:25832",
+      "attribution": "Autonomous Province of Bolzano/Bozen",
+      "license": "To be verified before runtime use"
+    }
+  ]
+}

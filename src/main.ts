@@ -1,5 +1,7 @@
 import "./styles.css";
 import { GeoViewer } from "./engine/geo-viewer";
+import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
+import { loadOrbixProject } from "./engine/project/orbix-project";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -151,6 +153,7 @@ if (!globeHost) {
 
 const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
+const imageryStatusElement = imageryStatus;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -164,16 +167,12 @@ const viewer = new GeoViewer({
     tiles3dStatusElement.textContent = stats.status;
   },
   onImageryError: () => {
-    imageryStatus.textContent = "fallback";
+    imageryStatusElement.textContent = "fallback";
   },
 });
 rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
 imageryStatus.textContent = "Ortofoto";
-viewer.imagery.addXYZLayer({
-  url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  level: 2,
-});
-void loadDemoTileset();
+void loadDemoProject();
 viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").catch(() => {
   coastlineToggle.textContent = "Coastline -";
   coastlineToggle.disabled = true;
@@ -264,15 +263,36 @@ viewer.canvas.addEventListener("pointerup", (event) => {
   pickingStatusElement.textContent = `${toDegrees(globe.lat).toFixed(3)}, ${toDegrees(globe.lon).toFixed(3)}`;
 });
 
-async function loadDemoTileset(): Promise<void> {
+async function loadDemoProject(): Promise<void> {
   try {
-    await viewer.addTileset({
-      url: "/tilesets/demo/tileset.json",
-      id: "demo marker",
-      scale: 180000,
-    });
+    const project = await loadOrbixProject("/projects/demo.orbix.json");
+    const catalog = await loadDataCatalog(project.catalogUrl ?? "/catalogs/demo-catalog.json");
+
+    if (project.camera) {
+      viewer.flyTo(project.camera);
+    }
+
+    for (const layer of project.layers) {
+      if (layer.visible === false) {
+        continue;
+      }
+
+      const source = findDataSource(catalog, layer.source);
+
+      if (!source) {
+        console.warn(`Missing data source: ${layer.source}`);
+        continue;
+      }
+
+      if (layer.type === "imagery-xyz" && source.type === "imagery-xyz") {
+        viewer.imagery.addXYZLayer({ url: source.url, level: 2 });
+      } else if (layer.type === "tileset" && source.type === "tileset") {
+        await viewer.addTileset({ url: source.url, id: source.title, scale: 180000 });
+      }
+    }
   } catch (error) {
-    console.warn("Demo tileset failed", error);
+    console.warn("Demo project failed", error);
+    imageryStatusElement.textContent = "fallback";
     tiles3dStatusElement.textContent = "tileset -";
   }
 }

@@ -34,6 +34,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\stop-dev.ps1
 
 La pagina mostra il checkpoint MVP 0.1: globo WebGL2 navigabile, imagery, glTF/GLB georeferenziato, 3D Tiles demo con LOD, culling e picking.
 
+La demo viene caricata da `public/projects/demo.orbix.json` e dal catalogo dati `public/catalogs/demo-catalog.json`.
+
 ## Focus demo
 
 La demo pubblica deve evolvere verso un focus sull'Alto Adige/Südtirol.
@@ -42,7 +44,7 @@ Dataset terrain candidato:
 
 - Modello Digitale del Terreno dell'Alto Adige (DTM 2,5m)
 - layer ufficiale: `p_bz-Elevation:DigitalTerrainModel-2.5m`
-- tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/`
+- tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json`
 
 Basemap candidata:
 

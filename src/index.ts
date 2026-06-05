@@ -17,6 +17,21 @@ export {
   type TerrainTileKey,
 } from "./engine/globe/terrain/terrain-provider";
 export {
+  findDataSource,
+  loadDataCatalog,
+  parseDataCatalog,
+  type DataCatalog,
+  type DataSourceDescriptor,
+} from "./engine/catalog/data-catalog";
+export {
+  loadOrbixProject,
+  parseOrbixProject,
+  serializeOrbixProject,
+  ORBIX_PROJECT_SCHEMA_VERSION,
+  type OrbixProject,
+  type OrbixProjectLayer,
+} from "./engine/project/orbix-project";
+export {
   type Renderer,
   type RendererBackend,
   type RendererCapabilities,
