@@ -1,3 +1,13 @@
+import {
+  createWebMercatorQuadMatrixSet,
+  createTileMatrixSetDescriptor,
+  maxTileMatrixLevel,
+  minTileMatrixLevel,
+  type TileMatrixDescriptor,
+  type TileMatrixSetDescriptor,
+  type TileMatrixSetExtent,
+} from "../globe/tiling/tile-matrix-set";
+
 export type DataCatalog = {
   schemaVersion: "0.1";
   sources: DataSourceDescriptor[];
@@ -14,6 +24,7 @@ export type DataSourceDescriptor = {
   minLevel?: number;
   maxLevel?: number;
   tileSize?: number;
+  tileMatrixSet?: TileMatrixSetDescriptor;
 };
 
 type RawDataCatalog = {
@@ -32,6 +43,29 @@ type RawDataSourceDescriptor = {
   minLevel?: unknown;
   maxLevel?: unknown;
   tileSize?: unknown;
+  tileMatrixSet?: unknown;
+};
+
+type RawTileMatrixSetDescriptor = {
+  id?: unknown;
+  crs?: unknown;
+  extent?: unknown;
+  matrices?: unknown;
+};
+
+type RawTileMatrixSetExtent = {
+  west?: unknown;
+  south?: unknown;
+  east?: unknown;
+  north?: unknown;
+};
+
+type RawTileMatrixDescriptor = {
+  level?: unknown;
+  matrixWidth?: unknown;
+  matrixHeight?: unknown;
+  tileWidth?: unknown;
+  tileHeight?: unknown;
 };
 
 export function parseDataCatalog(json: unknown): DataCatalog {
@@ -69,6 +103,18 @@ export function findDataSource(catalog: DataCatalog, id: string): DataSourceDesc
 function parseSource(value: unknown, index: number): DataSourceDescriptor {
   const source = expectObject<RawDataSourceDescriptor>(value, `catalog.sources[${index}]`);
   const type = expectString(source.type, `catalog.sources[${index}].type`);
+  const explicitMinLevel = optionalNonNegativeInteger(source.minLevel, `catalog.sources[${index}].minLevel`);
+  const explicitMaxLevel = optionalNonNegativeInteger(source.maxLevel, `catalog.sources[${index}].maxLevel`);
+  const explicitTileSize = optionalPositiveInteger(source.tileSize, `catalog.sources[${index}].tileSize`);
+  const tileMatrixSet = optionalTileMatrixSet(
+    source.tileMatrixSet,
+    `catalog.sources[${index}].tileMatrixSet`,
+    explicitMaxLevel,
+    explicitTileSize,
+  );
+  const minLevel = explicitMinLevel ?? inferMinLevel(tileMatrixSet);
+  const maxLevel = explicitMaxLevel ?? inferMaxLevel(tileMatrixSet);
+  const tileSize = explicitTileSize ?? inferTileSize(tileMatrixSet);
 
   if (type !== "imagery-xyz" && type !== "tileset" && type !== "terrain-heightmap") {
     throw new Error(`Unsupported DataCatalog source type: ${type}`);
@@ -82,9 +128,10 @@ function parseSource(value: unknown, index: number): DataSourceDescriptor {
     crs: optionalString(source.crs, `catalog.sources[${index}].crs`),
     attribution: optionalString(source.attribution, `catalog.sources[${index}].attribution`),
     license: optionalString(source.license, `catalog.sources[${index}].license`),
-    minLevel: optionalNonNegativeInteger(source.minLevel, `catalog.sources[${index}].minLevel`),
-    maxLevel: optionalNonNegativeInteger(source.maxLevel, `catalog.sources[${index}].maxLevel`),
-    tileSize: optionalPositiveInteger(source.tileSize, `catalog.sources[${index}].tileSize`),
+    minLevel,
+    maxLevel,
+    tileSize,
+    tileMatrixSet,
   };
 }
 
@@ -129,6 +176,99 @@ function optionalPositiveInteger(value: unknown, path: string): number | undefin
     return undefined;
   }
 
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`Invalid positive integer at ${path}`);
+  }
+
+  return value;
+}
+
+function optionalTileMatrixSet(
+  value: unknown,
+  path: string,
+  maxLevel: number | undefined,
+  tileSize: number | undefined,
+): TileMatrixSetDescriptor | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "WebMercatorQuad") {
+    return createWebMercatorQuadMatrixSet(maxLevel ?? 22, tileSize ?? 256);
+  }
+
+  const matrixSet = expectObject<RawTileMatrixSetDescriptor>(value, path);
+
+  if (!Array.isArray(matrixSet.matrices)) {
+    throw new Error(`Invalid TileMatrixSet matrices at ${path}.matrices`);
+  }
+
+  return createTileMatrixSetDescriptor({
+    id: expectString(matrixSet.id, `${path}.id`),
+    crs: expectString(matrixSet.crs, `${path}.crs`),
+    extent: parseTileMatrixSetExtent(matrixSet.extent, `${path}.extent`),
+    matrices: matrixSet.matrices.map((matrix, matrixIndex) => parseTileMatrix(matrix, `${path}.matrices[${matrixIndex}]`)),
+  });
+}
+
+function parseTileMatrixSetExtent(value: unknown, path: string): TileMatrixSetExtent {
+  const extent = expectObject<RawTileMatrixSetExtent>(value, path);
+
+  return {
+    west: expectNumber(extent.west, `${path}.west`),
+    south: expectNumber(extent.south, `${path}.south`),
+    east: expectNumber(extent.east, `${path}.east`),
+    north: expectNumber(extent.north, `${path}.north`),
+  };
+}
+
+function parseTileMatrix(value: unknown, path: string): TileMatrixDescriptor {
+  const matrix = expectObject<RawTileMatrixDescriptor>(value, path);
+
+  return {
+    level: expectNonNegativeInteger(matrix.level, `${path}.level`),
+    matrixWidth: expectPositiveInteger(matrix.matrixWidth, `${path}.matrixWidth`),
+    matrixHeight: expectPositiveInteger(matrix.matrixHeight, `${path}.matrixHeight`),
+    tileWidth: expectPositiveInteger(matrix.tileWidth, `${path}.tileWidth`),
+    tileHeight: expectPositiveInteger(matrix.tileHeight, `${path}.tileHeight`),
+  };
+}
+
+function inferMinLevel(matrixSet: TileMatrixSetDescriptor | undefined): number | undefined {
+  return matrixSet ? minTileMatrixLevel(matrixSet) : undefined;
+}
+
+function inferMaxLevel(matrixSet: TileMatrixSetDescriptor | undefined): number | undefined {
+  return matrixSet ? maxTileMatrixLevel(matrixSet) : undefined;
+}
+
+function inferTileSize(matrixSet: TileMatrixSetDescriptor | undefined): number | undefined {
+  const firstMatrix = matrixSet?.matrices[0];
+
+  if (!firstMatrix || firstMatrix.tileWidth !== firstMatrix.tileHeight) {
+    return undefined;
+  }
+
+  return firstMatrix.tileWidth;
+}
+
+function expectNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid number at ${path}`);
+  }
+
+  return value;
+}
+
+function expectNonNegativeInteger(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Invalid non-negative integer at ${path}`);
+  }
+
+  return value;
+}
+
+function expectPositiveInteger(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     throw new Error(`Invalid positive integer at ${path}`);
   }

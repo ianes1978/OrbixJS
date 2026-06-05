@@ -10,6 +10,7 @@
       "minLevel": 2,
       "maxLevel": 15,
       "tileSize": 256,
+      "tileMatrixSet": "WebMercatorQuad",
       "attribution": "Esri World Imagery"
     },
     {

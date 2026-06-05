@@ -337,6 +337,7 @@ async function loadDemoProject(): Promise<void> {
           level: source.minLevel ?? 2,
           minLevel: source.minLevel,
           maxLevel: source.maxLevel,
+          tileSize: source.tileSize,
         });
       } else if (layer.type === "tileset" && source.type === "tileset") {
         await viewer.addTileset({ url: demoAssetUrl(source.url), id: source.title, scale: 180000 });

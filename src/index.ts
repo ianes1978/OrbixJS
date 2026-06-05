@@ -78,9 +78,13 @@ export {
   type LocalFrameENU,
 } from "./engine/core/geodesy/local-frame";
 export {
+  createTileMatrixSetDescriptor,
   createWebMercatorQuadMatrixSet,
+  maxTileMatrixLevel,
+  minTileMatrixLevel,
   tileMatrixAtLevel,
   type TileMatrixDescriptor,
+  type TileMatrixSetExtent,
   type TileMatrixSetDescriptor,
   type TileMatrixSetId,
 } from "./engine/globe/tiling/tile-matrix-set";
