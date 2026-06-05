@@ -22,4 +22,14 @@ describe("OrbitCamera", () => {
     expect(camera.viewMatrix()).toHaveLength(16);
     expect(camera.projectionMatrix(16 / 9)).toHaveLength(16);
   });
+
+  it("reduces drag sensitivity near the globe surface", () => {
+    const near = new OrbitCamera({ distance: 1.08 });
+    const mid = new OrbitCamera({ distance: 1.8 });
+    const far = new OrbitCamera({ distance: 4 });
+
+    expect(near.dragSensitivityScale()).toBeCloseTo(0.04);
+    expect(mid.dragSensitivityScale()).toBeGreaterThan(near.dragSensitivityScale());
+    expect(far.dragSensitivityScale()).toBe(1);
+  });
 });

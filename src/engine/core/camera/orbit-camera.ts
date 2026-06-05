@@ -24,7 +24,7 @@ export class OrbitCamera {
   constructor(options: OrbitCameraOptions = {}) {
     this.target = options.target ?? [0, 0, 0];
     this.distance = options.distance ?? 3.2;
-    this.minDistance = options.minDistance ?? 1.35;
+    this.minDistance = options.minDistance ?? 1.08;
     this.maxDistance = options.maxDistance ?? 10;
     this.yaw = options.yaw ?? -0.65;
     this.pitch = options.pitch ?? 0.35;
@@ -33,6 +33,11 @@ export class OrbitCamera {
   orbit(deltaX: number, deltaY: number): void {
     this.yaw += deltaX;
     this.pitch = clamp(this.pitch + deltaY, -1.42, 1.42);
+  }
+
+  dragSensitivityScale(): number {
+    const normalizedAltitude = (this.distance - this.minDistance) / (3.2 - this.minDistance);
+    return clamp(normalizedAltitude, 0.04, 1);
   }
 
   zoom(delta: number): void {

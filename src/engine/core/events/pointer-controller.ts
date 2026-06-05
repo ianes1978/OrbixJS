@@ -40,7 +40,8 @@ export class PointerController {
     const deltaY = event.clientY - this.lastY;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
-    this.camera.orbit(-deltaX * 0.006, deltaY * 0.006);
+    const sensitivity = 0.006 * this.camera.dragSensitivityScale();
+    this.camera.orbit(-deltaX * sensitivity, deltaY * sensitivity);
   };
 
   private readonly onPointerUp = (event: PointerEvent) => {

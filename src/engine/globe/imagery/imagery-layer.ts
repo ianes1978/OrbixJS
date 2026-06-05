@@ -1,7 +1,7 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
 import { CameraTileSelector } from "./tile-selector";
 import { type QuadtreeTile } from "./quadtree-tile";
-import { XYZTileProvider } from "./xyz-tile-provider";
+import { type RasterTileProvider } from "./tile-provider";
 
 export type ImageryTexture = {
   image: HTMLCanvasElement;
@@ -30,7 +30,7 @@ export class ImageryLayer {
   private readonly pending = new Set<string>();
 
   constructor(
-    readonly provider: XYZTileProvider,
+    readonly provider: RasterTileProvider,
     readonly level = 2,
     private readonly options: ImageryLayerOptions = {},
   ) {}

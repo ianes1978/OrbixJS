@@ -148,7 +148,7 @@ export class GeoViewer {
       return;
     }
 
-    const tileIds = this.centeredActiveTileWindow();
+    const tileIds = this.lastActiveTileIds;
 
     for (const tileId of tileIds) {
       const tile = this.imagery.findTile(tileId);
@@ -159,27 +159,6 @@ export class GeoViewer {
     }
 
     this.renderer.setActiveImageryTiles(tileIds);
-  }
-
-  private centeredActiveTileWindow(): string[] {
-    const gridSize = Math.round(Math.sqrt(this.lastActiveTileIds.length));
-
-    if (gridSize < 3 || gridSize * gridSize !== this.lastActiveTileIds.length) {
-      return this.lastActiveTileIds.slice(0, 9);
-    }
-
-    const center = Math.floor(gridSize / 2);
-    const start = Math.max(0, center - 1);
-    const end = Math.min(gridSize - 1, center + 1);
-    const tileIds: string[] = [];
-
-    for (let row = start; row <= end; row += 1) {
-      for (let col = start; col <= end; col += 1) {
-        tileIds.push(this.lastActiveTileIds[row * gridSize + col]);
-      }
-    }
-
-    return tileIds;
   }
 
   private centerViewCartographic(): [number, number, number] | undefined {

@@ -1,5 +1,6 @@
 import { TileCache } from "./tile-cache";
 import { type TileCoordinate } from "../tiling/web-mercator-tiling";
+import { type RasterTileProvider } from "./tile-provider";
 
 export type XYZTileProviderOptions = {
   url: string;
@@ -8,7 +9,7 @@ export type XYZTileProviderOptions = {
   crossOrigin?: "" | "anonymous" | "use-credentials";
 };
 
-export class XYZTileProvider {
+export class XYZTileProvider implements RasterTileProvider {
   readonly tileSize: number;
   private readonly cache = new TileCache<Promise<HTMLImageElement>>(256);
 

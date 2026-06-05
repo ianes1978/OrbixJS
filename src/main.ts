@@ -130,7 +130,7 @@ const viewer = new GeoViewer({
   renderer: "webgl2",
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
-    const mode = debugTileOverlay ? "overlay 3x3" : "base";
+    const mode = debugTileOverlay ? "overlay" : "base";
     tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
   },
   onImageryError: () => {

@@ -1,5 +1,7 @@
 import { ImageryLayer, type ImageryLayerStats, type ImageryTexture } from "./imagery-layer";
 import { type QuadtreeTile } from "./quadtree-tile";
+import { type RasterTileProvider } from "./tile-provider";
+import { WMTSTileProvider, type WMTSTileProviderOptions } from "./wmts-tile-provider";
 import { XYZTileProvider, type XYZTileProviderOptions } from "./xyz-tile-provider";
 
 export type ImageryLayerCollectionOptions = {
@@ -16,7 +18,16 @@ export class ImageryLayerCollection {
 
   addXYZLayer(options: XYZTileProviderOptions & { level?: number }): ImageryLayer {
     const provider = new XYZTileProvider(options);
-    const layer = new ImageryLayer(provider, options.level ?? 2, {
+    return this.addLayer(provider, options.level);
+  }
+
+  addWMTSLayer(options: WMTSTileProviderOptions & { level?: number }): ImageryLayer {
+    const provider = new WMTSTileProvider(options);
+    return this.addLayer(provider, options.level);
+  }
+
+  private addLayer(provider: RasterTileProvider, level = 2): ImageryLayer {
+    const layer = new ImageryLayer(provider, level, {
       onTileReady: (tile, image) => this.options.onTileReady?.(tile, image),
       onTileError: (_tile, error) => this.options.onLayerError?.(error),
     });
