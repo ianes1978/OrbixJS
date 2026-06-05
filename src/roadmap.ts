@@ -40,7 +40,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Feature detection", done: true },
       { label: "Device/canvas WebGPU", done: true },
       { label: "Globo WGSL", done: true },
-      { label: "Imagery WebGPU", done: true },
+      { label: "Imagery WebGPU", done: false },
     ],
   },
   {
