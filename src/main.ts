@@ -158,12 +158,6 @@ const pickingStatusElement = pickingStatus;
 let demoTileset: TilesetJson | undefined;
 let activeTilesetContentKey: string | undefined;
 let pendingTilesetContentKey: string | undefined;
-let activeModelPickSphere:
-  | {
-      center: [number, number, number];
-      radius: number;
-    }
-  | undefined;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -246,19 +240,33 @@ viewer.canvas.addEventListener("pointerup", (event) => {
     return;
   }
 
-  if (debugModelVisible && activeModelPickSphere && viewer.pickSphere(event.clientX, event.clientY, activeModelPickSphere)) {
-    pickingStatusElement.textContent = "mesh: demo marker";
+  if (debugModelVisible) {
+    const hit = viewer.pick({ clientX: event.clientX, clientY: event.clientY });
+    viewer.canvas.dispatchEvent(new CustomEvent("orbix:pick", { detail: hit }));
+
+    if (!hit) {
+      pickingStatusElement.textContent = "nessun hit";
+      return;
+    }
+
+    if (hit.type === "mesh") {
+      pickingStatusElement.textContent = `mesh: ${hit.id}`;
+      return;
+    }
+
+    pickingStatusElement.textContent = `${toDegrees(hit.lat).toFixed(3)}, ${toDegrees(hit.lon).toFixed(3)}`;
     return;
   }
 
-  const hit = viewer.pickGlobe(event.clientX, event.clientY);
+  const globe = viewer.pickGlobe(event.clientX, event.clientY);
+  viewer.canvas.dispatchEvent(new CustomEvent("orbix:pick", { detail: globe ? { type: "globe" as const, ...globe } : undefined }));
 
-  if (!hit) {
+  if (!globe) {
     pickingStatusElement.textContent = "nessun hit";
     return;
   }
 
-  pickingStatusElement.textContent = `${toDegrees(hit.lat).toFixed(3)}, ${toDegrees(hit.lon).toFixed(3)}`;
+  pickingStatusElement.textContent = `${toDegrees(globe.lat).toFixed(3)}, ${toDegrees(globe.lon).toFixed(3)}`;
 });
 
 async function loadDemoModel(
@@ -290,10 +298,11 @@ async function loadDemoModel(
       baseColorFactor: demoPrimitive.baseColorFactor,
       baseColorTexture,
     });
-    activeModelPickSphere = {
+    viewer.setDebugModelPickSphere({
       center: viewer.cartographicToUnitSphere(placement),
       radius: 230000 / 6_378_137,
-    };
+      id: "demo marker",
+    });
   } catch (error) {
     console.warn("Demo GLB failed", error);
     modelToggle!.textContent = "Model -";
@@ -325,7 +334,7 @@ async function syncDemoTilesetContent(): Promise<void> {
   if (!selected) {
     tiles3dStatusElement.textContent = "culled";
     activeTilesetContentKey = undefined;
-    activeModelPickSphere = undefined;
+    viewer.setDebugModelPickSphere(undefined);
     viewer.setDebugModelVisible(false);
     return;
   }

@@ -23,6 +23,18 @@ export type GeoViewerOptions = {
   onImageryError?: (error: unknown) => void;
 };
 
+export type GeoPickResult =
+  | {
+      type: "mesh";
+      id: string;
+    }
+  | {
+      type: "globe";
+      lon: number;
+      lat: number;
+      height: number;
+    };
+
 export class GeoViewer {
   readonly canvas: HTMLCanvasElement;
   readonly scene = new Scene();
@@ -32,6 +44,13 @@ export class GeoViewer {
   private readonly controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
   private debugTileOverlay = false;
+  private debugModelPickSphere:
+    | {
+        center: Vec3;
+        radius: number;
+        id: string;
+      }
+    | undefined;
   private lastActiveTileIds: string[] = [];
   private frame = 0;
   private disposed = false;
@@ -137,6 +156,20 @@ export class GeoViewer {
     return this.pickGlobeWithRay(ray);
   }
 
+  pick({ clientX, clientY }: { clientX: number; clientY: number }): GeoPickResult | undefined {
+    if (this.debugModelPickSphere && this.pickSphere(clientX, clientY, this.debugModelPickSphere)) {
+      return { type: "mesh", id: this.debugModelPickSphere.id };
+    }
+
+    const globe = this.pickGlobe(clientX, clientY);
+
+    if (!globe) {
+      return undefined;
+    }
+
+    return { type: "globe", ...globe };
+  }
+
   pickSphere(clientX: number, clientY: number, sphere: { center: Vec3; radius: number }): boolean {
     const ray = this.pickRay(clientX, clientY);
 
@@ -145,6 +178,16 @@ export class GeoViewer {
     }
 
     return intersectSphere(ray, sphere) !== undefined;
+  }
+
+  setDebugModelPickSphere(sphere: { center: Vec3; radius: number; id?: string } | undefined): void {
+    this.debugModelPickSphere = sphere
+      ? {
+          center: sphere.center,
+          radius: sphere.radius,
+          id: sphere.id ?? "debug-model",
+        }
+      : undefined;
   }
 
   cartographicToUnitSphere({ lon, lat, height = 0 }: { lon: number; lat: number; height?: number }): MutableVec3 {
