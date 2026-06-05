@@ -16,3 +16,4 @@ export {
   type RendererFrame,
   type RenderPassId,
 } from "./engine/renderer/interface/renderer";
+export { WebGPURenderer } from "./engine/renderer/webgpu/webgpu-renderer";
