@@ -16,12 +16,14 @@
       "id": "basemap",
       "type": "imagery-xyz",
       "source": "world-imagery",
+      "crs": "EPSG:3857",
       "visible": true
     },
     {
       "id": "demo-marker",
       "type": "tileset",
       "source": "demo-tileset",
+      "crs": "EPSG:4326",
       "visible": true
     },
     {

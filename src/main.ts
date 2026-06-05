@@ -1,7 +1,7 @@
 import "./styles.css";
 import { GeoViewer } from "./engine/geo-viewer";
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
-import { loadOrbixProject } from "./engine/project/orbix-project";
+import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -317,6 +317,12 @@ async function loadDemoProject(): Promise<void> {
       if (!source) {
         console.warn(`Missing data source: ${layer.source}`);
         continue;
+      }
+
+      const crs = resolveOrbixLayerCrs(project, layer, source);
+
+      if (crs.layer && crs.source && crs.layer !== crs.source) {
+        console.warn(`Layer ${layer.id} CRS override ${crs.layer} differs from source ${source.id} CRS ${crs.source}`);
       }
 
       if (layer.type === "imagery-xyz" && source.type === "imagery-xyz") {

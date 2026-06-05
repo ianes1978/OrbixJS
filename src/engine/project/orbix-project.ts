@@ -1,3 +1,5 @@
+import { type DataSourceDescriptor } from "../catalog/data-catalog";
+
 export const ORBIX_PROJECT_SCHEMA_VERSION = "0.1";
 
 export type OrbixProject = {
@@ -20,8 +22,17 @@ export type OrbixProjectLayer = {
   id: string;
   source: string;
   type: "imagery-xyz" | "tileset" | "terrain-heightmap";
+  crs?: string;
   visible?: boolean;
   opacity?: number;
+};
+
+export type OrbixLayerCrsResolution = {
+  project: string;
+  source?: string;
+  layer?: string;
+  effective: string;
+  heightReference?: "ellipsoid" | "orthometric" | "terrain";
 };
 
 type RawOrbixProject = {
@@ -37,6 +48,7 @@ type RawOrbixProjectLayer = {
   id?: unknown;
   source?: unknown;
   type?: unknown;
+  crs?: unknown;
   visible?: unknown;
   opacity?: unknown;
 };
@@ -119,10 +131,25 @@ function parseProjectLayers(value: unknown): OrbixProjectLayer[] {
       id: expectString(layer.id, `project.layers[${index}].id`),
       source: expectString(layer.source, `project.layers[${index}].source`),
       type,
+      crs: optionalString(layer.crs, `project.layers[${index}].crs`),
       visible: optionalBoolean(layer.visible, `project.layers[${index}].visible`),
       opacity: optionalNumber(layer.opacity, `project.layers[${index}].opacity`),
     };
   });
+}
+
+export function resolveOrbixLayerCrs(
+  project: OrbixProject,
+  layer: OrbixProjectLayer,
+  source?: Pick<DataSourceDescriptor, "crs">,
+): OrbixLayerCrsResolution {
+  return {
+    project: project.crs.project,
+    source: source?.crs,
+    layer: layer.crs,
+    effective: layer.crs ?? source?.crs ?? project.crs.project,
+    heightReference: project.crs.heightReference,
+  };
 }
 
 function expectObject<T extends object>(value: unknown, path: string): T {

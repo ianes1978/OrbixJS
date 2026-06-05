@@ -26,8 +26,10 @@ export {
 export {
   loadOrbixProject,
   parseOrbixProject,
+  resolveOrbixLayerCrs,
   serializeOrbixProject,
   ORBIX_PROJECT_SCHEMA_VERSION,
+  type OrbixLayerCrsResolution,
   type OrbixProject,
   type OrbixProjectLayer,
 } from "./engine/project/orbix-project";
