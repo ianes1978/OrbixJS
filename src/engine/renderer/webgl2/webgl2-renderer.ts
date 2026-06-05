@@ -5,6 +5,7 @@ import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { createRendererFramePlan } from "../interface/render-frame-plan";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
+import { RendererResourceManager, type RendererResourceHandle } from "../interface/resource-manager";
 import {
   globeFragmentShader,
   globeVertexShader,
@@ -18,6 +19,7 @@ import {
 
 type GlobeProgram = {
   program: WebGLProgram;
+  resource: RendererResourceHandle;
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
@@ -28,6 +30,7 @@ type GlobeProgram = {
 
 type TileProgram = {
   program: WebGLProgram;
+  resource: RendererResourceHandle;
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
@@ -37,6 +40,7 @@ type TileProgram = {
 
 type VectorProgram = {
   program: WebGLProgram;
+  resource: RendererResourceHandle;
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
@@ -45,6 +49,7 @@ type VectorProgram = {
 
 type ModelProgram = {
   program: WebGLProgram;
+  resource: RendererResourceHandle;
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
@@ -56,30 +61,48 @@ type ModelProgram = {
 
 type GpuMesh = {
   vao: WebGLVertexArrayObject;
+  vaoResource: RendererResourceHandle;
   vertexBuffer: WebGLBuffer;
+  vertexBufferResource: RendererResourceHandle;
   indexBuffer: WebGLBuffer;
+  indexBufferResource: RendererResourceHandle;
   indexCount: number;
   indexType: number;
   texture?: WebGLTexture;
+  textureResource?: RendererResourceHandle;
   textureEnabled?: boolean;
 };
 
 type GpuLineMesh = {
   vao: WebGLVertexArrayObject;
+  vaoResource: RendererResourceHandle;
   vertexBuffer: WebGLBuffer;
+  vertexBufferResource: RendererResourceHandle;
   vertexCount: number;
 };
 
 type TileEntry = {
   mesh: GpuMesh;
   texture: WebGLTexture;
+  textureResource: RendererResourceHandle;
   ready: boolean;
+};
+
+type GpuTexture = {
+  texture: WebGLTexture;
+  resource: RendererResourceHandle;
+};
+
+type TrackedShader = {
+  shader: WebGLShader;
+  resource: RendererResourceHandle;
 };
 
 export class WebGL2Renderer implements Renderer {
   readonly supported: boolean;
   readonly backend = "webgl2" as const;
   readonly capabilities: Renderer["capabilities"];
+  private readonly resourceManager = new RendererResourceManager();
   private readonly gl: WebGL2RenderingContext | null;
   private readonly program: GlobeProgram | null = null;
   private readonly tileProgram: TileProgram | null = null;
@@ -88,6 +111,7 @@ export class WebGL2Renderer implements Renderer {
   private readonly globe: GpuMesh | null = null;
   private debugModel: GpuMesh | null = null;
   private imageryTexture: WebGLTexture | null = null;
+  private imageryTextureResource: RendererResourceHandle | undefined;
   private imageryEnabled = false;
   private vectorLines: GpuLineMesh | null = null;
   private vectorLinesVisible = false;
@@ -118,14 +142,20 @@ export class WebGL2Renderer implements Renderer {
       return;
     }
 
-    this.program = createGlobeProgram(this.gl);
-    this.tileProgram = createTileProgram(this.gl);
-    this.vectorProgram = createVectorProgram(this.gl);
-    this.modelProgram = createModelProgram(this.gl);
-    this.globe = uploadMesh(this.gl, createEllipsoidMesh());
-    this.imageryTexture = createPlaceholderTexture(this.gl);
+    this.program = createGlobeProgram(this.gl, this.resourceManager);
+    this.tileProgram = createTileProgram(this.gl, this.resourceManager);
+    this.vectorProgram = createVectorProgram(this.gl, this.resourceManager);
+    this.modelProgram = createModelProgram(this.gl, this.resourceManager);
+    this.globe = uploadMesh(this.gl, createEllipsoidMesh(), this.resourceManager);
+    const imageryTexture = createPlaceholderTexture(this.gl, this.resourceManager);
+    this.imageryTexture = imageryTexture.texture;
+    this.imageryTextureResource = imageryTexture.resource;
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.enable(this.gl.CULL_FACE);
+  }
+
+  get resourceStats(): Renderer["resourceStats"] {
+    return this.resourceManager.snapshot();
   }
 
   setImageryTile(tile: QuadtreeTile, image: TexImageSource): void {
@@ -169,7 +199,7 @@ export class WebGL2Renderer implements Renderer {
       this.vectorLines = null;
     }
 
-    this.vectorLines = uploadLineMesh(this.gl, lines);
+    this.vectorLines = uploadLineMesh(this.gl, lines, this.resourceManager);
   }
 
   setVectorLinesVisible(visible: boolean): void {
@@ -200,12 +230,7 @@ export class WebGL2Renderer implements Renderer {
     }
 
     if (this.debugModel) {
-      this.gl.deleteVertexArray(this.debugModel.vao);
-      this.gl.deleteBuffer(this.debugModel.vertexBuffer);
-      this.gl.deleteBuffer(this.debugModel.indexBuffer);
-      if (this.debugModel.texture) {
-        this.gl.deleteTexture(this.debugModel.texture);
-      }
+      deleteMesh(this.gl, this.debugModel, this.resourceManager);
       this.debugModel = null;
     }
 
@@ -218,11 +243,14 @@ export class WebGL2Renderer implements Renderer {
         height: mesh.height ?? 90000,
         scale: mesh.scale ?? 180000,
       }),
+      this.resourceManager,
     );
     this.debugModelBaseColorFactor = mesh.baseColorFactor ?? [1, 1, 1, 1];
 
     if (mesh.baseColorTexture) {
-      this.debugModel.texture = createModelTexture(this.gl, mesh.baseColorTexture);
+      const texture = createModelTexture(this.gl, mesh.baseColorTexture, this.resourceManager);
+      this.debugModel.texture = texture.texture;
+      this.debugModel.textureResource = texture.resource;
       this.debugModel.textureEnabled = true;
     }
   }
@@ -306,43 +334,39 @@ export class WebGL2Renderer implements Renderer {
       return;
     }
 
-    this.gl.deleteVertexArray(this.globe.vao);
-    this.gl.deleteBuffer(this.globe.vertexBuffer);
-    this.gl.deleteBuffer(this.globe.indexBuffer);
+    deleteMesh(this.gl, this.globe, this.resourceManager);
     this.gl.deleteTexture(this.imageryTexture);
+    this.resourceManager.release(this.imageryTextureResource);
     this.gl.deleteProgram(this.program.program);
+    this.resourceManager.release(this.program.resource);
 
     if (this.tileProgram) {
       this.gl.deleteProgram(this.tileProgram.program);
+      this.resourceManager.release(this.tileProgram.resource);
     }
 
     if (this.vectorProgram) {
       this.gl.deleteProgram(this.vectorProgram.program);
+      this.resourceManager.release(this.vectorProgram.resource);
     }
 
     if (this.modelProgram) {
       this.gl.deleteProgram(this.modelProgram.program);
+      this.resourceManager.release(this.modelProgram.resource);
     }
 
     if (this.debugModel) {
-      this.gl.deleteVertexArray(this.debugModel.vao);
-      this.gl.deleteBuffer(this.debugModel.vertexBuffer);
-      this.gl.deleteBuffer(this.debugModel.indexBuffer);
-      if (this.debugModel.texture) {
-        this.gl.deleteTexture(this.debugModel.texture);
-      }
+      deleteMesh(this.gl, this.debugModel, this.resourceManager);
     }
 
     if (this.vectorLines) {
-      this.gl.deleteVertexArray(this.vectorLines.vao);
-      this.gl.deleteBuffer(this.vectorLines.vertexBuffer);
+      deleteLineMesh(this.gl, this.vectorLines, this.resourceManager);
     }
 
     for (const entry of this.tileEntries.values()) {
-      this.gl.deleteVertexArray(entry.mesh.vao);
-      this.gl.deleteBuffer(entry.mesh.vertexBuffer);
-      this.gl.deleteBuffer(entry.mesh.indexBuffer);
+      deleteMesh(this.gl, entry.mesh, this.resourceManager);
       this.gl.deleteTexture(entry.texture);
+      this.resourceManager.release(entry.textureResource);
     }
   }
 
@@ -432,9 +456,11 @@ export class WebGL2Renderer implements Renderer {
       return existing;
     }
 
+    const texture = createDebugTileTexture(this.gl, this.resourceManager);
     const entry = {
-      mesh: uploadTileMesh(this.gl, createEllipsoidTileMesh(tile)),
-      texture: createDebugTileTexture(this.gl),
+      mesh: uploadTileMesh(this.gl, createEllipsoidTileMesh(tile), this.resourceManager),
+      texture: texture.texture,
+      textureResource: texture.resource,
       ready: false,
     };
     this.tileEntries.set(tile.id, entry);
@@ -442,24 +468,27 @@ export class WebGL2Renderer implements Renderer {
   }
 }
 
-function createGlobeProgram(gl: WebGL2RenderingContext): GlobeProgram {
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, globeVertexShader);
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, globeFragmentShader);
+function createGlobeProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): GlobeProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, globeVertexShader, resources);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, globeFragmentShader, resources);
   const program = gl.createProgram();
 
   if (!program) {
     throw new Error("Unable to create WebGL2 program");
   }
 
-  gl.attachShader(program, vertex);
-  gl.attachShader(program, fragment);
+  const resource = resources.track("program");
+  gl.attachShader(program, vertex.shader);
+  gl.attachShader(program, fragment.shader);
   gl.bindAttribLocation(program, 0, "position");
   gl.bindAttribLocation(program, 1, "normal");
   gl.bindAttribLocation(program, 2, "geodeticNormal");
   gl.bindAttribLocation(program, 3, "imageryUv");
   gl.linkProgram(program);
-  gl.deleteShader(vertex);
-  gl.deleteShader(fragment);
+  gl.deleteShader(vertex.shader);
+  resources.release(vertex.resource);
+  gl.deleteShader(fragment.shader);
+  resources.release(fragment.resource);
 
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
     throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 program");
@@ -476,26 +505,29 @@ function createGlobeProgram(gl: WebGL2RenderingContext): GlobeProgram {
     throw new Error("Missing WebGL2 uniform");
   }
 
-  return { program, uProjection, uView, uModel, uImageryEnabled, uImagery, uSunDirection };
+  return { program, resource, uProjection, uView, uModel, uImageryEnabled, uImagery, uSunDirection };
 }
 
-function createTileProgram(gl: WebGL2RenderingContext): TileProgram {
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, imageryTileVertexShader);
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, imageryTileFragmentShader);
+function createTileProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): TileProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, imageryTileVertexShader, resources);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, imageryTileFragmentShader, resources);
   const program = gl.createProgram();
 
   if (!program) {
     throw new Error("Unable to create WebGL2 tile program");
   }
 
-  gl.attachShader(program, vertex);
-  gl.attachShader(program, fragment);
+  const resource = resources.track("program");
+  gl.attachShader(program, vertex.shader);
+  gl.attachShader(program, fragment.shader);
   gl.bindAttribLocation(program, 0, "position");
   gl.bindAttribLocation(program, 1, "normal");
   gl.bindAttribLocation(program, 2, "uv");
   gl.linkProgram(program);
-  gl.deleteShader(vertex);
-  gl.deleteShader(fragment);
+  gl.deleteShader(vertex.shader);
+  resources.release(vertex.resource);
+  gl.deleteShader(fragment.shader);
+  resources.release(fragment.resource);
 
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
     throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 tile program");
@@ -511,24 +543,27 @@ function createTileProgram(gl: WebGL2RenderingContext): TileProgram {
     throw new Error("Missing WebGL2 tile uniform");
   }
 
-  return { program, uProjection, uView, uModel, uImagery, uSunDirection };
+  return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection };
 }
 
-function createVectorProgram(gl: WebGL2RenderingContext): VectorProgram {
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, vectorLineVertexShader);
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, vectorLineFragmentShader);
+function createVectorProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): VectorProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, vectorLineVertexShader, resources);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, vectorLineFragmentShader, resources);
   const program = gl.createProgram();
 
   if (!program) {
     throw new Error("Unable to create WebGL2 vector program");
   }
 
-  gl.attachShader(program, vertex);
-  gl.attachShader(program, fragment);
+  const resource = resources.track("program");
+  gl.attachShader(program, vertex.shader);
+  gl.attachShader(program, fragment.shader);
   gl.bindAttribLocation(program, 0, "position");
   gl.linkProgram(program);
-  gl.deleteShader(vertex);
-  gl.deleteShader(fragment);
+  gl.deleteShader(vertex.shader);
+  resources.release(vertex.resource);
+  gl.deleteShader(fragment.shader);
+  resources.release(fragment.resource);
 
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
     throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 vector program");
@@ -543,24 +578,27 @@ function createVectorProgram(gl: WebGL2RenderingContext): VectorProgram {
     throw new Error("Missing WebGL2 vector uniform");
   }
 
-  return { program, uProjection, uView, uModel, uCameraPosition };
+  return { program, resource, uProjection, uView, uModel, uCameraPosition };
 }
 
-function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
-  const vertex = compileShader(gl, gl.VERTEX_SHADER, modelVertexShader);
-  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, modelFragmentShader);
+function createModelProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): ModelProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, modelVertexShader, resources);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, modelFragmentShader, resources);
   const program = gl.createProgram();
 
   if (!program) {
     throw new Error("Unable to create WebGL2 model program");
   }
 
-  gl.attachShader(program, vertex);
-  gl.attachShader(program, fragment);
+  const resource = resources.track("program");
+  gl.attachShader(program, vertex.shader);
+  gl.attachShader(program, fragment.shader);
   gl.bindAttribLocation(program, 0, "position");
   gl.linkProgram(program);
-  gl.deleteShader(vertex);
-  gl.deleteShader(fragment);
+  gl.deleteShader(vertex.shader);
+  resources.release(vertex.resource);
+  gl.deleteShader(fragment.shader);
+  resources.release(fragment.resource);
 
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
     throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 model program");
@@ -588,6 +626,7 @@ function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
 
   return {
     program,
+    resource,
     uProjection,
     uView,
     uModel,
@@ -598,24 +637,36 @@ function createModelProgram(gl: WebGL2RenderingContext): ModelProgram {
   };
 }
 
-function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
+function compileShader(
+  gl: WebGL2RenderingContext,
+  type: number,
+  source: string,
+  resources: RendererResourceManager,
+): TrackedShader {
   const shader = gl.createShader(type);
 
   if (!shader) {
     throw new Error("Unable to create WebGL2 shader");
   }
 
+  const resource = resources.track("shader");
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
 
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    gl.deleteShader(shader);
+    resources.release(resource);
     throw new Error(gl.getShaderInfoLog(shader) ?? "Unable to compile WebGL2 shader");
   }
 
-  return shader;
+  return { shader, resource };
 }
 
-function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEllipsoidMesh>): GpuMesh {
+function uploadMesh(
+  gl: WebGL2RenderingContext,
+  mesh: ReturnType<typeof createEllipsoidMesh>,
+  resources: RendererResourceManager,
+): GpuMesh {
   const vao = gl.createVertexArray();
   const vertexBuffer = gl.createBuffer();
   const indexBuffer = gl.createBuffer();
@@ -643,8 +694,11 @@ function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEl
 
   return {
     vao,
+    vaoResource: resources.track("vertexArray"),
     vertexBuffer,
+    vertexBufferResource: resources.track("buffer"),
     indexBuffer,
+    indexBufferResource: resources.track("buffer"),
     indexCount: mesh.indices.length,
     indexType: gl.UNSIGNED_SHORT,
   };
@@ -653,6 +707,7 @@ function uploadMesh(gl: WebGL2RenderingContext, mesh: ReturnType<typeof createEl
 function uploadTileMesh(
   gl: WebGL2RenderingContext,
   mesh: ReturnType<typeof createEllipsoidTileMesh>,
+  resources: RendererResourceManager,
 ): GpuMesh {
   const vao = gl.createVertexArray();
   const vertexBuffer = gl.createBuffer();
@@ -679,8 +734,11 @@ function uploadTileMesh(
 
   return {
     vao,
+    vaoResource: resources.track("vertexArray"),
     vertexBuffer,
+    vertexBufferResource: resources.track("buffer"),
     indexBuffer,
+    indexBufferResource: resources.track("buffer"),
     indexCount: mesh.indices.length,
     indexType: gl.UNSIGNED_SHORT,
   };
@@ -689,6 +747,7 @@ function uploadTileMesh(
 function uploadSimpleMesh(
   gl: WebGL2RenderingContext,
   mesh: { vertices: Float32Array; indices: Uint16Array | Uint32Array },
+  resources: RendererResourceManager,
 ): GpuMesh {
   const vao = gl.createVertexArray();
   const vertexBuffer = gl.createBuffer();
@@ -710,8 +769,11 @@ function uploadSimpleMesh(
 
   return {
     vao,
+    vaoResource: resources.track("vertexArray"),
     vertexBuffer,
+    vertexBufferResource: resources.track("buffer"),
     indexBuffer,
+    indexBufferResource: resources.track("buffer"),
     indexCount: mesh.indices.length,
     indexType: mesh.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
   };
@@ -760,6 +822,7 @@ function createSequentialIndices(vertexCount: number): Uint16Array | Uint32Array
 function uploadLineMesh(
   gl: WebGL2RenderingContext,
   lines: readonly (readonly [number, number])[][],
+  resources: RendererResourceManager,
   ellipsoid = Ellipsoid.WGS84,
 ): GpuLineMesh {
   const vertices: number[] = [];
@@ -794,9 +857,32 @@ function uploadLineMesh(
 
   return {
     vao,
+    vaoResource: resources.track("vertexArray"),
     vertexBuffer,
+    vertexBufferResource: resources.track("buffer"),
     vertexCount: vertices.length / 3,
   };
+}
+
+function deleteMesh(gl: WebGL2RenderingContext, mesh: GpuMesh, resources: RendererResourceManager): void {
+  gl.deleteVertexArray(mesh.vao);
+  resources.release(mesh.vaoResource);
+  gl.deleteBuffer(mesh.vertexBuffer);
+  resources.release(mesh.vertexBufferResource);
+  gl.deleteBuffer(mesh.indexBuffer);
+  resources.release(mesh.indexBufferResource);
+
+  if (mesh.texture) {
+    gl.deleteTexture(mesh.texture);
+    resources.release(mesh.textureResource);
+  }
+}
+
+function deleteLineMesh(gl: WebGL2RenderingContext, mesh: GpuLineMesh, resources: RendererResourceManager): void {
+  gl.deleteVertexArray(mesh.vao);
+  resources.release(mesh.vaoResource);
+  gl.deleteBuffer(mesh.vertexBuffer);
+  resources.release(mesh.vertexBufferResource);
 }
 
 function pushLineVertex(
@@ -823,13 +909,14 @@ function identityMatrix(): Float32Array {
   return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }
 
-function createPlaceholderTexture(gl: WebGL2RenderingContext): WebGLTexture {
+function createPlaceholderTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {
   const texture = gl.createTexture();
 
   if (!texture) {
     throw new Error("Unable to allocate imagery texture");
   }
 
+  const resource = resources.track("texture");
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -847,11 +934,12 @@ function createPlaceholderTexture(gl: WebGL2RenderingContext): WebGLTexture {
     new Uint8Array([18, 42, 50, 255]),
   );
   gl.generateMipmap(gl.TEXTURE_2D);
-  return texture;
+  return { texture, resource };
 }
 
-function createTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
-  const texture = createPlaceholderTexture(gl);
+function createTileTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {
+  const texture = createPlaceholderTexture(gl, resources);
+  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -859,9 +947,9 @@ function createTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
   return texture;
 }
 
-function createDebugTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
-  const texture = createPlaceholderTexture(gl);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
+function createDebugTileTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {
+  const texture = createPlaceholderTexture(gl, resources);
+  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
   gl.texImage2D(
     gl.TEXTURE_2D,
     0,
@@ -877,9 +965,13 @@ function createDebugTileTexture(gl: WebGL2RenderingContext): WebGLTexture {
   return texture;
 }
 
-function createModelTexture(gl: WebGL2RenderingContext, image: TexImageSource): WebGLTexture {
-  const texture = createPlaceholderTexture(gl);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
+function createModelTexture(
+  gl: WebGL2RenderingContext,
+  image: TexImageSource,
+  resources: RendererResourceManager,
+): GpuTexture {
+  const texture = createPlaceholderTexture(gl, resources);
+  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);

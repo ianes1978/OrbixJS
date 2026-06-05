@@ -28,7 +28,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Backend capabilities", done: true },
       { label: "Render pass dichiarati", done: true },
       { label: "Scene traversal separato", done: true },
-      { label: "Resource manager GPU", done: false },
+      { label: "Resource manager GPU", done: true },
       { label: "Shader GLSL/WGSL separati", done: true },
     ],
   },

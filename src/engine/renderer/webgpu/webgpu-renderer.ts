@@ -1,4 +1,5 @@
 import { type Renderer, type RendererFrame } from "../interface/renderer";
+import { emptyRendererResourceStats } from "../interface/resource-manager";
 
 type NavigatorWithGpu = Navigator & {
   gpu?: unknown;
@@ -8,6 +9,7 @@ export class WebGPURenderer implements Renderer {
   readonly backend = "webgpu" as const;
   readonly supported: boolean;
   readonly capabilities: Renderer["capabilities"];
+  readonly resourceStats = emptyRendererResourceStats();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.supported = Boolean((navigator as NavigatorWithGpu).gpu);

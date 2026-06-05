@@ -1,5 +1,6 @@
 import { OrbitCamera } from "../../core/camera/orbit-camera";
 import { Scene } from "../../core/scene/scene";
+import { type RendererResourceStats } from "./resource-manager";
 
 export type RendererBackend = "webgl2" | "webgpu";
 
@@ -21,6 +22,7 @@ export interface Renderer {
   readonly supported: boolean;
   readonly backend: RendererBackend;
   readonly capabilities: RendererCapabilities;
+  readonly resourceStats: RendererResourceStats;
   resize(): void;
   render(frame: RendererFrame): void;
   destroy(): void;

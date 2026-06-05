@@ -47,6 +47,14 @@ export {
   type ShaderStage,
 } from "./engine/renderer/interface/shader-source";
 export {
+  RendererResourceManager,
+  emptyRendererResourceStats,
+  rendererResourceKindList,
+  type RendererResourceHandle,
+  type RendererResourceKind,
+  type RendererResourceStats,
+} from "./engine/renderer/interface/resource-manager";
+export {
   type Renderer,
   type RendererBackend,
   type RendererCapabilities,
