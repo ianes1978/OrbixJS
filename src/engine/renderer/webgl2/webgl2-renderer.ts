@@ -1,5 +1,6 @@
 import { Ellipsoid } from "../../core/geodesy/ellipsoid";
-import { add, cross, normalize, scale, type Vec3 } from "../../core/math/vec3";
+import { createLocalFrameENU, localEnuToRenderUnit } from "../../core/geodesy/local-frame";
+import { normalize, type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
@@ -787,21 +788,17 @@ function createPlacedModelMesh(
 ): { vertices: Float32Array; indices: Uint16Array | Uint32Array } {
   const lon = placement.lon * (Math.PI / 180);
   const lat = placement.lat * (Math.PI / 180);
-  const maxRadius = ellipsoid.maximumRadius;
-  const center = scalePosition(ellipsoid.cartographicToCartesian({ lon, lat, height: placement.height }), maxRadius);
-  const up = normalize(center);
-  const east = normalize(cross([0, 1, 0], up));
-  const north = normalize(cross(up, east));
-  const unitScale = placement.scale / maxRadius;
+  const frame = createLocalFrameENU({ lon, lat, height: placement.height }, ellipsoid);
   const vertices: number[] = [];
 
   for (let index = 0; index < positions.length; index += 3) {
     const localX = positions[index];
     const localY = positions[index + 1];
     const localZ = positions[index + 2];
-    const worldPosition = add(
-      add(add(center, scale(east, localX * unitScale)), scale(up, localY * unitScale)),
-      scale(north, localZ * unitScale),
+    const worldPosition = localEnuToRenderUnit(
+      frame,
+      [localX * placement.scale, localZ * placement.scale, localY * placement.scale],
+      ellipsoid,
     );
     vertices.push(...worldPosition, placement.texcoords?.[(index / 3) * 2] ?? 0, placement.texcoords?.[(index / 3) * 2 + 1] ?? 0);
   }
@@ -899,10 +896,6 @@ function pushLineVertex(
   });
 
   vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
-}
-
-function scalePosition(position: Vec3, maxRadius: number): [number, number, number] {
-  return [position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius];
 }
 
 function identityMatrix(): Float32Array {

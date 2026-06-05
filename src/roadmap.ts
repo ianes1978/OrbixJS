@@ -50,7 +50,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "CRS dichiarato per layer", done: true },
       { label: "Coordinate transformer", done: true },
       { label: "TileMatrixSet generico", done: false },
-      { label: "LocalFrame ENU", done: false },
+      { label: "LocalFrame ENU", done: true },
       { label: "Quote e height reference", done: true },
     ],
   },

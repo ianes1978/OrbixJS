@@ -72,6 +72,12 @@ export {
   type SupportedCrs,
 } from "./engine/core/geodesy/crs-transform";
 export {
+  createLocalFrameENU,
+  localEnuToCartesian,
+  localEnuToRenderUnit,
+  type LocalFrameENU,
+} from "./engine/core/geodesy/local-frame";
+export {
   createWebMercatorQuadMatrixSet,
   tileMatrixAtLevel,
   type TileMatrixDescriptor,
