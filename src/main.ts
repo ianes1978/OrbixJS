@@ -25,7 +25,11 @@ app.innerHTML = `
         </div>
         <div class="metric">
           <span>Imagery</span>
-          <strong id="imagery-status">XYZ</strong>
+          <strong id="imagery-status">Ortofoto</strong>
+        </div>
+        <div class="metric wide">
+          <span>Tile runtime</span>
+          <strong id="tile-status">LOD -</strong>
         </div>
       </div>
       </div>
@@ -54,8 +58,9 @@ const overallProgress = document.querySelector<HTMLElement>("#overall-progress")
 const overallBar = document.querySelector<HTMLElement>("#overall-bar");
 const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
+const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 
-if (!list || !overallProgress || !overallBar || !rendererStatus || !imageryStatus) {
+if (!list || !overallProgress || !overallBar || !rendererStatus || !imageryStatus || !tileStatus) {
   throw new Error("Missing progress UI element");
 }
 
@@ -106,16 +111,17 @@ if (!globeHost) {
 const viewer = new GeoViewer({
   container: globeHost,
   renderer: "webgl2",
-  onImageryReady: (loadedTiles, expectedTiles) => {
-    imageryStatus.textContent = `${loadedTiles}/${expectedTiles} tile`;
+  onImageryStats: (stats) => {
+    imageryStatus.textContent = `LOD ${stats.level}`;
+    tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}`;
   },
   onImageryError: () => {
     imageryStatus.textContent = "fallback";
   },
 });
 rendererStatus.textContent = viewer.renderer.supported ? "WebGL2 attivo" : "WebGL2 non disponibile";
-imageryStatus.textContent = "caricamento";
+imageryStatus.textContent = "Ortofoto";
 viewer.imagery.addXYZLayer({
-  url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   level: 2,
 });

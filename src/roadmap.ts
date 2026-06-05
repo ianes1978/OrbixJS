@@ -26,7 +26,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Layer XYZ", done: true },
       { label: "Layer WMTS", done: false },
       { label: "Cache base", done: true },
-      { label: "Quadtree", done: false },
+      { label: "Quadtree iniziale", done: true },
     ],
   },
   {

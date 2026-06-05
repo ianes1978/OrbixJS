@@ -7,7 +7,13 @@ import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 export type GeoViewerOptions = {
   container: HTMLElement | string;
   renderer?: "webgl2";
-  onImageryReady?: (loadedTiles: number, expectedTiles: number) => void;
+  onImageryStats?: (stats: {
+    level: number;
+    activeTiles: number;
+    loadedTiles: number;
+    pendingTiles: number;
+    cacheSize: number;
+  }) => void;
   onImageryError?: (error: unknown) => void;
 };
 
@@ -18,10 +24,12 @@ export class GeoViewer {
   readonly renderer: WebGL2Renderer;
   readonly imagery: ImageryLayerCollection;
   private readonly controller: PointerController;
+  private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
   private frame = 0;
   private disposed = false;
 
   constructor(options: GeoViewerOptions) {
+    this.onImageryStatsCallback = options.onImageryStats;
     const container =
       typeof options.container === "string"
         ? document.getElementById(options.container)
@@ -45,12 +53,16 @@ export class GeoViewer {
       onTextureReady: (texture) => {
         try {
           this.renderer.setImagery(texture.image);
-          options.onImageryReady?.(texture.loadedTiles, texture.expectedTiles);
         } catch (error) {
           console.warn("Imagery texture upload failed", error);
           options.onImageryError?.(error);
         }
       },
+      onTileReady: (tile, image) => {
+        void tile;
+        void image;
+      },
+      onActiveTilesChanged: () => this.renderer.setActiveImageryTiles([]),
       onLayerError: (error) => {
         console.warn("Imagery layer failed", error);
         options.onImageryError?.(error);
@@ -76,10 +88,22 @@ export class GeoViewer {
       }
 
       this.renderer.render({ scene: this.scene, camera: this.camera });
+      const stats = this.imagery.update(this.camera.position, this.camera.distance);
+
+      if (stats) {
+        this.onImageryStats(stats);
+      }
+
       this.frame = requestAnimationFrame(render);
     };
 
     this.frame = requestAnimationFrame(render);
+  }
+
+  private onImageryStats(stats: Parameters<NonNullable<GeoViewerOptions["onImageryStats"]>>[0]): void {
+    this.onImageryStatsCallback?.(stats);
+    const event = new CustomEvent("orbix:imagery-stats", { detail: stats });
+    this.canvas.dispatchEvent(event);
   }
 }
 

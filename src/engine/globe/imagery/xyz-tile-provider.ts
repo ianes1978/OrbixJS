@@ -48,4 +48,8 @@ export class XYZTileProvider {
     this.cache.set(key, promise);
     return promise;
   }
+
+  get cacheSize(): number {
+    return this.cache.size;
+  }
 }

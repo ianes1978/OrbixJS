@@ -32,8 +32,9 @@ export function createEllipsoidMesh(
         position[2] / maxRadius,
       ] as const;
       const renderNormal = normalize(scaledPosition);
-      const [, mercatorV] = lonLatToWebMercatorUv(0, lat);
-      const uv = [u, mercatorV] as const;
+      const geographicLon = lon > Math.PI ? lon - Math.PI * 2 : lon;
+      const [mercatorU, mercatorV] = lonLatToWebMercatorUv(geographicLon, lat);
+      const uv = [1 - mercatorU, mercatorV] as const;
 
       vertices.push(
         scaledPosition[0],

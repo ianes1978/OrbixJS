@@ -14,6 +14,19 @@ describe("createEllipsoidMesh", () => {
     expect(mesh.indices[0]).toBe(0);
   });
 
+  it("maps global imagery UVs without mirroring the longitude axis", () => {
+    const mesh = createEllipsoidMesh(undefined, 4, 2);
+    const stride = mesh.vertexStride;
+    const equatorRowOffset = (4 + 1) * stride;
+    const primeMeridianU = mesh.vertices[equatorRowOffset + 9];
+    const eastQuarterU = mesh.vertices[equatorRowOffset + stride + 9];
+    const dateLineU = mesh.vertices[equatorRowOffset + stride * 2 + 9];
+
+    expect(primeMeridianU).toBeCloseTo(0.5);
+    expect(eastQuarterU).toBeCloseTo(0.25);
+    expect(dateLineU).toBeCloseTo(0);
+  });
+
   it("winds triangles toward the outside of the ellipsoid", () => {
     const mesh = createEllipsoidMesh(undefined, 8, 4);
     const vertices = mesh.vertices;

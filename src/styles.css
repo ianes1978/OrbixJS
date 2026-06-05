@@ -120,6 +120,10 @@ h2 {
   background: rgba(8, 17, 20, 0.72);
 }
 
+.metric.wide {
+  min-width: 250px;
+}
+
 .metric span,
 .overall-copy span {
   display: block;

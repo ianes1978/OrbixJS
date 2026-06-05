@@ -53,6 +53,9 @@ Lo step imagery iniziale include:
 - provider XYZ
 - cache LRU base per tile
 - tiling Web Mercator
-- texture raster globale applicata al globo
+- selezione tile da camera
+- LOD iniziale
+- patch raster renderizzate sul globo
+- ortofoto Esri World Imagery come preset iniziale
 
-Il quadtree e il caricamento tile per viewport saranno il prossimo raffinamento.
+Il prossimo raffinamento sara' frustum culling piu' accurato e screen-space error.

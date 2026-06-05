@@ -1,4 +1,7 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
+import { type Vec3 } from "../../core/math/vec3";
+import { CameraTileSelector } from "./tile-selector";
+import { type QuadtreeTile } from "./quadtree-tile";
 import { XYZTileProvider } from "./xyz-tile-provider";
 
 export type ImageryTexture = {
@@ -7,13 +10,69 @@ export type ImageryTexture = {
   expectedTiles: number;
 };
 
+export type ImageryLayerOptions = {
+  onTileReady?: (tile: QuadtreeTile, image: HTMLImageElement) => void;
+  onTileError?: (tile: QuadtreeTile, error: unknown) => void;
+};
+
+export type ImageryLayerStats = {
+  level: number;
+  activeTiles: number;
+  loadedTiles: number;
+  pendingTiles: number;
+  cacheSize: number;
+};
+
 export class ImageryLayer {
   private readonly tiling = new WebMercatorTilingScheme();
+  private readonly selector = new CameraTileSelector();
+  private readonly active = new Set<string>();
+  private readonly loaded = new Set<string>();
+  private readonly pending = new Set<string>();
 
   constructor(
     readonly provider: XYZTileProvider,
     readonly level = 2,
+    private readonly options: ImageryLayerOptions = {},
   ) {}
+
+  update(cameraPosition: Vec3, cameraDistance: number): ImageryLayerStats {
+    const selection = this.selector.select(cameraPosition, cameraDistance);
+    this.active.clear();
+
+    for (const tile of selection.tiles) {
+      this.active.add(tile.id);
+
+      if (this.loaded.has(tile.id) || this.pending.has(tile.id)) {
+        continue;
+      }
+
+      this.pending.add(tile.id);
+      void this.provider
+        .loadTile(tile)
+        .then((image) => {
+          this.pending.delete(tile.id);
+          this.loaded.add(tile.id);
+          this.options.onTileReady?.(tile, image);
+        })
+        .catch((error: unknown) => {
+          this.pending.delete(tile.id);
+          this.options.onTileError?.(tile, error);
+        });
+    }
+
+    return {
+      level: selection.level,
+      activeTiles: selection.tiles.length,
+      loadedTiles: selection.tiles.filter((tile) => this.loaded.has(tile.id)).length,
+      pendingTiles: selection.tiles.filter((tile) => this.pending.has(tile.id)).length,
+      cacheSize: this.provider.cacheSize,
+    };
+  }
+
+  get activeTileIds(): string[] {
+    return [...this.active];
+  }
 
   async createTexture(): Promise<ImageryTexture> {
     const count = this.tiling.tileCount(this.level);
