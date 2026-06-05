@@ -4,6 +4,8 @@ export class PointerController {
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
+  private lastPinchDistance: number | undefined;
+  private readonly pointers = new Map<number, { x: number; y: number }>();
 
   constructor(
     private readonly element: HTMLElement,
@@ -25,13 +27,34 @@ export class PointerController {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
-    this.dragging = true;
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.dragging = this.pointers.size === 1;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     this.element.setPointerCapture(event.pointerId);
+
+    if (this.pointers.size >= 2) {
+      this.lastPinchDistance = this.pinchDistance();
+      this.dragging = false;
+    }
   };
 
   private readonly onPointerMove = (event: PointerEvent) => {
+    if (this.pointers.has(event.pointerId)) {
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+
+    if (this.pointers.size >= 2) {
+      const distance = this.pinchDistance();
+
+      if (distance !== undefined && this.lastPinchDistance !== undefined && distance > 0) {
+        this.camera.zoom(Math.log(this.lastPinchDistance / distance));
+      }
+
+      this.lastPinchDistance = distance;
+      return;
+    }
+
     if (!this.dragging) {
       return;
     }
@@ -56,7 +79,18 @@ export class PointerController {
   };
 
   private readonly onPointerUp = (event: PointerEvent) => {
-    this.dragging = false;
+    this.pointers.delete(event.pointerId);
+    this.lastPinchDistance = this.pointers.size >= 2 ? this.pinchDistance() : undefined;
+    this.dragging = this.pointers.size === 1;
+
+    if (this.dragging) {
+      const remaining = [...this.pointers.values()][0];
+
+      if (remaining) {
+        this.lastX = remaining.x;
+        this.lastY = remaining.y;
+      }
+    }
 
     if (this.element.hasPointerCapture(event.pointerId)) {
       this.element.releasePointerCapture(event.pointerId);
@@ -67,4 +101,16 @@ export class PointerController {
     event.preventDefault();
     this.camera.zoom(event.deltaY * 0.001);
   };
+
+  private pinchDistance(): number | undefined {
+    const pointers = [...this.pointers.values()];
+    const first = pointers[0];
+    const second = pointers[1];
+
+    if (!first || !second) {
+      return undefined;
+    }
+
+    return Math.hypot(second.x - first.x, second.y - first.y);
+  }
 }

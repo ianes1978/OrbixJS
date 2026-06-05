@@ -20,7 +20,11 @@ app.innerHTML = `
             <span class="eyebrow">MVP 1</span>
             <h1>OrbixJS</h1>
             <p class="hint">Drag orbit, Shift+drag pan, Alt+drag tilt, rotellina zoom</p>
+            <button id="mobile-controls-toggle" class="controls-toggle" type="button" aria-expanded="false" aria-controls="hud-controls">
+              Controlli
+            </button>
           </div>
+        <div id="hud-controls" class="hud-controls">
         <div class="metric">
           <span>Renderer</span>
           <strong id="renderer-status">WebGL2</strong>
@@ -59,6 +63,7 @@ app.innerHTML = `
           <button data-fly-to="usa" type="button">USA</button>
           <button data-fly-to="tokyo" type="button">Tokyo</button>
         </div>
+        </div>
       </div>
       </div>
       <aside class="panel" aria-label="Roadmap progress">
@@ -92,6 +97,8 @@ const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
+const mobileControlsToggle = document.querySelector<HTMLButtonElement>("#mobile-controls-toggle");
+const hudControls = document.querySelector<HTMLElement>("#hud-controls");
 const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 
@@ -107,6 +114,8 @@ if (
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
+  !mobileControlsToggle ||
+  !hudControls ||
   !sceneDateInput ||
   flyPresetButtons.length === 0
 ) {
@@ -216,6 +225,13 @@ modelToggle.addEventListener("click", () => {
   viewer.setDebugModelVisible(debugModelVisible);
   modelToggle.setAttribute("aria-pressed", String(debugModelVisible));
   modelToggle.textContent = debugModelVisible ? "Model ON" : "Model";
+});
+
+mobileControlsToggle.addEventListener("click", () => {
+  const expanded = mobileControlsToggle.getAttribute("aria-expanded") === "true";
+
+  mobileControlsToggle.setAttribute("aria-expanded", String(!expanded));
+  hudControls.classList.toggle("open", !expanded);
 });
 
 const flyToPresets = {

@@ -97,10 +97,28 @@ select {
   flex: 1 1 280px;
 }
 
+.hud-controls {
+  display: contents;
+}
+
 .hud .metric,
 .hud .debug-toggle,
-.hud .fly-presets {
+.hud .fly-presets,
+.hud .controls-toggle {
   pointer-events: auto;
+}
+
+.controls-toggle {
+  display: none;
+  margin-top: 14px;
+  min-width: 112px;
+  height: 42px;
+  border: 1px solid rgba(232, 237, 240, 0.18);
+  background: rgba(8, 17, 20, 0.78);
+  color: #e8edf0;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .eyebrow {
@@ -328,14 +346,13 @@ h2 {
 
 @media (max-width: 920px) {
   .shell {
-    padding: 12px;
+    padding: 8px;
   }
 
   .workspace {
     grid-template-columns: 1fr;
-    height: calc(100dvh - 24px);
+    height: calc(100dvh - 16px);
     min-height: 0;
-    grid-template-rows: minmax(0, 1fr) minmax(240px, 36vh);
   }
 
   .viewport {
@@ -343,16 +360,135 @@ h2 {
   }
 
   .panel {
-    max-height: none;
+    display: none;
+  }
+
+  .hud {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    display: block;
+  }
+
+  .hud > div:first-child {
+    max-width: min(310px, calc(100vw - 48px));
+  }
+
+  h1 {
+    font-size: clamp(2.6rem, 13vw, 4.2rem);
+  }
+
+  .hint {
+    max-width: 220px;
+    margin-top: 6px;
+    font-size: 0.82rem;
+  }
+
+  .controls-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hud-controls {
+    display: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: min(560px, calc(100vw - 24px));
+    max-height: min(58dvh, 520px);
+    margin-top: 10px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 10px;
+    border: 1px solid rgba(232, 237, 240, 0.16);
+    background: rgba(8, 17, 20, 0.82);
+    backdrop-filter: blur(10px);
+    pointer-events: auto;
+  }
+
+  .hud-controls.open {
+    display: grid;
+  }
+
+  .metric,
+  .metric.wide,
+  .debug-toggle {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .metric {
+    padding: 10px;
+  }
+
+  .metric span,
+  .overall-copy span {
+    font-size: 0.7rem;
+  }
+
+  .metric strong,
+  .overall-copy strong {
+    font-size: 0.88rem;
+  }
+
+  .scene-date,
+  .metric.wide {
+    grid-column: 1 / -1;
+  }
+
+  .debug-toggle {
+    height: 42px;
+  }
+
+  .fly-presets {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fly-presets button {
+    min-width: 0;
+    width: 100%;
   }
 }
 
 @media (max-width: 520px) {
-  .hud {
-    flex-direction: column;
+  .shell {
+    padding: 0;
   }
 
-  .metric {
-    width: 100%;
+  .workspace {
+    height: 100dvh;
+  }
+
+  .viewport {
+    border: 0;
+  }
+
+  .hud {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+  }
+
+  .hud > div:first-child {
+    max-width: 230px;
+  }
+
+  h1 {
+    font-size: clamp(2.4rem, 16vw, 3.6rem);
+  }
+
+  .hint {
+    display: none;
+  }
+
+  .hud-controls {
+    grid-template-columns: 1fr;
+    width: calc(100vw - 20px);
+    max-height: 62dvh;
+  }
+
+  .fly-presets {
+    grid-template-columns: 1fr;
   }
 }
