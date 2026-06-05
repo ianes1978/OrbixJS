@@ -1,6 +1,6 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
-import { CameraTileSelector } from "./tile-selector";
-import { type QuadtreeTile } from "./quadtree-tile";
+import { CameraTileSelector, type CameraTileSelectorContext } from "./tile-selector";
+import { createQuadtreeTile, type QuadtreeTile } from "./quadtree-tile";
 import { type RasterTileProvider } from "./tile-provider";
 import { type CameraTileSelectorOptions } from "./tile-selector";
 
@@ -40,13 +40,11 @@ export class ImageryLayer {
     this.selector = new CameraTileSelector(layerSelectorOptions(options));
   }
 
-  update(lon: number, lat: number, cameraDistance: number): ImageryLayerStats {
-    const selection = this.selector.select(lon, lat, cameraDistance);
+  update(lon: number, lat: number, cameraDistance: number, context: CameraTileSelectorContext = {}): ImageryLayerStats {
+    const selection = this.selector.select(lon, lat, cameraDistance, context);
     this.active.clear();
 
     for (const tile of selection.tiles) {
-      this.active.add(tile.id);
-
       if (this.loaded.has(tile.id) || this.pending.has(tile.id)) {
         continue;
       }
@@ -63,6 +61,20 @@ export class ImageryLayer {
           this.pending.delete(tile.id);
           this.options.onTileError?.(tile, error);
         });
+    }
+
+    for (const tile of selection.tiles) {
+      const fallback = this.nearestLoadedAncestor(tile);
+
+      if (fallback) {
+        this.active.add(fallback.id);
+      }
+    }
+
+    for (const tile of selection.tiles) {
+      if (this.loaded.has(tile.id)) {
+        this.active.add(tile.id);
+      }
     }
 
     return {
@@ -109,11 +121,11 @@ export class ImageryLayer {
     context.fillStyle = "#16303a";
     context.fillRect(0, 0, canvas.width, canvas.height);
 
-    const tiles = [];
+    const tiles: QuadtreeTile[] = [];
 
     for (let y = 0; y < count; y += 1) {
       for (let x = 0; x < count; x += 1) {
-        tiles.push({ x, y, z: this.level });
+        tiles.push(createQuadtreeTile(x, y, this.level));
       }
     }
 
@@ -121,6 +133,8 @@ export class ImageryLayer {
       tiles.map(async (tile) => {
         const image = await this.provider.loadTile(tile);
         context.drawImage(image, tile.x * size, tile.y * size, size, size);
+        this.loaded.add(tile.id);
+        this.options.onTileReady?.(tile, image);
         return tile;
       }),
     );
@@ -131,6 +145,24 @@ export class ImageryLayer {
       expectedTiles: tiles.length,
     };
   }
+
+  private nearestLoadedAncestor(tile: QuadtreeTile): QuadtreeTile | undefined {
+    let current = tile;
+
+    while (current.z > this.level) {
+      current = parentTile(current);
+
+      if (this.loaded.has(current.id)) {
+        return current;
+      }
+    }
+
+    return undefined;
+  }
+}
+
+function parentTile(tile: QuadtreeTile): QuadtreeTile {
+  return createQuadtreeTile(Math.floor(tile.x / 2), Math.floor(tile.y / 2), tile.z - 1);
 }
 
 function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): CameraTileSelectorOptions {

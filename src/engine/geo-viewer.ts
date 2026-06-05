@@ -12,6 +12,7 @@ import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
 import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./loaders/tiles3d/tileset";
 import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
+import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
@@ -65,6 +66,7 @@ export class GeoViewer {
   readonly renderer: WebGL2Renderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
+  private readonly imageryTiling = new WebMercatorTilingScheme();
   private readonly controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
   private readonly onTilesetStatsCallback?: GeoViewerOptions["onTilesetStats"];
@@ -317,9 +319,17 @@ export class GeoViewer {
         return;
       }
 
+      const coveragePositions = this.visibleCartographicSamples();
+      const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const stats = this.imagery.update(
-        this.centerViewCartographic() ?? this.camera.position,
+        imageryCenter ? [imageryCenter[0], imageryCenter[1], imageryCenter[2] ?? 0] : [0, 0, 0],
         this.camera.distance,
+        {
+          viewportHeight: this.canvas.height || this.canvas.clientHeight,
+          fov: this.camera.fov,
+          coveragePositions,
+          targetLevel: this.projectedImageryLevel(),
+        },
       );
 
       if (stats) {
@@ -421,8 +431,125 @@ export class GeoViewer {
   }
 
   private centerViewCartographic(): [number, number, number] | undefined {
-    const cartographic = this.pickNormalizedDeviceCoordinate(0, -0.16);
+    const cartographic = this.pickNormalizedDeviceCoordinate(0, 0);
     return cartographic ? [cartographic.lon, cartographic.lat, cartographic.height] : undefined;
+  }
+
+  private visibleCartographicSamples(): [number, number][] {
+    const samples: [number, number][] = [];
+    const steps = [-0.95, -0.7, -0.45, -0.2, 0.05, 0.3, 0.55, 0.8, 0.95];
+
+    for (const y of steps) {
+      for (const x of steps) {
+        const cartographic = this.pickNormalizedDeviceCoordinate(x, y);
+
+        if (cartographic) {
+          samples.push([cartographic.lon, cartographic.lat]);
+        }
+      }
+    }
+
+    return samples;
+  }
+
+  private nearestVisibleCartographicSample(): [number, number, number] | undefined {
+    let nearest: [number, number, number] | undefined;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    const steps = [-0.95, -0.7, -0.45, -0.2, 0.05, 0.3, 0.55, 0.8, 0.95];
+
+    for (const y of steps) {
+      for (const x of steps) {
+        const cartographic = this.pickNormalizedDeviceCoordinate(x, y);
+
+        if (!cartographic) {
+          continue;
+        }
+
+        const distance = x * x + y * y;
+
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearest = [cartographic.lon, cartographic.lat, cartographic.height];
+        }
+      }
+    }
+
+    return nearest;
+  }
+
+  private projectedImageryLevel(tileSize = 256, qualityFactor = 1.15): number | undefined {
+    const center = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample();
+    const viewportWidth = this.canvas.width || this.canvas.clientWidth;
+    const viewportHeight = this.canvas.height || this.canvas.clientHeight;
+
+    if (!center || viewportWidth <= 0 || viewportHeight <= 0) {
+      return undefined;
+    }
+
+    const threshold = tileSize * qualityFactor;
+
+    for (let level = 2; level <= 22; level += 1) {
+      const tile = this.imageryTiling.positionToTileXY(center[0], center[1], level);
+      const projectedSize = this.projectTilePixelSize(tile);
+
+      if (projectedSize !== undefined && projectedSize <= threshold) {
+        return level;
+      }
+    }
+
+    return 22;
+  }
+
+  private projectTilePixelSize(tile: { x: number; y: number; z: number }): number | undefined {
+    const rectangle = this.imageryTiling.tileXYToRectangle(tile);
+    const lonMid = (rectangle.west + rectangle.east) / 2;
+    const latMid = (rectangle.south + rectangle.north) / 2;
+    const samples = [
+      [rectangle.west, rectangle.south],
+      [rectangle.west, latMid],
+      [rectangle.west, rectangle.north],
+      [lonMid, rectangle.south],
+      [lonMid, latMid],
+      [lonMid, rectangle.north],
+      [rectangle.east, rectangle.south],
+      [rectangle.east, latMid],
+      [rectangle.east, rectangle.north],
+    ] as const;
+    const projected = samples
+      .map(([lon, lat]) => this.projectCartographicToPixel(lon, lat))
+      .filter((point): point is [number, number] => point !== undefined);
+
+    if (projected.length < 2) {
+      return undefined;
+    }
+
+    const xs = projected.map((point) => point[0]);
+    const ys = projected.map((point) => point[1]);
+    return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  }
+
+  private projectCartographicToPixel(lon: number, lat: number): [number, number] | undefined {
+    const width = this.canvas.width || this.canvas.clientWidth;
+    const height = this.canvas.height || this.canvas.clientHeight;
+
+    if (width <= 0 || height <= 0) {
+      return undefined;
+    }
+
+    const world = this.cartographicToUnitSphere({
+      lon: lon * (180 / Math.PI),
+      lat: lat * (180 / Math.PI),
+      height: 1500,
+    });
+    const aspect = width / height;
+    const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
+    const ndc = transformPoint(viewProjection, world);
+
+    if (!Number.isFinite(ndc[0]) || !Number.isFinite(ndc[1]) || ndc[2] < -1 || ndc[2] > 1) {
+      return undefined;
+    }
+
+    return [((ndc[0] + 1) / 2) * width, ((1 - ndc[1]) / 2) * height];
   }
 
   private pickNormalizedDeviceCoordinate(x: number, y: number): { lon: number; lat: number; height: number } | undefined {

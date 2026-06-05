@@ -24,13 +24,24 @@ describe("OrbitCamera", () => {
   });
 
   it("reduces drag sensitivity near the globe surface", () => {
-    const near = new OrbitCamera({ distance: 1.08 });
+    const near = new OrbitCamera({ distance: 1.002 });
     const mid = new OrbitCamera({ distance: 1.8 });
     const far = new OrbitCamera({ distance: 4 });
 
     expect(near.dragSensitivityScale()).toBeCloseTo(0.04);
     expect(mid.dragSensitivityScale()).toBeGreaterThan(near.dragSensitivityScale());
     expect(far.dragSensitivityScale()).toBe(1);
+  });
+
+  it("scales zoom steps from the altitude above the surface", () => {
+    const near = new OrbitCamera({ distance: 1.01 });
+    const far = new OrbitCamera({ distance: 3.2 });
+
+    near.zoom(-0.1);
+    far.zoom(-0.1);
+
+    expect(1.01 - near.distance).toBeLessThan(0.001);
+    expect(3.2 - far.distance).toBeGreaterThan(0.2);
   });
 
   it("flies to cartographic coordinates expressed in degrees", () => {
@@ -51,6 +62,17 @@ describe("OrbitCamera", () => {
     expect(camera.target[0]).toBeGreaterThan(0);
     expect(camera.target[1]).toBeCloseTo(0);
     expect(camera.target[2]).toBeCloseTo(0);
+  });
+
+  it("reduces pan movement near the globe surface", () => {
+    const near = new OrbitCamera({ distance: 1.01, yaw: 0, pitch: 0 });
+    const far = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+
+    near.pan(100, 0);
+    far.pan(100, 0);
+
+    expect(near.target[0]).toBeGreaterThan(0);
+    expect(far.target[0]).toBeGreaterThan(near.target[0] * 100);
   });
 
   it("keeps pan target near the globe", () => {

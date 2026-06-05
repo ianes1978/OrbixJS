@@ -25,13 +25,13 @@ export class OrbitCamera {
   pitch: number;
   tiltOffset = 0;
   fov = (45 * Math.PI) / 180;
-  near = 0.01;
+  near = 0.001;
   far = 100;
 
   constructor(options: OrbitCameraOptions = {}) {
     this.target = options.target ?? [0, 0, 0];
     this.distance = options.distance ?? 3.2;
-    this.minDistance = options.minDistance ?? 1.08;
+    this.minDistance = options.minDistance ?? 1.002;
     this.maxDistance = options.maxDistance ?? 10;
     this.yaw = options.yaw ?? -0.65;
     this.pitch = options.pitch ?? 0.35;
@@ -48,7 +48,9 @@ export class OrbitCamera {
   }
 
   zoom(delta: number): void {
-    this.distance = clamp(this.distance * Math.exp(delta), this.minDistance, this.maxDistance);
+    const surfaceDistance = 1;
+    const altitude = Math.max(this.distance - surfaceDistance, this.minDistance - surfaceDistance);
+    this.distance = clamp(surfaceDistance + altitude * Math.exp(delta), this.minDistance, this.maxDistance);
   }
 
   tilt(delta: number): void {
@@ -59,7 +61,8 @@ export class OrbitCamera {
     const forward = normalize(subtract(this.target, this.position));
     const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
-    const distanceScale = this.distance * 0.0015;
+    const altitude = Math.max(this.distance - 1, this.minDistance - 1);
+    const distanceScale = Math.max(altitude, 0.002) * 0.004;
     const movement = add(scale(right, deltaX * distanceScale), scale(up, deltaY * distanceScale));
     const nextTarget = add(this.target, movement);
     const targetLimit = 0.85;

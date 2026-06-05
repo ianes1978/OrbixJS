@@ -1,4 +1,5 @@
 import { ImageryLayer, type ImageryLayerStats, type ImageryTexture } from "./imagery-layer";
+import { type CameraTileSelectorContext } from "./tile-selector";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { type RasterTileProvider } from "./tile-provider";
 import { WMTSTileProvider, type WMTSTileProviderOptions } from "./wmts-tile-provider";
@@ -43,14 +44,18 @@ export class ImageryLayerCollection {
     return layer;
   }
 
-  update(center: readonly [number, number, number], cameraDistance: number): ImageryLayerStats | undefined {
+  update(
+    center: readonly [number, number, number],
+    cameraDistance: number,
+    context: CameraTileSelectorContext = {},
+  ): ImageryLayerStats | undefined {
     const layer = this.layers[0];
 
     if (!layer) {
       return undefined;
     }
 
-    const stats = layer.update(center[0], center[1], cameraDistance);
+    const stats = layer.update(center[0], center[1], cameraDistance, context);
     this.options.onActiveTilesChanged?.(layer.activeTileIds);
     return stats;
   }
