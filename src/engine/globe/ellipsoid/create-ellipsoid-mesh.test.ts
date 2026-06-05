@@ -7,10 +7,11 @@ describe("createEllipsoidMesh", () => {
     const longitudeSegments = 8;
     const latitudeSegments = 4;
     const mesh = createEllipsoidMesh(undefined, longitudeSegments, latitudeSegments);
+    const expectedLatitudeRings = latitudeSegments + 1;
 
     expect(mesh.vertexStride).toBe(11);
-    expect(mesh.vertices.length).toBe((longitudeSegments + 1) * (latitudeSegments + 1) * 11);
-    expect(mesh.indices.length).toBe(longitudeSegments * latitudeSegments * 6);
+    expect(mesh.vertices.length).toBe((longitudeSegments + 1) * expectedLatitudeRings * 11);
+    expect(mesh.indices.length).toBe(longitudeSegments * (expectedLatitudeRings - 1) * 6);
     expect(mesh.indices[0]).toBe(0);
   });
 
@@ -18,13 +19,28 @@ describe("createEllipsoidMesh", () => {
     const mesh = createEllipsoidMesh(undefined, 4, 2);
     const stride = mesh.vertexStride;
     const equatorRowOffset = (4 + 1) * stride;
-    const primeMeridianU = mesh.vertices[equatorRowOffset + 9];
-    const eastQuarterU = mesh.vertices[equatorRowOffset + stride + 9];
-    const dateLineU = mesh.vertices[equatorRowOffset + stride * 2 + 9];
+    const westDateLineU = mesh.vertices[equatorRowOffset + 9];
+    const primeMeridianU = mesh.vertices[equatorRowOffset + stride * 2 + 9];
+    const eastQuarterU = mesh.vertices[equatorRowOffset + stride * 3 + 9];
+    const eastDateLineU = mesh.vertices[equatorRowOffset + stride * 4 + 9];
 
+    expect(westDateLineU).toBeCloseTo(1);
     expect(primeMeridianU).toBeCloseTo(0.5);
     expect(eastQuarterU).toBeCloseTo(0.25);
-    expect(dateLineU).toBeCloseTo(0);
+    expect(eastDateLineU).toBeCloseTo(0);
+  });
+
+  it("keeps polar UVs clamped inside the Web Mercator imagery range", () => {
+    const mesh = createEllipsoidMesh(undefined, 8, 6);
+    const stride = mesh.vertexStride;
+    const northPoleV = mesh.vertices[10];
+    const southPoleOffset = mesh.vertices.length - stride;
+    const southPoleV = mesh.vertices[southPoleOffset + 10];
+
+    expect(northPoleV).toBeGreaterThanOrEqual(0);
+    expect(northPoleV).toBeLessThanOrEqual(0.001);
+    expect(southPoleV).toBeGreaterThanOrEqual(0.999);
+    expect(southPoleV).toBeLessThanOrEqual(1);
   });
 
   it("winds triangles toward the outside of the ellipsoid", () => {

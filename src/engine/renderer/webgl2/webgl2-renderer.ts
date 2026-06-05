@@ -87,7 +87,6 @@ export class WebGL2Renderer implements Renderer {
     for (const id of ids) {
       this.activeTileIds.add(id);
     }
-
   }
 
   setImagery(image: TexImageSource): void {
