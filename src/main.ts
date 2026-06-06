@@ -1,8 +1,10 @@
 import "./styles.css";
-import { GeoViewer } from "./engine/geo-viewer";
+import { Ellipsoid, GeoViewer } from "./engine/geo-viewer";
 import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/core/camera/camera-path";
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
+import { createHeightmapTerrainProvider, loadHeightmapTerrainManifest } from "./engine/globe/terrain/heightmap-terrain-provider";
+import { findPreprocessJob, loadPreprocessManifest } from "./engine/preprocess/preprocess-manifest";
 import { roadmap } from "./roadmap";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -150,6 +152,10 @@ app.innerHTML = `
               <span>Picking</span>
               <strong id="picking-status">click globo</strong>
             </div>
+            <div class="metric wide">
+              <span>Camera</span>
+              <strong id="camera-status">coord -</strong>
+            </div>
           </div>
           <div class="overall">
             <div class="overall-copy">
@@ -176,6 +182,7 @@ const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
 const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
+const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
@@ -206,6 +213,7 @@ if (
   !tileStatus ||
   !tiles3dStatus ||
   !pickingStatus ||
+  !cameraStatus ||
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
@@ -298,6 +306,7 @@ if (!globeHost) {
 const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
 const imageryStatusElement = imageryStatus;
+const cameraStatusElement = cameraStatus;
 const rendererBackend = new URLSearchParams(window.location.search).get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 
 const viewer = new GeoViewer({
@@ -335,6 +344,7 @@ rendererStatus.textContent = viewer.renderer.supported
 imageryStatus.textContent = "Ortofoto";
 syncRendererToggle();
 applyCameraLimitControls();
+startCameraStatusLoop();
 
 cameraLimitInputElements.forEach((input) => {
   input.addEventListener("input", () => {
@@ -548,6 +558,8 @@ async function loadDemoProject(): Promise<void> {
         });
       } else if (layer.type === "tileset" && source.type === "tileset") {
         await viewer.addTileset({ url: demoAssetUrl(source.url), id: source.title, scale: 180000 });
+      } else if (layer.type === "terrain-heightmap" && source.type === "terrain-heightmap") {
+        await loadTerrainHeightmapSource(source.preprocessManifestUrl);
       }
     }
   } catch (error) {
@@ -555,6 +567,26 @@ async function loadDemoProject(): Promise<void> {
     imageryStatusElement.textContent = "fallback";
     tiles3dStatusElement.textContent = "tileset -";
   }
+}
+
+async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefined): Promise<void> {
+  if (!preprocessManifestUrl) {
+    throw new Error("Terrain heightmap source missing preprocess manifest");
+  }
+
+  const preprocessManifest = await loadPreprocessManifest(demoAssetUrl(preprocessManifestUrl));
+  const job =
+    findPreprocessJob(preprocessManifest, "south-tyrol-dtm-25m-heightmap") ??
+    preprocessManifest.jobs.find((entry) => entry.type === "terrain-heightmap");
+  const output = job?.outputs.find((artifact) => artifact.format === "orbix-heightmap-manifest");
+
+  if (!output) {
+    throw new Error("Terrain heightmap preprocess output missing");
+  }
+
+  const manifestUrl = demoAssetUrl(output.url);
+  const manifest = await loadHeightmapTerrainManifest(manifestUrl);
+  viewer.setTerrainProvider(createHeightmapTerrainProvider(manifest, { baseUrl: manifestUrl }));
 }
 
 function renderCameraPathControls(paths: readonly CameraPath[]): void {
@@ -765,7 +797,29 @@ function formatHeight(value: number): string {
     return `${Math.round(value / 1000)} km`;
   }
 
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toFixed(1)} km`;
+  }
+
   return `${Math.round(value)} m`;
+}
+
+function startCameraStatusLoop(): void {
+  const update = () => {
+    cameraStatusElement.textContent = formatCameraStatus();
+    requestAnimationFrame(update);
+  };
+
+  update();
+}
+
+function formatCameraStatus(): string {
+  const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(viewer.camera.position);
+  const height = Math.max(0, (viewer.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
+  const lon = toDegrees(cartographic.lon).toFixed(5);
+  const lat = toDegrees(cartographic.lat).toFixed(5);
+
+  return `${lat}, ${lon}, ${formatHeight(height)}`;
 }
 
 function demoAssetUrl(path: string): string {

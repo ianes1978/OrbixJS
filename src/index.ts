@@ -12,6 +12,16 @@ export { loadGlb, parseGlb, type GlbAsset } from "./engine/loaders/gltf/glb-load
 export { extractFirstMeshPrimitive, type GltfMeshPrimitive } from "./engine/loaders/gltf/gltf-mesh";
 export { loadTilesetJson, parseTilesetJson, type TilesetJson, type TilesetTile } from "./engine/loaders/tiles3d/tileset";
 export {
+  createHeightmapTerrainProvider,
+  loadHeightmapTerrainManifest,
+  parseHeightmapTerrainManifest,
+  HEIGHTMAP_TERRAIN_MANIFEST_SCHEMA_VERSION,
+  type HeightmapEncoding,
+  type HeightmapTerrainManifest,
+  type HeightmapTerrainProviderOptions,
+  type HeightmapTileMatrixSet,
+} from "./engine/globe/terrain/heightmap-terrain-provider";
+export {
   createFlatTerrainTile,
   createFlatTerrainProvider,
   createTerrainTileId,

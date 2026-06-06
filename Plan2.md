@@ -751,7 +751,7 @@ Step:
 - implementare `SouthTyrolDtmTerrainProvider` o preset equivalente per la demo
 - validare tile statiche DTM 2,5m Alto Adige: schema, encoding quota, CRS e NoData
 - supportare fallback da WCS/GeoTIFF preprocessato se le tile statiche non bastano
-- supportare heightmap tiled
+- supportare heightmap tiled con manifest runtime, tile float32 e sampling cache
 - supportare terrain da OGC API - Tiles dove applicabile
 - studiare COG come sorgente elevation/coverage
 - generare mesh tile su ellissoide WGS84
