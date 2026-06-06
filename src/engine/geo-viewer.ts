@@ -911,35 +911,7 @@ export class GeoViewer {
       return this.pickUnitSphere(clientX, clientY);
     }
 
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(hit);
-
-    if (this.isOnVisibleImageryPatch(cartographic.lon, cartographic.lat)) {
-      return hit;
-    }
-
-    return this.pickUnitSphere(clientX, clientY);
-  }
-
-  private isOnVisibleImageryPatch(lon: number, lat: number): boolean {
-    if (this.lastActiveTileIds.length === 0) {
-      return true;
-    }
-
-    for (const tileId of this.lastActiveTileIds) {
-      const tile = this.imagery.findTile(tileId) ?? this.currentTileImages.get(tileId)?.tile;
-
-      if (!tile) {
-        continue;
-      }
-
-      const rectangle = this.imageryTiling.tileXYToRectangle(tile);
-
-      if (lat >= rectangle.south && lat <= rectangle.north && lon >= rectangle.west && lon <= rectangle.east) {
-        return true;
-      }
-    }
-
-    return false;
+    return hit;
   }
 
   private pickRayFromNdc(x: number, y: number): Ray {

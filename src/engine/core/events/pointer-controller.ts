@@ -1,9 +1,8 @@
 import { OrbitCamera } from "../camera/orbit-camera";
-import { type Vec3 } from "../math/vec3";
+import { add, dot, normalize, scale, type Vec3 } from "../math/vec3";
 
 export type PointerControllerOptions = {
   pickSurfacePoint?: (clientX: number, clientY: number) => Vec3 | undefined;
-  moveSurfacePointToCursor?: (point: Vec3, clientX: number, clientY: number) => boolean;
 };
 
 export class PointerController {
@@ -12,6 +11,7 @@ export class PointerController {
   private lastY = 0;
   private lastPinchDistance: number | undefined;
   private surfaceDragPoint: Vec3 | undefined;
+  private smoothedSurfacePoint: Vec3 | undefined;
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
   constructor(
@@ -40,12 +40,14 @@ export class PointerController {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
     this.surfaceDragPoint = this.pickSurfaceDragPoint(event);
+    this.smoothedSurfacePoint = undefined;
     this.element.setPointerCapture(event.pointerId);
 
     if (this.pointers.size >= 2) {
       this.lastPinchDistance = this.pinchDistance();
       this.dragging = false;
       this.surfaceDragPoint = undefined;
+      this.smoothedSurfacePoint = undefined;
     }
   };
 
@@ -77,29 +79,29 @@ export class PointerController {
 
     if (event.altKey) {
       this.surfaceDragPoint = undefined;
+      this.smoothedSurfacePoint = undefined;
       this.camera.tilt(deltaY * 0.005);
       return;
     }
 
     if (event.shiftKey) {
       this.surfaceDragPoint = undefined;
+      this.smoothedSurfacePoint = undefined;
       this.camera.pan(-deltaX, deltaY);
       return;
     }
 
     if (this.surfaceDragPoint) {
-      if (this.options.moveSurfacePointToCursor?.(this.surfaceDragPoint, event.clientX, event.clientY)) {
-        return;
-      }
-
       const currentSurfacePoint = this.pickSurfaceDragPoint(event);
 
       if (currentSurfacePoint) {
-        this.camera.rotateSurfacePointTo(currentSurfacePoint, this.surfaceDragPoint, 0.18);
+        const smoothedSurfacePoint = this.smoothSurfacePoint(currentSurfacePoint);
+
+        this.camera.rotateSurfacePointTo(smoothedSurfacePoint, this.surfaceDragPoint, 0.018 + dragScale * 0.055);
         return;
       }
 
-      this.surfaceDragPoint = undefined;
+      return;
     }
 
     const sensitivity = 0.006 * dragScale;
@@ -111,6 +113,7 @@ export class PointerController {
     this.lastPinchDistance = this.pointers.size >= 2 ? this.pinchDistance() : undefined;
     this.dragging = this.pointers.size === 1;
     this.surfaceDragPoint = undefined;
+    this.smoothedSurfacePoint = undefined;
 
     if (this.dragging) {
       const remaining = [...this.pointers.values()][0];
@@ -119,6 +122,7 @@ export class PointerController {
         this.lastX = remaining.x;
         this.lastY = remaining.y;
         this.surfaceDragPoint = this.options.pickSurfacePoint?.(remaining.x, remaining.y);
+        this.smoothedSurfacePoint = undefined;
       }
     }
 
@@ -130,11 +134,26 @@ export class PointerController {
   private readonly onWheel = (event: WheelEvent) => {
     event.preventDefault();
     this.surfaceDragPoint = undefined;
+    this.smoothedSurfacePoint = undefined;
     this.camera.zoom(event.deltaY * 0.001);
   };
 
   private pickSurfaceDragPoint(event: PointerEvent): Vec3 | undefined {
     return this.options.pickSurfacePoint?.(event.clientX, event.clientY);
+  }
+
+  private smoothSurfacePoint(point: Vec3): Vec3 {
+    const previous = this.smoothedSurfacePoint;
+
+    if (!previous || dot(previous, point) < 0.985) {
+      this.smoothedSurfacePoint = point;
+      return point;
+    }
+
+    const smoothed = normalize(add(scale(previous, 0.58), scale(point, 0.42)));
+
+    this.smoothedSurfacePoint = smoothed;
+    return smoothed;
   }
 
   private pinchDistance(): number | undefined {
