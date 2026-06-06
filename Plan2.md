@@ -2,6 +2,22 @@
 
 Questo documento continua `Plan.md`, ma corregge un punto importante: OrbixJS non deve essere congelato in una piccola 0.1. La prima release serve solo come base verificabile. La direzione reale e uno strumento GIS 3D moderno: vicino all'idea di CesiumJS, ma piu snello, piu modulare, piu performante e progettato fin dall'inizio per WebGPU, terrain 3D, editing GIS, standard OGC, simulazione atmosferica e rendering Digital Twin.
 
+## 0. Documento guida
+
+`COSTITUZIONE.md` e il documento guida di OrbixJS.
+
+Questo piano deve essere letto come traduzione operativa della costituzione del progetto, non come documento indipendente. Ogni milestone, feature o refactor deve rispettare i principi definiti li:
+
+- core leggero, comprensibile e misurabile
+- separazione netta tra engine, renderer, dati, demo e UI
+- API TypeScript piccole, esplicite e riusabili
+- standard geospaziali implementati in modo corretto, non superficiale
+- WebGL2 compatibile oggi e WebGPU come direzione strategica
+- demo come banco di prova delle feature pubbliche, non come sostituto della libreria
+- confronto con CesiumJS sui problemi validi, senza ereditarne automaticamente peso e complessita
+
+Quando il piano entra in conflitto con `COSTITUZIONE.md`, prevale `COSTITUZIONE.md`. In pratica: una feature deve essere ridotta, isolata, resa opzionale o rinviata se non rafforza la tesi di OrbixJS come engine geospaziale 3D leggero, modulare, misurabile e integrabile.
+
 ## 1. Filosofia aggiornata
 
 OrbixJS deve crescere per milestone, non per congelamento.
@@ -114,6 +130,7 @@ Regole:
 - mantenere budget espliciti per memoria CPU, memoria GPU, cache tile, richieste rete e allocazioni per frame
 - preferire API piccole e componibili a oggetti monolitici che imitano tutta la superficie di CesiumJS
 - copiare i casi d'uso validi di CesiumJS, non la sua complessita storica
+- usare `COSTITUZIONE.md` come checklist architetturale prima di introdurre feature importanti, nuove dipendenze, API pubbliche o accoppiamenti tra moduli
 
 Budget iniziale indicativo:
 
