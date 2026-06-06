@@ -535,7 +535,9 @@ export class WebGPURenderer implements Renderer {
       return;
     }
 
-    this.ensureImageryResources();
+    if (!this.imageryTexture || !this.imagerySampler) {
+      this.ensureImageryResources();
+    }
 
     if (!this.imagerySampler || !this.imageryTexture) {
       return;
@@ -590,7 +592,6 @@ export class WebGPURenderer implements Renderer {
       usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst | webGpuTextureUsage.renderAttachment,
     });
     this.imageryTextureSize = [size[0], size[1]];
-    this.createGlobeBindGroup();
   }
 
   private uploadImagery(image: TexImageSource): void {

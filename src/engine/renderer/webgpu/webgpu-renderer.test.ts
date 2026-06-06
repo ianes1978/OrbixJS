@@ -121,8 +121,34 @@ describe("WebGPURenderer", () => {
     });
     expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
       { source: image },
-      { texture: expect.anything() },
+      {
+        texture: expect.objectContaining({
+          options: expect.objectContaining({
+            size: [512, 256],
+          }),
+        }),
+      },
       [512, 256],
+    );
+    expect(
+      device.textures.filter(
+        (texture) =>
+          (texture.options as { label?: string; size?: [number, number] }).label === "OrbixJS WebGPU imagery texture" &&
+          (texture.options as { size?: [number, number] }).size?.[0] === 1 &&
+          (texture.options as { size?: [number, number] }).size?.[1] === 1,
+      ),
+    ).toHaveLength(1);
+    expect(device.createBindGroup).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        entries: expect.arrayContaining([
+          expect.objectContaining({
+            binding: 2,
+            resource: expect.objectContaining({
+              textureOptions: expect.objectContaining({ size: [512, 256] }),
+            }),
+          }),
+        ]),
+      }),
     );
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
@@ -168,7 +194,8 @@ function createDeviceMock() {
     beginRenderPass: vi.fn(() => pass),
     finish: vi.fn(() => "command-buffer"),
   };
-  return {
+  const textures: Array<{ options: unknown; createView: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn> }> = [];
+  const device = {
     queue: {
       writeBuffer: vi.fn(),
       copyExternalImageToTexture: vi.fn(),
@@ -181,10 +208,20 @@ function createDeviceMock() {
       getBindGroupLayout: vi.fn(() => "bind-group-layout"),
     })),
     createBuffer: vi.fn((options) => ({ options, destroy: vi.fn() })),
-    createTexture: vi.fn(() => ({ createView: vi.fn(() => "depth-view"), destroy: vi.fn() })),
+    createTexture: vi.fn((options) => {
+      const texture = {
+        options,
+        createView: vi.fn(() => ({ textureOptions: options })),
+        destroy: vi.fn(),
+      };
+      textures.push(texture);
+      return texture;
+    }),
     createSampler: vi.fn(() => "sampler"),
     createBindGroup: vi.fn((options) => ({ options })),
     commandEncoder,
     createCommandEncoder: vi.fn(() => commandEncoder),
+    textures,
   };
+  return device;
 }
