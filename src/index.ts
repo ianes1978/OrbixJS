@@ -22,6 +22,12 @@ export {
   type HeightmapTileMatrixSet,
 } from "./engine/globe/terrain/heightmap-terrain-provider";
 export {
+  createTerrainMesh,
+  tileSampleToCartographic,
+  type TerrainMesh,
+  type TerrainMeshOptions,
+} from "./engine/globe/terrain/terrain-mesh";
+export {
   createFlatTerrainTile,
   createFlatTerrainProvider,
   createTerrainTileId,
