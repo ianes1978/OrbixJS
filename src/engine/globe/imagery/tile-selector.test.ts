@@ -25,6 +25,19 @@ describe("CameraTileSelector", () => {
     expect(selectLevel(1.01, 9, { targetLevel: 15 })).toBe(9);
   });
 
+  it("uses explicit screen-space coverage tiles and clamps them to metadata", () => {
+    const selector = new CameraTileSelector({ minLevel: 2, maxLevel: 4 });
+    const selection = selector.select(0, 0, 1.1, {
+      coverageTiles: [
+        { id: "6/20/24", x: 20, y: 24, z: 6 },
+        { id: "6/21/24", x: 21, y: 24, z: 6 },
+      ],
+    });
+
+    expect(selection.level).toBe(4);
+    expect(selection.tiles.map((tile) => tile.id)).toEqual(["4/5/6"]);
+  });
+
   it("selects a stable neighborhood around the visible camera center", () => {
     const selector = new CameraTileSelector();
     const selection = selector.select(0, 0, 4);
@@ -57,6 +70,19 @@ describe("CameraTileSelector", () => {
     expect(selection.tiles.some((tile) => tile.id === "6/38/27")).toBe(true);
   });
 
+  it("falls back to a stable neighborhood when viewport coverage samples are invalid", () => {
+    const selector = new CameraTileSelector({ maxLevel: 15 });
+    const selection = selector.select(0, 0, 1.00002, {
+      coveragePositions: [
+        [Number.NaN, Number.NaN],
+        [Number.POSITIVE_INFINITY, 0],
+      ],
+    });
+
+    expect(selection.level).toBe(15);
+    expect(selection.tiles.length).toBeGreaterThan(0);
+  });
+
   it("keeps viewport coverage stable across the antimeridian", () => {
     const selector = new CameraTileSelector({ maxLevel: 6 });
     const selection = selector.select(179, 0, 1.09, {
@@ -87,7 +113,8 @@ describe("CameraTileSelector", () => {
     expect(selectRadius(3)).toBe(4);
     expect(selectRadius(4)).toBe(5);
     expect(selectCoveragePadding(4)).toBe(2);
-    expect(selectCoveragePadding(11)).toBe(4);
-    expect(selectCoveragePadding(13)).toBe(6);
+    expect(selectCoveragePadding(11)).toBe(6);
+    expect(selectCoveragePadding(13)).toBe(10);
+    expect(selectCoveragePadding(15)).toBe(12);
   });
 });

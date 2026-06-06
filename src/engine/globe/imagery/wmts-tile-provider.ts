@@ -9,6 +9,7 @@ export type WMTSTileProviderOptions = {
   tileMatrixSet: string;
   format?: string;
   tileSize?: number;
+  cacheSize?: number;
   tileMatrixPrefix?: string;
   crossOrigin?: "" | "anonymous" | "use-credentials";
   extraDimensions?: Record<string, string>;
@@ -16,10 +17,11 @@ export type WMTSTileProviderOptions = {
 
 export class WMTSTileProvider implements RasterTileProvider {
   readonly tileSize: number;
-  private readonly cache = new TileCache<Promise<HTMLImageElement>>(256);
+  private readonly cache: TileCache<Promise<HTMLImageElement>>;
 
   constructor(private readonly options: WMTSTileProviderOptions) {
     this.tileSize = options.tileSize ?? 256;
+    this.cache = new TileCache<Promise<HTMLImageElement>>(options.cacheSize ?? 4096);
   }
 
   buildTileUrl(tile: TileCoordinate): string {

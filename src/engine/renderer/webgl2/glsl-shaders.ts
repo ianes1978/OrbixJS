@@ -108,8 +108,9 @@ void main() {
   vec3 imagery = texture(uImagery, vUv).rgb;
   vec3 color = imagery * (0.42 + diffuse * 0.72) + rim * vec3(0.035, 0.09, 0.11);
   float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
-  float edgeFade = smoothstep(0.0, 0.025, edgeDistance);
-  outColor = vec4(color, 0.86 * edgeFade);
+  float edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
+  vec3 lineColor = vec3(0.36, 0.95, 1.0);
+  outColor = vec4(mix(color, lineColor, edgeLine * 0.28), 1.0);
 }
 `;
 

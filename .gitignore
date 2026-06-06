@@ -26,3 +26,6 @@ Thumbs.db
 # TypeScript/Vite cache
 *.tsbuildinfo
 .vite/
+
+# Local Codex captures
+.codex/

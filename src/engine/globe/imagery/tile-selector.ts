@@ -15,6 +15,7 @@ export type CameraTileSelectorContext = {
   viewportHeight?: number;
   fov?: number;
   coveragePositions?: readonly (readonly [number, number])[];
+  coverageTiles?: readonly QuadtreeTile[];
   targetLevel?: number;
 };
 
@@ -28,6 +29,11 @@ export class CameraTileSelector {
 
   select(lon: number, lat: number, cameraDistance: number, context: CameraTileSelectorContext = {}): TileSelection {
     const level = clampLevel(selectLevel(cameraDistance, this.options.maxLevel, context), this.options);
+
+    if (context.coverageTiles && context.coverageTiles.length > 0) {
+      return this.selectionFromCoverageTiles(context.coverageTiles);
+    }
+
     const count = this.tiling.tileCount(level);
     const center = this.tiling.positionToTileXY(lon, lat, level);
     const tiles: QuadtreeTile[] = [];
@@ -44,8 +50,12 @@ export class CameraTileSelector {
 
     if (context.coveragePositions && context.coveragePositions.length > 0) {
       const padding = selectCoveragePadding(level);
-      const samples = [[lon, lat], ...context.coveragePositions] as const;
-      const tileSamples = samples.map(([sampleLon, sampleLat]) => this.tiling.positionToTileXY(sampleLon, sampleLat, level));
+      const samples = [[lon, lat], ...context.coveragePositions].filter(([sampleLon, sampleLat]) =>
+        Number.isFinite(sampleLon) && Number.isFinite(sampleLat),
+      );
+      const tileSamples = samples
+        .map(([sampleLon, sampleLat]) => this.tiling.positionToTileXY(sampleLon, sampleLat, level))
+        .filter((sample) => Number.isFinite(sample.x) && Number.isFinite(sample.y));
       const anchorX = center.x;
       let minX = Number.POSITIVE_INFINITY;
       let maxX = Number.NEGATIVE_INFINITY;
@@ -60,13 +70,15 @@ export class CameraTileSelector {
         maxY = Math.max(maxY, sample.y);
       }
 
-      for (let y = minY - padding; y <= maxY + padding; y += 1) {
-        for (let x = minX - padding; x <= maxX + padding; x += 1) {
-          addTile(x, y);
+      if (Number.isFinite(minX) && Number.isFinite(maxX) && Number.isFinite(minY) && Number.isFinite(maxY)) {
+        for (let y = minY - padding; y <= maxY + padding; y += 1) {
+          for (let x = minX - padding; x <= maxX + padding; x += 1) {
+            addTile(x, y);
+          }
         }
-      }
 
-      return { level, tiles };
+        return { level, tiles };
+      }
     }
 
     const radius = selectRadius(level);
@@ -78,6 +90,44 @@ export class CameraTileSelector {
     }
 
     return { level, tiles };
+  }
+
+  private selectionFromCoverageTiles(coverageTiles: readonly QuadtreeTile[]): TileSelection {
+    const tiles: QuadtreeTile[] = [];
+    const visited = new Set<string>();
+    let level = this.options.minLevel ?? 0;
+
+    for (const tile of coverageTiles) {
+      const normalized = this.normalizeTileLevel(tile);
+
+      if (visited.has(normalized.id)) {
+        continue;
+      }
+
+      visited.add(normalized.id);
+      tiles.push(normalized);
+      level = Math.max(level, normalized.z);
+    }
+
+    return { level, tiles };
+  }
+
+  private normalizeTileLevel(tile: QuadtreeTile): QuadtreeTile {
+    const minLevel = this.options.minLevel ?? 0;
+    const maxLevel = this.options.maxLevel ?? tile.z;
+    const level = clampLevel(tile.z, { minLevel, maxLevel });
+
+    if (level === tile.z) {
+      return tile;
+    }
+
+    if (level < tile.z) {
+      const factor = 2 ** (tile.z - level);
+      return createQuadtreeTile(Math.floor(tile.x / factor), Math.floor(tile.y / factor), level);
+    }
+
+    const factor = 2 ** (level - tile.z);
+    return createQuadtreeTile(tile.x * factor, tile.y * factor, level);
   }
 }
 
@@ -130,12 +180,16 @@ export function selectCoveragePadding(level: number): number {
     return 1;
   }
 
+  if (level >= 15) {
+    return 12;
+  }
+
   if (level >= 13) {
-    return 6;
+    return 10;
   }
 
   if (level >= 11) {
-    return 4;
+    return 6;
   }
 
   return 2;

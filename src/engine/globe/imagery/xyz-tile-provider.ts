@@ -5,16 +5,18 @@ import { type RasterTileProvider } from "./tile-provider";
 export type XYZTileProviderOptions = {
   url: string;
   tileSize?: number;
+  cacheSize?: number;
   subdomains?: readonly string[];
   crossOrigin?: "" | "anonymous" | "use-credentials";
 };
 
 export class XYZTileProvider implements RasterTileProvider {
   readonly tileSize: number;
-  private readonly cache = new TileCache<Promise<HTMLImageElement>>(256);
+  private readonly cache: TileCache<Promise<HTMLImageElement>>;
 
   constructor(private readonly options: XYZTileProviderOptions) {
     this.tileSize = options.tileSize ?? 256;
+    this.cache = new TileCache<Promise<HTMLImageElement>>(options.cacheSize ?? 4096);
   }
 
   buildTileUrl({ x, y, z }: TileCoordinate): string {

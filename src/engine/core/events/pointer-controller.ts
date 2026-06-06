@@ -1,15 +1,22 @@
 import { OrbitCamera } from "../camera/orbit-camera";
+import { type Vec3 } from "../math/vec3";
+
+export type PointerControllerOptions = {
+  pickSurfacePoint?: (clientX: number, clientY: number) => Vec3 | undefined;
+};
 
 export class PointerController {
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
   private lastPinchDistance: number | undefined;
+  private surfaceDragPoint: Vec3 | undefined;
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
   constructor(
     private readonly element: HTMLElement,
     private readonly camera: OrbitCamera,
+    private readonly options: PointerControllerOptions = {},
   ) {
     this.element.addEventListener("pointerdown", this.onPointerDown);
     this.element.addEventListener("pointermove", this.onPointerMove);
@@ -31,11 +38,13 @@ export class PointerController {
     this.dragging = this.pointers.size === 1;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
+    this.surfaceDragPoint = this.pickSurfaceDragPoint(event);
     this.element.setPointerCapture(event.pointerId);
 
     if (this.pointers.size >= 2) {
       this.lastPinchDistance = this.pinchDistance();
       this.dragging = false;
+      this.surfaceDragPoint = undefined;
     }
   };
 
@@ -66,13 +75,26 @@ export class PointerController {
     const dragScale = this.camera.dragSensitivityScale();
 
     if (event.altKey) {
+      this.surfaceDragPoint = undefined;
       this.camera.tilt(deltaY * 0.005 * dragScale);
       return;
     }
 
     if (event.shiftKey) {
+      this.surfaceDragPoint = undefined;
       this.camera.pan(-deltaX, deltaY);
       return;
+    }
+
+    if (this.surfaceDragPoint) {
+      const currentSurfacePoint = this.pickSurfaceDragPoint(event);
+
+      if (currentSurfacePoint) {
+        this.camera.rotateSurfacePointTo(currentSurfacePoint, this.surfaceDragPoint, 0.18);
+        return;
+      }
+
+      this.surfaceDragPoint = undefined;
     }
 
     const sensitivity = 0.006 * dragScale;
@@ -83,6 +105,7 @@ export class PointerController {
     this.pointers.delete(event.pointerId);
     this.lastPinchDistance = this.pointers.size >= 2 ? this.pinchDistance() : undefined;
     this.dragging = this.pointers.size === 1;
+    this.surfaceDragPoint = undefined;
 
     if (this.dragging) {
       const remaining = [...this.pointers.values()][0];
@@ -90,6 +113,7 @@ export class PointerController {
       if (remaining) {
         this.lastX = remaining.x;
         this.lastY = remaining.y;
+        this.surfaceDragPoint = this.options.pickSurfacePoint?.(remaining.x, remaining.y);
       }
     }
 
@@ -100,8 +124,13 @@ export class PointerController {
 
   private readonly onWheel = (event: WheelEvent) => {
     event.preventDefault();
+    this.surfaceDragPoint = undefined;
     this.camera.zoom(event.deltaY * 0.001);
   };
+
+  private pickSurfaceDragPoint(event: PointerEvent): Vec3 | undefined {
+    return this.options.pickSurfacePoint?.(event.clientX, event.clientY);
+  }
 
   private pinchDistance(): number | undefined {
     const pointers = [...this.pointers.values()];

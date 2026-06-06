@@ -135,8 +135,10 @@ fn main(@location(0) normal: vec3<f32>, @location(1) uv: vec2<f32>) -> @location
   let diffuse = max(dot(normalize(normal), light), 0.0);
   let imagery = textureSample(uImagery, uImagerySampler, uv).rgb;
   let edgeDistance = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-  let edgeFade = smoothstep(0.0, 0.025, edgeDistance);
-  return vec4<f32>(imagery * (0.42 + diffuse * 0.72), 0.86 * edgeFade);
+  let edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
+  let color = imagery * (0.42 + diffuse * 0.72);
+  let lineColor = vec3<f32>(0.36, 0.95, 1.0);
+  return vec4<f32>(mix(color, lineColor, edgeLine * 0.28), 1.0);
 }
 `,
 });
@@ -188,4 +190,68 @@ export const webGpuVectorLineProgram: ShaderProgramSource = {
   language: "wgsl",
   vertex: webGpuVectorLineVertexShader,
   fragment: webGpuVectorLineFragmentShader,
+};
+
+export const webGpuModelVertexShader = createShaderSource({
+  id: "webgpu.model.vertex",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "vertex",
+  source: `
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) worldPosition: vec3<f32>,
+  @location(1) uv: vec2<f32>,
+};
+
+struct ModelUniforms {
+  viewProjection: mat4x4<f32>,
+  baseColor: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uUniforms: ModelUniforms;
+
+@vertex
+fn main(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>) -> VertexOutput {
+  var output: VertexOutput;
+  output.position = uUniforms.viewProjection * vec4<f32>(position, 1.0);
+  output.worldPosition = position;
+  output.uv = uv;
+  return output;
+}
+`,
+});
+
+export const webGpuModelFragmentShader = createShaderSource({
+  id: "webgpu.model.fragment",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "fragment",
+  source: `
+struct ModelUniforms {
+  viewProjection: mat4x4<f32>,
+  baseColor: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uUniforms: ModelUniforms;
+
+@fragment
+fn main(@location(0) worldPosition: vec3<f32>, @location(1) uv: vec2<f32>) -> @location(0) vec4<f32> {
+  let light = normalize(vec3<f32>(-0.25, 0.52, 0.82));
+  let normal = normalize(worldPosition);
+  let diffuse = max(dot(normal, light), 0.0);
+  let uvTint = vec3<f32>(0.92 + uv.x * 0.08, 0.90 + uv.y * 0.10, 1.0);
+  return vec4<f32>(uUniforms.baseColor.rgb * uvTint * (0.42 + diffuse * 0.78), uUniforms.baseColor.a);
+}
+`,
+});
+
+export const webGpuModelProgram: ShaderProgramSource = {
+  id: "webgpu.model",
+  backend: "webgpu",
+  language: "wgsl",
+  vertex: webGpuModelVertexShader,
+  fragment: webGpuModelFragmentShader,
 };

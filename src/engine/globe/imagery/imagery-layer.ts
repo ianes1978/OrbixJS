@@ -1,6 +1,7 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
-import { CameraTileSelector, type CameraTileSelectorContext } from "./tile-selector";
+import { type CameraTileSelectorContext } from "./tile-selector";
 import { createQuadtreeTile, type QuadtreeTile } from "./quadtree-tile";
+import { GlobeSurfaceTileProvider } from "./globe-surface-tile-provider";
 import { type RasterTileProvider } from "./tile-provider";
 import { type CameraTileSelectorOptions } from "./tile-selector";
 
@@ -15,6 +16,7 @@ export type ImageryLayerOptions = {
   onTileError?: (tile: QuadtreeTile, error: unknown) => void;
   minLevel?: number;
   maxLevel?: number;
+  maxConcurrentTileLoads?: number;
 };
 
 export type ImageryLayerStats = {
@@ -27,61 +29,46 @@ export type ImageryLayerStats = {
 
 export class ImageryLayer {
   private readonly tiling = new WebMercatorTilingScheme();
-  private readonly selector: CameraTileSelector;
+  private readonly surfaceTiles: GlobeSurfaceTileProvider;
   private readonly active = new Set<string>();
   private readonly loaded = new Set<string>();
   private readonly pending = new Set<string>();
+  private readonly loadQueue: QuadtreeTile[] = [];
+  private activeLoads = 0;
 
   constructor(
     readonly provider: RasterTileProvider,
     readonly level = 2,
     private readonly options: ImageryLayerOptions = {},
   ) {
-    this.selector = new CameraTileSelector(layerSelectorOptions(options));
+    this.surfaceTiles = new GlobeSurfaceTileProvider({ ...layerSelectorOptions(options), baseLevel: level });
   }
 
   update(lon: number, lat: number, cameraDistance: number, context: CameraTileSelectorContext = {}): ImageryLayerStats {
-    const selection = this.selector.select(lon, lat, cameraDistance, context);
+    const selection = this.surfaceTiles.select(lon, lat, cameraDistance, this.loaded, context);
     this.active.clear();
+    this.prioritizeTileLoads(selection.requestTiles);
 
-    for (const tile of selection.tiles) {
+    for (const tile of selection.requestTiles) {
       if (this.loaded.has(tile.id) || this.pending.has(tile.id)) {
         continue;
       }
 
       this.pending.add(tile.id);
-      void this.provider
-        .loadTile(tile)
-        .then((image) => {
-          this.pending.delete(tile.id);
-          this.loaded.add(tile.id);
-          this.options.onTileReady?.(tile, image);
-        })
-        .catch((error: unknown) => {
-          this.pending.delete(tile.id);
-          this.options.onTileError?.(tile, error);
-        });
+      this.loadQueue.push(tile);
     }
 
-    for (const tile of selection.tiles) {
-      const fallback = this.nearestLoadedAncestor(tile);
+    this.pumpTileLoadQueue();
 
-      if (fallback) {
-        this.active.add(fallback.id);
-      }
-    }
-
-    for (const tile of selection.tiles) {
-      if (this.loaded.has(tile.id)) {
-        this.active.add(tile.id);
-      }
+    for (const tile of selection.renderTiles) {
+      this.active.add(tile.id);
     }
 
     return {
       level: selection.level,
-      activeTiles: selection.tiles.length,
-      loadedTiles: selection.tiles.filter((tile) => this.loaded.has(tile.id)).length,
-      pendingTiles: selection.tiles.filter((tile) => this.pending.has(tile.id)).length,
+      activeTiles: selection.requestTiles.length,
+      loadedTiles: selection.requestTiles.filter((tile) => this.loaded.has(tile.id)).length,
+      pendingTiles: selection.requestTiles.filter((tile) => this.pending.has(tile.id)).length,
       cacheSize: this.provider.cacheSize,
     };
   }
@@ -146,23 +133,61 @@ export class ImageryLayer {
     };
   }
 
-  private nearestLoadedAncestor(tile: QuadtreeTile): QuadtreeTile | undefined {
-    let current = tile;
-
-    while (current.z > this.level) {
-      current = parentTile(current);
-
-      if (this.loaded.has(current.id)) {
-        return current;
-      }
+  private prioritizeTileLoads(requestTiles: readonly QuadtreeTile[]): void {
+    if (this.loadQueue.length === 0) {
+      return;
     }
 
-    return undefined;
-  }
-}
+    const queued = new Map(this.loadQueue.map((tile) => [tile.id, tile]));
+    const prioritized: QuadtreeTile[] = [];
 
-function parentTile(tile: QuadtreeTile): QuadtreeTile {
-  return createQuadtreeTile(Math.floor(tile.x / 2), Math.floor(tile.y / 2), tile.z - 1);
+    for (const tile of requestTiles) {
+      const queuedTile = queued.get(tile.id);
+
+      if (!queuedTile) {
+        continue;
+      }
+
+      prioritized.push(queuedTile);
+      queued.delete(tile.id);
+    }
+
+    this.loadQueue.length = 0;
+    this.loadQueue.push(...prioritized, ...queued.values());
+  }
+
+  private pumpTileLoadQueue(): void {
+    const maxConcurrent = this.options.maxConcurrentTileLoads ?? 16;
+
+    while (this.activeLoads < maxConcurrent && this.loadQueue.length > 0) {
+      const tile = this.loadQueue.shift();
+
+      if (!tile) {
+        return;
+      }
+
+      if (this.loaded.has(tile.id)) {
+        this.pending.delete(tile.id);
+        continue;
+      }
+
+      this.activeLoads += 1;
+      void this.provider
+        .loadTile(tile)
+        .then((image) => {
+          this.loaded.add(tile.id);
+          this.options.onTileReady?.(tile, image);
+        })
+        .catch((error: unknown) => {
+          this.options.onTileError?.(tile, error);
+        })
+        .finally(() => {
+          this.pending.delete(tile.id);
+          this.activeLoads = Math.max(0, this.activeLoads - 1);
+          this.pumpTileLoadQueue();
+        });
+    }
+  }
 }
 
 function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): CameraTileSelectorOptions {

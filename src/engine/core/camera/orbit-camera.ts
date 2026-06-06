@@ -1,5 +1,5 @@
 import { lookAt, perspective, type Mat4 } from "../math/mat4";
-import { add, cross, length, normalize, scale, subtract, type MutableVec3, type Vec3 } from "../math/vec3";
+import { add, cross, dot, length, normalize, scale, subtract, type MutableVec3, type Vec3 } from "../math/vec3";
 
 export type CameraFlyToOptions = {
   lon: number;
@@ -25,13 +25,13 @@ export class OrbitCamera {
   pitch: number;
   tiltOffset = 0;
   fov = (45 * Math.PI) / 180;
-  near = 0.001;
-  far = 100;
+  near = 0.000005;
+  far = 20;
 
   constructor(options: OrbitCameraOptions = {}) {
     this.target = options.target ?? [0, 0, 0];
     this.distance = options.distance ?? 3.2;
-    this.minDistance = options.minDistance ?? 1.002;
+    this.minDistance = options.minDistance ?? 1.00002;
     this.maxDistance = options.maxDistance ?? 10;
     this.yaw = options.yaw ?? -0.65;
     this.pitch = options.pitch ?? 0.35;
@@ -40,6 +40,36 @@ export class OrbitCamera {
   orbit(deltaX: number, deltaY: number): void {
     this.yaw += deltaX;
     this.pitch = clamp(this.pitch + deltaY, -1.42, 1.42);
+    this.keepAboveSurface();
+  }
+
+  rotateSurfacePointTo(from: Vec3, to: Vec3, maxAngle = Number.POSITIVE_INFINITY): void {
+    const source = normalize(from);
+    const target = normalize(to);
+    const axis = cross(source, target);
+    const axisLength = length(axis);
+
+    if (axisLength < 1e-8) {
+      return;
+    }
+
+    const angle = Math.min(maxAngle, Math.atan2(axisLength, clamp(dot(source, target), -1, 1)));
+    const rotationAxis = scale(axis, 1 / axisLength);
+    const currentPosition = this.position;
+    const nextTarget = rotateAroundAxis(this.target, rotationAxis, angle);
+    const nextPosition = rotateAroundAxis(currentPosition, rotationAxis, angle);
+    const nextDirection = normalize(subtract(nextPosition, nextTarget));
+
+    this.target[0] = nextTarget[0];
+    this.target[1] = nextTarget[1];
+    this.target[2] = nextTarget[2];
+    this.distance = clamp(
+      length(subtract(nextPosition, nextTarget)),
+      surfaceExitDistance(nextTarget, nextDirection, this.minDistance),
+      this.maxDistance,
+    );
+    this.yaw = Math.atan2(nextDirection[0], nextDirection[2]);
+    this.pitch = clamp(Math.asin(nextDirection[1]), -1.42, 1.42);
   }
 
   dragSensitivityScale(): number {
@@ -48,9 +78,11 @@ export class OrbitCamera {
   }
 
   zoom(delta: number): void {
-    const surfaceDistance = 1;
-    const altitude = Math.max(this.distance - surfaceDistance, this.minDistance - surfaceDistance);
-    this.distance = clamp(surfaceDistance + altitude * Math.exp(delta), this.minDistance, this.maxDistance);
+    const direction = this.orbitDirection();
+    const surfaceDistance = surfaceExitDistance(this.target, direction);
+    const minAllowedDistance = surfaceExitDistance(this.target, direction, this.minDistance);
+    const altitude = Math.max(this.distance - surfaceDistance, minAllowedDistance - surfaceDistance);
+    this.distance = clamp(surfaceDistance + altitude * Math.exp(delta), minAllowedDistance, this.maxDistance);
   }
 
   tilt(delta: number): void {
@@ -69,10 +101,12 @@ export class OrbitCamera {
     const targetLimit = 0.85;
     const targetLength = length(nextTarget);
     const clampedTarget = targetLength > targetLimit ? scale(normalize(nextTarget), targetLimit) : nextTarget;
+    const direction = this.orbitDirection();
 
     this.target[0] = clampedTarget[0];
     this.target[1] = clampedTarget[1];
     this.target[2] = clampedTarget[2];
+    this.distance = clamp(this.distance, surfaceExitDistance(this.target, direction, this.minDistance), this.maxDistance);
   }
 
   flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
@@ -88,6 +122,9 @@ export class OrbitCamera {
     this.yaw = Math.atan2(direction[0], direction[2]);
     this.pitch = clamp(Math.asin(direction[1]), -1.42, 1.42);
     this.tiltOffset = 0;
+    this.target[0] = 0;
+    this.target[1] = 0;
+    this.target[2] = 0;
     this.distance = clamp(1 + height / 6_378_137, this.minDistance, this.maxDistance);
   }
 
@@ -98,6 +135,10 @@ export class OrbitCamera {
       this.target[1] + Math.sin(this.pitch) * this.distance,
       this.target[2] + Math.cos(this.yaw) * cosPitch * this.distance,
     ];
+  }
+
+  get geocentricDistance(): number {
+    return length(this.position);
   }
 
   viewMatrix(): Mat4 {
@@ -119,6 +160,15 @@ export class OrbitCamera {
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
     return add(this.target, scale(up, this.tiltOffset * this.distance * 0.45));
   }
+
+  private orbitDirection(): MutableVec3 {
+    const cosPitch = Math.cos(this.pitch);
+    return [Math.sin(this.yaw) * cosPitch, Math.sin(this.pitch), Math.cos(this.yaw) * cosPitch];
+  }
+
+  private keepAboveSurface(): void {
+    this.distance = clamp(this.distance, surfaceExitDistance(this.target, this.orbitDirection(), this.minDistance), this.maxDistance);
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -128,6 +178,32 @@ function clamp(value: number, min: number, max: number): number {
 function interactionAltitudeScale(normalizedAltitude: number, min: number, max: number): number {
   const t = clamp((normalizedAltitude - 0.06) / 0.94, 0, 1);
   return min + Math.pow(t, 1.35) * (max - min);
+}
+
+function rotateAroundAxis(value: Vec3, axis: Vec3, angle: number): MutableVec3 {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const parallel = scale(axis, dot(axis, value) * (1 - cos));
+  const perpendicular = scale(cross(axis, value), sin);
+
+  return add(add(scale(value, cos), perpendicular), parallel);
+}
+
+function surfaceExitDistance(origin: Vec3, direction: Vec3, radius = 1): number {
+  const b = 2 * dot(origin, direction);
+  const c = dot(origin, origin) - radius * radius;
+  const discriminant = b * b - 4 * c;
+
+  if (discriminant < 0) {
+    return radius;
+  }
+
+  const sqrt = Math.sqrt(discriminant);
+  const near = (-b - sqrt) / 2;
+  const far = (-b + sqrt) / 2;
+  const exit = Math.max(near, far);
+
+  return exit > 0 ? exit : radius;
 }
 
 function safeNormalize(value: Vec3, fallback: MutableVec3): MutableVec3 {

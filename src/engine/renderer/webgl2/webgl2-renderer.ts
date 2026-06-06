@@ -301,23 +301,24 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-    this.gl.useProgram(this.program.program);
-    this.gl.uniformMatrix4fv(this.program.uProjection, false, plan.projection);
-    this.gl.uniformMatrix4fv(this.program.uView, false, plan.view);
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
-    this.gl.uniform1i(this.program.uImagery, 0);
-    this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
-    this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
-    this.gl.bindVertexArray(this.globe.vao);
+    if (!plan.passes.includes("imagery")) {
+      this.gl.useProgram(this.program.program);
+      this.gl.uniformMatrix4fv(this.program.uProjection, false, plan.projection);
+      this.gl.uniformMatrix4fv(this.program.uView, false, plan.view);
+      this.gl.activeTexture(this.gl.TEXTURE0);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
+      this.gl.uniform1i(this.program.uImagery, 0);
+      this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
+      this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
+      this.gl.bindVertexArray(this.globe.vao);
 
-    for (const node of plan.nodes) {
-      this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
-      this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
+      for (const node of plan.nodes) {
+        this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
+        this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
+      }
     }
 
     if (plan.passes.includes("imagery")) {
-      this.gl.clear(this.gl.DEPTH_BUFFER_BIT);
       this.renderImageryTiles(plan.projection, plan.view);
     }
 
@@ -377,11 +378,7 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.gl.useProgram(this.tileProgram.program);
-    this.gl.enable(this.gl.POLYGON_OFFSET_FILL);
-    this.gl.enable(this.gl.BLEND);
-    this.gl.depthMask(false);
-    this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
-    this.gl.polygonOffset(-1, -1);
+    this.gl.depthMask(true);
     this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
@@ -401,9 +398,6 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
-    this.gl.depthMask(true);
-    this.gl.disable(this.gl.BLEND);
-    this.gl.disable(this.gl.POLYGON_OFFSET_FILL);
   }
 
   private renderVectorLines(projection: Float32Array, view: Float32Array, cameraPosition: readonly [number, number, number]): void {

@@ -153,7 +153,7 @@ describe("WebGPURenderer", () => {
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
 
-  it("uploads and renders active WebGPU imagery tile overlays", async () => {
+  it("uploads and renders active WebGPU imagery surface tiles", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
     const canvas = createCanvasMock();
@@ -190,7 +190,7 @@ describe("WebGPURenderer", () => {
       },
       [256, 256],
     );
-    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
     expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({
@@ -260,6 +260,53 @@ describe("WebGPURenderer", () => {
       }),
     );
     expect(device.pass.draw).toHaveBeenCalledWith(4);
+  });
+
+  it("uploads and renders a WebGPU debug model mesh", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+
+    await renderer.initialize();
+    renderer.setDebugModelMesh({
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      texcoords: new Float32Array([0, 0, 1, 0, 0, 1]),
+      indices: new Uint16Array([0, 1, 2]),
+      lon: 11,
+      lat: 46,
+      height: 1000,
+      scale: 1000,
+      baseColorFactor: [1, 0.75, 0.15, 1],
+    });
+    renderer.setDebugModelVisible(true);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.createBuffer).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU debug model vertices",
+      size: 15 * Float32Array.BYTES_PER_ELEMENT,
+      usage: 40,
+    });
+    expect(device.createBuffer).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU debug model indices",
+      size: 3 * Uint16Array.BYTES_PER_ELEMENT,
+      usage: 24,
+    });
+    expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          label: "OrbixJS WebGPU debug model indices",
+        }),
+      }),
+      "uint16",
+    );
+    expect(device.pass.drawIndexed).toHaveBeenCalledWith(3);
   });
 
   it("reports unsupported when WebGPU is unavailable", async () => {

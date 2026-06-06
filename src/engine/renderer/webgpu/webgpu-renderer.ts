@@ -1,4 +1,5 @@
 import { Ellipsoid } from "../../core/geodesy/ellipsoid";
+import { createLocalFrameENU, localEnuToRenderUnit } from "../../core/geodesy/local-frame";
 import { type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
@@ -6,7 +7,7 @@ import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
-import { webGpuGlobeProgram, webGpuImageryTileProgram, webGpuVectorLineProgram } from "./wgsl-shaders";
+import { webGpuGlobeProgram, webGpuImageryTileProgram, webGpuModelProgram, webGpuVectorLineProgram } from "./wgsl-shaders";
 
 const webGpuBufferUsage = {
   vertex: 0x20,
@@ -145,7 +146,7 @@ type WebGpuRenderPassEncoderLike = {
   setPipeline(pipeline: WebGpuRenderPipelineLike): void;
   setBindGroup(index: number, bindGroup: WebGpuBindGroupLike): void;
   setVertexBuffer(slot: number, buffer: WebGpuBufferLike): void;
-  setIndexBuffer(buffer: WebGpuBufferLike, indexFormat: "uint16"): void;
+  setIndexBuffer(buffer: WebGpuBufferLike, indexFormat: "uint16" | "uint32"): void;
   draw(vertexCount: number): void;
   drawIndexed(indexCount: number): void;
   end(): void;
@@ -192,7 +193,7 @@ type WebGpuRenderPipelineDescriptorLike = {
   depthStencil?: {
     format: typeof webGpuDepthFormat;
     depthWriteEnabled: boolean;
-    depthCompare: "less";
+    depthCompare: "less" | "less-equal";
   };
 };
 
@@ -203,6 +204,25 @@ type WebGpuTileEntry = {
   bindGroup: WebGpuBindGroupLike;
   indexCount: number;
   ready: boolean;
+};
+
+type WebGpuModelEntry = {
+  vertexBuffer: WebGpuBufferLike;
+  indexBuffer: WebGpuBufferLike;
+  indexCount: number;
+  indexFormat: "uint16" | "uint32";
+};
+
+type WebGpuDebugModelMesh = {
+  positions: Float32Array;
+  texcoords?: Float32Array;
+  indices?: Uint16Array | Uint32Array;
+  lon: number;
+  lat: number;
+  height?: number;
+  scale?: number;
+  baseColorFactor?: [number, number, number, number];
+  baseColorTexture?: TexImageSource;
 };
 
 type WebGpuCanvas = HTMLCanvasElement & {
@@ -228,14 +248,20 @@ export class WebGPURenderer implements Renderer {
   private globePipeline: WebGpuRenderPipelineLike | undefined;
   private tilePipeline: WebGpuRenderPipelineLike | undefined;
   private vectorPipeline: WebGpuRenderPipelineLike | undefined;
+  private modelPipeline: WebGpuRenderPipelineLike | undefined;
   private globeBindGroup: WebGpuBindGroupLike | undefined;
   private vectorBindGroup: WebGpuBindGroupLike | undefined;
+  private modelBindGroup: WebGpuBindGroupLike | undefined;
   private globeVertexBuffer: WebGpuBufferLike | undefined;
   private globeIndexBuffer: WebGpuBufferLike | undefined;
   private globeUniformBuffer: WebGpuBufferLike | undefined;
+  private modelUniformBuffer: WebGpuBufferLike | undefined;
   private vectorVertexBuffer: WebGpuBufferLike | undefined;
   private vectorVertexCount = 0;
   private vectorLinesVisible = false;
+  private debugModel: WebGpuModelEntry | undefined;
+  private debugModelVisible = false;
+  private debugModelBaseColorFactor: [number, number, number, number] = [1, 0.75, 0.15, 1];
   private depthTexture: WebGpuTextureLike | undefined;
   private depthTextureSize: readonly [number, number] | undefined;
   private imageryTexture: WebGpuTextureLike | undefined;
@@ -244,6 +270,7 @@ export class WebGPURenderer implements Renderer {
   private imageryReady = false;
   private pendingImagery: TexImageSource | undefined;
   private pendingVectorLines: readonly (readonly [number, number])[][] | undefined;
+  private pendingDebugModelMesh: WebGpuDebugModelMesh | undefined;
   private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
   private readonly tileEntries = new Map<string, WebGpuTileEntry>();
   private activeTileIds: readonly string[] = [];
@@ -308,22 +335,17 @@ export class WebGPURenderer implements Renderer {
     this.vectorLinesVisible = visible;
   }
 
-  setDebugModelVisible(_visible: boolean): void {
-    // Model rendering support is WebGL2-only for now.
+  setDebugModelVisible(visible: boolean): void {
+    this.debugModelVisible = visible;
   }
 
-  setDebugModelMesh(_mesh: {
-    positions: Float32Array;
-    texcoords?: Float32Array;
-    indices?: Uint16Array | Uint32Array;
-    lon: number;
-    lat: number;
-    height?: number;
-    scale?: number;
-    baseColorFactor?: [number, number, number, number];
-    baseColorTexture?: TexImageSource;
-  }): void {
-    // Model rendering support is WebGL2-only for now.
+  setDebugModelMesh(mesh: WebGpuDebugModelMesh): void {
+    if (!this.device || !this.modelPipeline || !this.modelUniformBuffer) {
+      this.pendingDebugModelMesh = mesh;
+      return;
+    }
+
+    this.uploadDebugModel(mesh);
   }
 
   setSunDirection(_direction: Vec3): void {
@@ -393,8 +415,10 @@ export class WebGPURenderer implements Renderer {
     this.ensureDepthTexture();
 
     const aspect = this.canvas.width / this.canvas.height;
-    const uniforms = createGlobeUniforms(webGpuViewProjection(frame, aspect), this.imageryReady);
+    const viewProjection = webGpuViewProjection(frame, aspect);
+    const uniforms = createGlobeUniforms(viewProjection, this.imageryReady);
     this.device.queue.writeBuffer(this.globeUniformBuffer, 0, uniforms);
+    this.writeDebugModelUniforms(viewProjection);
 
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder({ label: "OrbixJS WebGPU frame" });
@@ -418,12 +442,15 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    pass.setPipeline(this.globePipeline);
-    pass.setBindGroup(0, this.globeBindGroup);
-    pass.setVertexBuffer(0, this.globeVertexBuffer);
-    pass.setIndexBuffer(this.globeIndexBuffer, "uint16");
-    pass.drawIndexed(this.globeIndexCount);
+    if (this.activeTileIds.length === 0) {
+      pass.setPipeline(this.globePipeline);
+      pass.setBindGroup(0, this.globeBindGroup);
+      pass.setVertexBuffer(0, this.globeVertexBuffer);
+      pass.setIndexBuffer(this.globeIndexBuffer, "uint16");
+      pass.drawIndexed(this.globeIndexCount);
+    }
     this.renderImageryTiles(pass);
+    this.renderDebugModel(pass);
     this.renderVectorLines(pass);
     pass.end();
 
@@ -435,7 +462,11 @@ export class WebGPURenderer implements Renderer {
     this.globeVertexBuffer?.destroy?.();
     this.globeIndexBuffer?.destroy?.();
     this.globeUniformBuffer?.destroy?.();
+    this.modelUniformBuffer?.destroy?.();
     this.vectorVertexBuffer?.destroy?.();
+    if (this.debugModel) {
+      destroyModelEntry(this.debugModel);
+    }
     this.depthTexture?.destroy?.();
     this.imageryTexture?.destroy?.();
     for (const entry of this.tileEntries.values()) {
@@ -449,14 +480,20 @@ export class WebGPURenderer implements Renderer {
     this.globePipeline = undefined;
     this.tilePipeline = undefined;
     this.vectorPipeline = undefined;
+    this.modelPipeline = undefined;
     this.globeBindGroup = undefined;
     this.vectorBindGroup = undefined;
+    this.modelBindGroup = undefined;
     this.globeVertexBuffer = undefined;
     this.globeIndexBuffer = undefined;
     this.globeUniformBuffer = undefined;
+    this.modelUniformBuffer = undefined;
     this.vectorVertexBuffer = undefined;
     this.vectorVertexCount = 0;
     this.vectorLinesVisible = false;
+    this.debugModel = undefined;
+    this.debugModelVisible = false;
+    this.debugModelBaseColorFactor = [1, 0.75, 0.15, 1];
     this.depthTexture = undefined;
     this.depthTextureSize = undefined;
     this.imageryTexture = undefined;
@@ -465,6 +502,7 @@ export class WebGPURenderer implements Renderer {
     this.imageryReady = false;
     this.pendingImagery = undefined;
     this.pendingVectorLines = undefined;
+    this.pendingDebugModelMesh = undefined;
     this.pendingTileImages.clear();
     this.tileEntries.clear();
     this.activeTileIds = [];
@@ -551,6 +589,7 @@ export class WebGPURenderer implements Renderer {
     this.createGlobeBindGroup();
     this.createTilePipeline();
     this.createVectorPipeline();
+    this.createModelPipeline();
     this.globeIndexCount = mesh.indices.length;
 
     if (this.pendingImagery) {
@@ -565,6 +604,10 @@ export class WebGPURenderer implements Renderer {
 
     if (this.pendingVectorLines) {
       this.uploadVectorLines(this.pendingVectorLines);
+    }
+
+    if (this.pendingDebugModelMesh) {
+      this.uploadDebugModel(this.pendingDebugModelMesh);
     }
   }
 
@@ -602,23 +645,7 @@ export class WebGPURenderer implements Renderer {
       fragment: {
         module: fragmentModule,
         entryPoint: "main",
-        targets: [
-          {
-            format: this.format,
-            blend: {
-              color: {
-                srcFactor: "src-alpha",
-                dstFactor: "one-minus-src-alpha",
-                operation: "add",
-              },
-              alpha: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha",
-                operation: "add",
-              },
-            },
-          },
-        ],
+        targets: [{ format: this.format }],
       },
       primitive: {
         topology: "triangle-list",
@@ -626,7 +653,7 @@ export class WebGPURenderer implements Renderer {
       },
       depthStencil: {
         format: webGpuDepthFormat,
-        depthWriteEnabled: false,
+        depthWriteEnabled: true,
         depthCompare: "less",
       },
     });
@@ -689,6 +716,70 @@ export class WebGPURenderer implements Renderer {
         depthWriteEnabled: false,
         depthCompare: "less",
       },
+    });
+  }
+
+  private createModelPipeline(): void {
+    if (!this.device || !this.format) {
+      return;
+    }
+
+    const vertexModule = this.device.createShaderModule({
+      label: webGpuModelProgram.vertex.id,
+      code: webGpuModelProgram.vertex.source,
+    });
+    const fragmentModule = this.device.createShaderModule({
+      label: webGpuModelProgram.fragment.id,
+      code: webGpuModelProgram.fragment.source,
+    });
+
+    this.modelUniformBuffer = this.device.createBuffer({
+      label: "OrbixJS WebGPU model uniforms",
+      size: 20 * Float32Array.BYTES_PER_ELEMENT,
+      usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
+    });
+    this.modelPipeline = this.device.createRenderPipeline({
+      label: "OrbixJS WebGPU model pipeline",
+      layout: "auto",
+      vertex: {
+        module: vertexModule,
+        entryPoint: "main",
+        buffers: [
+          {
+            arrayStride: 5 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x3" },
+              { shaderLocation: 1, offset: 3 * Float32Array.BYTES_PER_ELEMENT, format: "float32x2" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "main",
+        targets: [{ format: this.format }],
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "none",
+      },
+      depthStencil: {
+        format: webGpuDepthFormat,
+        depthWriteEnabled: true,
+        depthCompare: "less",
+      },
+    });
+    this.modelBindGroup = this.device.createBindGroup({
+      label: "OrbixJS WebGPU model bind group",
+      layout: this.modelPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.modelUniformBuffer,
+          },
+        },
+      ],
     });
   }
 
@@ -839,6 +930,29 @@ export class WebGPURenderer implements Renderer {
     pass.draw(this.vectorVertexCount);
   }
 
+  private renderDebugModel(pass: WebGpuRenderPassEncoderLike): void {
+    if (!this.debugModelVisible || !this.debugModel || !this.modelPipeline || !this.modelBindGroup) {
+      return;
+    }
+
+    pass.setPipeline(this.modelPipeline);
+    pass.setBindGroup(0, this.modelBindGroup);
+    pass.setVertexBuffer(0, this.debugModel.vertexBuffer);
+    pass.setIndexBuffer(this.debugModel.indexBuffer, this.debugModel.indexFormat);
+    pass.drawIndexed(this.debugModel.indexCount);
+  }
+
+  private writeDebugModelUniforms(viewProjection: Float32Array): void {
+    if (!this.device || !this.modelUniformBuffer || !this.debugModelVisible || !this.debugModel) {
+      return;
+    }
+
+    const uniforms = new Float32Array(20);
+    uniforms.set(viewProjection, 0);
+    uniforms.set(this.debugModelBaseColorFactor, 16);
+    this.device.queue.writeBuffer(this.modelUniformBuffer, 0, uniforms);
+  }
+
   private uploadVectorLines(lines: readonly (readonly [number, number])[][]): void {
     if (!this.device || !this.vectorPipeline || !this.globeUniformBuffer) {
       this.pendingVectorLines = lines;
@@ -874,6 +988,48 @@ export class WebGPURenderer implements Renderer {
         },
       ],
     });
+  }
+
+  private uploadDebugModel(mesh: WebGpuDebugModelMesh): void {
+    if (!this.device || !this.modelPipeline || !this.modelUniformBuffer) {
+      this.pendingDebugModelMesh = mesh;
+      return;
+    }
+
+    const placedMesh = createPlacedModelMesh(mesh.positions, mesh.indices, {
+      texcoords: mesh.texcoords,
+      lon: mesh.lon,
+      lat: mesh.lat,
+      height: mesh.height ?? 0,
+      scale: mesh.scale ?? 1,
+    });
+
+    if (this.debugModel) {
+      destroyModelEntry(this.debugModel);
+      this.debugModel = undefined;
+    }
+
+    const vertexBuffer = this.device.createBuffer({
+      label: "OrbixJS WebGPU debug model vertices",
+      size: placedMesh.vertices.byteLength,
+      usage: webGpuBufferUsage.vertex | webGpuBufferUsage.copyDst,
+    });
+    const indexBuffer = this.device.createBuffer({
+      label: "OrbixJS WebGPU debug model indices",
+      size: placedMesh.indices.byteLength,
+      usage: webGpuBufferUsage.index | webGpuBufferUsage.copyDst,
+    });
+    this.device.queue.writeBuffer(vertexBuffer, 0, placedMesh.vertices);
+    this.device.queue.writeBuffer(indexBuffer, 0, placedMesh.indices);
+
+    this.debugModel = {
+      vertexBuffer,
+      indexBuffer,
+      indexCount: placedMesh.indices.length,
+      indexFormat: placedMesh.indices instanceof Uint32Array ? "uint32" : "uint16",
+    };
+    this.debugModelBaseColorFactor = mesh.baseColorFactor ?? [1, 0.75, 0.15, 1];
+    this.pendingDebugModelMesh = undefined;
   }
 
   private uploadImageryTile(tile: QuadtreeTile, image: TexImageSource): void {
@@ -1014,8 +1170,50 @@ function pushVectorLineVertex(
   vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
 }
 
+function createPlacedModelMesh(
+  positions: Float32Array,
+  indices: Uint16Array | Uint32Array | undefined,
+  placement: { texcoords?: Float32Array; lon: number; lat: number; height: number; scale: number },
+  ellipsoid = Ellipsoid.WGS84,
+): { vertices: Float32Array; indices: Uint16Array | Uint32Array } {
+  const lon = placement.lon * (Math.PI / 180);
+  const lat = placement.lat * (Math.PI / 180);
+  const frame = createLocalFrameENU({ lon, lat, height: placement.height }, ellipsoid);
+  const vertices: number[] = [];
+
+  for (let index = 0; index < positions.length; index += 3) {
+    const localX = positions[index];
+    const localY = positions[index + 1];
+    const localZ = positions[index + 2];
+    const worldPosition = localEnuToRenderUnit(
+      frame,
+      [localX * placement.scale, localZ * placement.scale, localY * placement.scale],
+      ellipsoid,
+    );
+
+    vertices.push(...worldPosition, placement.texcoords?.[(index / 3) * 2] ?? 0, placement.texcoords?.[(index / 3) * 2 + 1] ?? 0);
+  }
+
+  return { vertices: new Float32Array(vertices), indices: indices ?? createSequentialIndices(positions.length / 3) };
+}
+
+function createSequentialIndices(vertexCount: number): Uint16Array | Uint32Array {
+  const indices = vertexCount > 65535 ? new Uint32Array(vertexCount) : new Uint16Array(vertexCount);
+
+  for (let index = 0; index < vertexCount; index += 1) {
+    indices[index] = index;
+  }
+
+  return indices;
+}
+
 function destroyTileEntry(entry: WebGpuTileEntry): void {
   entry.vertexBuffer.destroy?.();
   entry.indexBuffer.destroy?.();
   entry.texture.destroy?.();
+}
+
+function destroyModelEntry(entry: WebGpuModelEntry): void {
+  entry.vertexBuffer.destroy?.();
+  entry.indexBuffer.destroy?.();
 }
