@@ -85,6 +85,7 @@ export const roadmap: RoadmapPhase[] = [
     title: "Terrain 3D",
     items: [
       { label: "TerrainProvider API", done: true },
+      { label: "Camera clearance ellissoide", done: true },
       { label: "Heightmap tiled", done: false },
       { label: "Mesh terrain LOD", done: false },
       { label: "Skirt e morphing", done: false },

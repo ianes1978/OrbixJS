@@ -27,6 +27,7 @@ export type GeoViewerOptions = {
   renderer?: RendererBackend;
   cameraLimits?: CameraLimits;
   cameraHeightLimits?: CameraHeightLimits;
+  cameraCollision?: CameraCollisionOptions;
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -42,6 +43,11 @@ export type GeoViewerOptions = {
 export type CameraHeightLimits = {
   minHeight?: number;
   maxHeight?: number;
+};
+
+export type CameraCollisionOptions = {
+  enabled?: boolean;
+  clearance?: number;
 };
 
 export type GeoPickResult =
@@ -124,10 +130,14 @@ export class GeoViewer {
   private frame = 0;
   private disposed = false;
   private date: Date;
+  private cameraHeightLimits: CameraHeightLimits;
+  private cameraCollision: Required<CameraCollisionOptions>;
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
     this.onTilesetStatsCallback = options.onTilesetStats;
+    this.cameraHeightLimits = options.cameraHeightLimits ?? {};
+    this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
     const container =
       typeof options.container === "string"
         ? document.getElementById(options.container)
@@ -147,8 +157,9 @@ export class GeoViewer {
     this.container.append(this.canvas);
     this.camera = new OrbitCamera({
       ...options.cameraLimits,
-      ...cameraHeightLimitsToCameraLimits(options.cameraHeightLimits),
+      ...cameraHeightLimitsToCameraLimits(this.cameraHeightLimits),
     });
+    this.applyCameraHeightConstraints();
     this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
     if (this.renderer instanceof WebGPURenderer) {
       void this.renderer
@@ -329,6 +340,7 @@ export class GeoViewer {
 
   setTerrainProvider(provider: TerrainProvider | undefined): void {
     this.terrain = provider;
+    this.applyCameraHeightConstraints();
   }
 
   flyTo(options: CameraFlyToOptions): void {
@@ -340,7 +352,16 @@ export class GeoViewer {
   }
 
   setCameraHeightLimits(limits: CameraHeightLimits): void {
-    this.camera.setLimits(cameraHeightLimitsToCameraLimits(limits));
+    this.cameraHeightLimits = limits;
+    this.applyCameraHeightConstraints();
+  }
+
+  setCameraCollision(options: CameraCollisionOptions): void {
+    this.cameraCollision = normalizeCameraCollisionOptions({
+      ...this.cameraCollision,
+      ...options,
+    });
+    this.applyCameraHeightConstraints();
   }
 
   cameraSnapshot(): CameraSnapshot {
@@ -440,6 +461,7 @@ export class GeoViewer {
         return;
       }
 
+      this.applyCameraHeightConstraints();
       const coveragePositions = this.visibleCartographicSamples();
       const coverageTiles = this.screenSpaceCoverageTiles();
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
@@ -984,6 +1006,31 @@ export class GeoViewer {
     const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(hit);
     return { lon: cartographic.lon, lat: cartographic.lat, height: 0 };
   }
+
+  private applyCameraHeightConstraints(): void {
+    const baseMinHeight = this.cameraHeightLimits.minHeight ?? 0;
+    const terrainHeight = this.cameraCollision.enabled ? this.sampleTerrainHeightBelowCamera() : undefined;
+    const collisionMinHeight =
+      terrainHeight === undefined ? baseMinHeight : Math.max(baseMinHeight, terrainHeight + this.cameraCollision.clearance);
+
+    this.camera.setLimits(
+      cameraHeightLimitsToCameraLimits({
+        minHeight: collisionMinHeight,
+        maxHeight: this.cameraHeightLimits.maxHeight,
+      }),
+    );
+  }
+
+  private sampleTerrainHeightBelowCamera(): number | undefined {
+    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const sampled = this.terrain?.sampleHeight?.(cartographic.lon, cartographic.lat);
+
+    if (Number.isFinite(sampled)) {
+      return sampled;
+    }
+
+    return 0;
+  }
 }
 
 export { Ellipsoid } from "./core/geodesy/ellipsoid";
@@ -1058,6 +1105,17 @@ function cameraHeightLimitsToCameraLimits(limits: CameraHeightLimits | undefined
     maxDistance:
       limits.maxHeight === undefined ? undefined : 1 + Math.max(0, limits.maxHeight) / Ellipsoid.WGS84.maximumRadius,
   };
+}
+
+function normalizeCameraCollisionOptions(options: CameraCollisionOptions | undefined): Required<CameraCollisionOptions> {
+  return {
+    enabled: options?.enabled ?? true,
+    clearance: Math.max(0, finiteOr(options?.clearance, 1)),
+  };
+}
+
+function finiteOr(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? value : fallback;
 }
 
 function intersectNormalizedWgs84Surface(ray: Ray, heightMeters: number): Vec3 | undefined {

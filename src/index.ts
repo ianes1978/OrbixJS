@@ -1,6 +1,7 @@
 export {
   GeoViewer,
   Ellipsoid,
+  type CameraCollisionOptions,
   type CameraHeightLimits,
   type GeoPickResult,
   type GeoViewerGltfOptions,
@@ -12,6 +13,7 @@ export { extractFirstMeshPrimitive, type GltfMeshPrimitive } from "./engine/load
 export { loadTilesetJson, parseTilesetJson, type TilesetJson, type TilesetTile } from "./engine/loaders/tiles3d/tileset";
 export {
   createFlatTerrainTile,
+  createFlatTerrainProvider,
   createTerrainTileId,
   type TerrainHeightmapTile,
   type TerrainProvider,

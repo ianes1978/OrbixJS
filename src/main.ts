@@ -70,6 +70,13 @@ app.innerHTML = `
               <span>Quota min <output data-camera-limit-value="minHeightMeters">0 m</output></span>
               <input data-camera-limit="minHeightMeters" type="range" min="0" max="5000" step="1" value="0" />
             </label>
+            <button id="camera-collision-toggle" class="debug-toggle compact-toggle" type="button" aria-pressed="true">
+              Collision ON
+            </button>
+            <label class="slider-control">
+              <span>Clearance <output data-camera-limit-value="collisionClearanceMeters">1 m</output></span>
+              <input data-camera-limit="collisionClearanceMeters" type="range" min="0" max="50" step="0.1" value="1" />
+            </label>
             <label class="slider-control">
               <span>Quota max <output data-camera-limit-value="maxHeightMeters">57310 km</output></span>
               <input data-camera-limit="maxHeightMeters" type="range" min="1000" max="120000000" step="1000" value="57310000" />
@@ -180,6 +187,7 @@ const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 const cameraLimitInputs = document.querySelectorAll<HTMLInputElement>("[data-camera-limit]");
 const cameraLimitOutputs = document.querySelectorAll<HTMLOutputElement>("[data-camera-limit-value]");
+const cameraCollisionToggle = document.querySelector<HTMLButtonElement>("#camera-collision-toggle");
 const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
 const cameraPathStop = document.querySelector<HTMLButtonElement>("#camera-path-stop");
 const cameraPathStatus = document.querySelector<HTMLElement>("#camera-path-status");
@@ -208,6 +216,7 @@ if (
   !sceneDateInput ||
   cameraLimitInputs.length === 0 ||
   cameraLimitOutputs.length === 0 ||
+  !cameraCollisionToggle ||
   !cameraPathControls ||
   !cameraPathStop ||
   !cameraPathStatus ||
@@ -227,6 +236,7 @@ const infoToggleElement = infoToggle;
 const infoPanelElement = infoPanel;
 const cameraLimitInputElements = [...cameraLimitInputs];
 const cameraLimitOutputElements = [...cameraLimitOutputs];
+const cameraCollisionToggleElement = cameraCollisionToggle;
 const cameraPathControlsElement = cameraPathControls;
 const cameraPathStopElement = cameraPathStop;
 const cameraPathStatusElement = cameraPathStatus;
@@ -301,6 +311,10 @@ const viewer = new GeoViewer({
     minHeight: 0,
     maxHeight: 57_310_000,
   },
+  cameraCollision: {
+    enabled: true,
+    clearance: 1,
+  },
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
@@ -314,6 +328,7 @@ const viewer = new GeoViewer({
     imageryStatusElement.textContent = "fallback";
   },
 });
+let cameraCollisionEnabled = true;
 rendererStatus.textContent = viewer.renderer.supported
   ? `${viewer.renderer.backend === "webgpu" ? "WebGPU init" : "WebGL2"} attivo`
   : `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} non disponibile`;
@@ -325,6 +340,13 @@ cameraLimitInputElements.forEach((input) => {
   input.addEventListener("input", () => {
     applyCameraLimitControls();
   });
+});
+
+cameraCollisionToggleElement.addEventListener("click", () => {
+  cameraCollisionEnabled = !cameraCollisionEnabled;
+  cameraCollisionToggleElement.setAttribute("aria-pressed", String(cameraCollisionEnabled));
+  cameraCollisionToggleElement.textContent = cameraCollisionEnabled ? "Collision ON" : "Collision";
+  applyCameraLimitControls();
 });
 
 globeHost.addEventListener("orbix:renderer-changed", (event) => {
@@ -669,6 +691,7 @@ function copySelectedSnapshotText(): boolean {
 function applyCameraLimitControls(): void {
   const minHeightMeters = cameraLimitValue("minHeightMeters");
   const maxHeightMeters = Math.max(cameraLimitValue("maxHeightMeters"), minHeightMeters + 1);
+  const collisionClearanceMeters = cameraLimitValue("collisionClearanceMeters");
   const minTiltDeg = cameraLimitValue("minTiltDeg");
   const maxTiltDeg = Math.max(cameraLimitValue("maxTiltDeg"), minTiltDeg);
   const fovDeg = cameraLimitValue("fovDeg");
@@ -679,6 +702,10 @@ function applyCameraLimitControls(): void {
     minHeight: minHeightMeters,
     maxHeight: maxHeightMeters,
   });
+  viewer.setCameraCollision({
+    enabled: cameraCollisionEnabled,
+    clearance: collisionClearanceMeters,
+  });
   viewer.setCameraLimits({
     minTilt: toRadians(minTiltDeg),
     maxTilt: toRadians(maxTiltDeg),
@@ -687,6 +714,7 @@ function applyCameraLimitControls(): void {
   syncCameraLimitOutputs({
     minHeightMeters,
     maxHeightMeters,
+    collisionClearanceMeters,
     minTiltDeg,
     maxTiltDeg,
     fovDeg,
@@ -711,12 +739,14 @@ function setCameraLimitInputValue(key: string, value: number): void {
 function syncCameraLimitOutputs(values: {
   minHeightMeters: number;
   maxHeightMeters: number;
+  collisionClearanceMeters: number;
   minTiltDeg: number;
   maxTiltDeg: number;
   fovDeg: number;
 }): void {
   setCameraLimitOutput("minHeightMeters", formatHeight(values.minHeightMeters));
   setCameraLimitOutput("maxHeightMeters", formatHeight(values.maxHeightMeters));
+  setCameraLimitOutput("collisionClearanceMeters", formatHeight(values.collisionClearanceMeters));
   setCameraLimitOutput("minTiltDeg", `${Math.round(values.minTiltDeg)}°`);
   setCameraLimitOutput("maxTiltDeg", `${Math.round(values.maxTiltDeg)}°`);
   setCameraLimitOutput("fovDeg", `${Math.round(values.fovDeg)}°`);

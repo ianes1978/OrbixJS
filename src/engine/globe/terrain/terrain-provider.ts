@@ -15,6 +15,7 @@ export type TerrainHeightmapTile = TerrainTileKey & {
 export interface TerrainProvider {
   readonly attribution?: string;
   getTile(key: TerrainTileKey, signal?: AbortSignal): Promise<TerrainHeightmapTile>;
+  sampleHeight?(lon: number, lat: number): number | undefined;
 }
 
 export function createTerrainTileId({ level, x, y }: TerrainTileKey): string {
@@ -32,5 +33,13 @@ export function createFlatTerrainTile(key: TerrainTileKey, options: { size?: num
     heights: new Float32Array(size * size).fill(height),
     minHeight: height,
     maxHeight: height,
+  };
+}
+
+export function createFlatTerrainProvider(height = 0): TerrainProvider {
+  return {
+    attribution: "Flat terrain",
+    getTile: async (key) => createFlatTerrainTile(key, { height }),
+    sampleHeight: () => height,
   };
 }

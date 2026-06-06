@@ -761,6 +761,7 @@ Step:
 - calcolare normali terrain
 - drapare imagery sopra terrain
 - implementare picking terrain
+- aggiungere camera clearance configurabile su ellissoide come fallback terrain-ready
 - aggiungere collisione camera-terrain base
 - introdurre cache CPU/GPU per terrain tile
 
