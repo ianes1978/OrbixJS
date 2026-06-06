@@ -52,7 +52,7 @@ app.innerHTML = `
               Model
             </button>
             <button id="terrain-toggle" class="debug-toggle" type="button" aria-pressed="false">
-              Terrain
+              Synthetic relief
             </button>
           </section>
           <section class="control-section" aria-label="Tempo">
@@ -424,7 +424,7 @@ if (terrainDebugEnabled) {
     proceduralTerrainVisible = !proceduralTerrainVisible;
     viewer.setTerrainProvider(proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined);
     terrainToggleElement.setAttribute("aria-pressed", String(proceduralTerrainVisible));
-    terrainToggleElement.textContent = proceduralTerrainVisible ? "Terrain ON" : "Terrain";
+    terrainToggleElement.textContent = proceduralTerrainVisible ? "Synthetic relief ON" : "Synthetic relief";
   });
 }
 

@@ -13,7 +13,7 @@ export function createProceduralTerrainProvider(options: ProceduralTerrainProvid
   const tiling = new WebMercatorTilingScheme(22, size);
 
   return {
-    attribution: "Procedural demo terrain",
+    attribution: "Synthetic debug relief",
     getTile: async (key) => createProceduralTerrainTile(key, { size, maxHeight, tiling }),
     sampleHeight: (lon, lat) => proceduralTerrainHeight(lon, lat, maxHeight),
   };
@@ -57,8 +57,7 @@ function proceduralTerrainHeight(lon: number, lat: number, maxHeight: number): n
   const himalaya = ridge(lon, lat, 1.47, 0.5, 0.55, 0.1);
   const rockies = ridge(lon, lat, -1.9, 0.68, 0.5, 0.13);
   const andes = ridge(lon, lat, -1.2, -0.35, 0.18, 0.75);
-  const waves = Math.max(0, Math.sin(lon * 18 + lat * 7) * Math.cos(lat * 13) * 0.18);
-  const height = maxHeight * Math.min(1, alps * 0.82 + himalaya + rockies * 0.72 + andes * 0.9 + waves);
+  const height = maxHeight * Math.min(1, alps * 0.82 + himalaya + rockies * 0.72 + andes * 0.9);
 
   return Math.max(0, height);
 }
