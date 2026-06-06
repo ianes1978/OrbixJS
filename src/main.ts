@@ -314,7 +314,9 @@ const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
 const imageryStatusElement = imageryStatus;
 const cameraStatusElement = cameraStatus;
-const rendererBackend = new URLSearchParams(window.location.search).get("renderer") === "webgpu" ? "webgpu" : "webgl2";
+const urlParams = new URLSearchParams(window.location.search);
+const rendererBackend = urlParams.get("renderer") === "webgpu" ? "webgpu" : "webgl2";
+const terrainDebugEnabled = urlParams.get("debugTerrain") === "1" || urlParams.get("terrain") === "1";
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -415,12 +417,16 @@ modelToggle.addEventListener("click", () => {
 });
 
 let proceduralTerrainVisible = false;
-terrainToggleElement.addEventListener("click", () => {
-  proceduralTerrainVisible = !proceduralTerrainVisible;
-  viewer.setTerrainProvider(proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined);
-  terrainToggleElement.setAttribute("aria-pressed", String(proceduralTerrainVisible));
-  terrainToggleElement.textContent = proceduralTerrainVisible ? "Terrain ON" : "Terrain";
-});
+terrainToggleElement.hidden = !terrainDebugEnabled;
+terrainToggleElement.disabled = !terrainDebugEnabled;
+if (terrainDebugEnabled) {
+  terrainToggleElement.addEventListener("click", () => {
+    proceduralTerrainVisible = !proceduralTerrainVisible;
+    viewer.setTerrainProvider(proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined);
+    terrainToggleElement.setAttribute("aria-pressed", String(proceduralTerrainVisible));
+    terrainToggleElement.textContent = proceduralTerrainVisible ? "Terrain ON" : "Terrain";
+  });
+}
 
 rendererToggleElement.addEventListener("click", () => {
   const next = viewer.renderer.backend === "webgpu" ? "webgl2" : "webgpu";
