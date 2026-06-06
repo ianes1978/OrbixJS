@@ -2,13 +2,13 @@
   "schemaVersion": "0.1",
   "jobs": [
     {
-      "id": "south-tyrol-dtm-25m-heightmap",
+      "id": "south-tyrol-dtm-5m-heightmap",
       "type": "terrain-heightmap",
-      "title": "South Tyrol DTM 2.5m runtime terrain candidate",
+      "title": "South Tyrol DTM 5m runtime terrain candidate",
       "inputs": [
         {
           "id": "civis-dtm-layer-json",
-          "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json",
+          "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json",
           "format": "civis-layer-json",
           "crs": "EPSG:25832"
         }
@@ -16,7 +16,7 @@
       "outputs": [
         {
           "id": "orbix-heightmap-manifest",
-          "url": "terrain/south-tyrol-dtm-25m/manifest.json",
+          "url": "terrain/south-tyrol-dtm-5m/manifest.json",
           "format": "orbix-heightmap-manifest",
           "crs": "EPSG:25832",
           "tileMatrixSet": "EPSG_25832"

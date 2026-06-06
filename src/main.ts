@@ -598,7 +598,7 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
 
   const preprocessManifest = await loadPreprocessManifest(demoAssetUrl(preprocessManifestUrl));
   const job =
-    findPreprocessJob(preprocessManifest, "south-tyrol-dtm-25m-heightmap") ??
+    findPreprocessJob(preprocessManifest, "south-tyrol-dtm-5m-heightmap") ??
     preprocessManifest.jobs.find((entry) => entry.type === "terrain-heightmap");
   const output = job?.outputs.find((artifact) => artifact.format === "orbix-heightmap-manifest");
 

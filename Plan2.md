@@ -524,12 +524,12 @@ La demo pubblica deve avere un focus geografico chiaro: Alto Adige/Südtirol. Qu
 
 Dataset iniziale:
 
-- Modello Digitale del Terreno dell'Alto Adige (DTM 2,5m)
-- layer: `p_bz-Elevation:DigitalTerrainModel-2.5m`
+- Modello Digitale del Terreno dell'Alto Adige (DTM 5m)
+- layer: `p_bz-Elevation:DigitalTerrainModel-5m`
 - licenza open data CC0 indicata dal portale dati
 - risorse ufficiali WMS/WCS da GeoServer CIVIS
 - tile sperimentali indicati da:
-  `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json`
+  `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json`
 
 Basemap demo candidata:
 
@@ -762,7 +762,7 @@ Criterio di uscita:
 
 Obiettivo: passare da ellissoide texturizzato a superficie terrestre 3D.
 
-Sorgente terrain reale primaria per la demo: DTM 2,5 m Alto Adige della Provincia autonoma di Bolzano/Bozen, licenza Creative Commons CCZero, CRS sorgente EPSG:25832. Il `Synthetic relief` resta solo un debug opt-in per verificare pipeline mesh/rendering e non deve essere interpretato come terrain geografico reale.
+Sorgente terrain reale primaria per la demo: DTM 5 m Alto Adige della Provincia autonoma di Bolzano/Bozen, licenza Creative Commons CCZero, CRS sorgente EPSG:25832. Il `Synthetic relief` resta solo un debug opt-in per verificare pipeline mesh/rendering e non deve essere interpretato come terrain geografico reale.
 
 Step:
 
@@ -1435,8 +1435,8 @@ Mitigazione: esportare in coordinate locali rispetto a un'origine georeferenziat
 - EPSG Geodetic Parameter Dataset: `https://epsg.org/`
 - PROJ coordinate transformation library: `https://proj.org/`
 - OGC Cloud Optimized GeoTIFF: `https://www.ogc.org/announcement/cloud-optimized-geotiff-cog-published-as-official-ogc-standard/`
-- DTM 2,5m Alto Adige dataset: `https://data.civis.bz.it/it/dataset/modello-digitale-del-terreno-dtm-25m`
-- DTM 2,5m Alto Adige tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json`
+- DTM Alto Adige dataset/open data: `https://data.civis.bz.it/it/dataset/modello-digitale-del-terreno-dtm-25m`
+- DTM 5m Alto Adige tile sperimentali: `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json`
 - Orthofoto 2023 Alto Adige WMTS: `https://geoservices.buergernetz.bz.it/mapproxy/p_bz-Orthoimagery/ows`, layer `Aerial-2023-RGB`, matrix set `EPSG_25832`, CRS `EPSG:25832`
 - OGC CityGML: `https://www.ogc.org/standards/citygml/`
 - OGC SensorThings API: `https://www.ogc.org/publications/standard/sensorthings/`

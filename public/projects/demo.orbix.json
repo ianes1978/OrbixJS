@@ -57,7 +57,7 @@
     {
       "id": "south-tyrol-terrain-candidate",
       "type": "terrain-heightmap",
-      "source": "south-tyrol-dtm-25m",
+      "source": "south-tyrol-dtm-5m",
       "visible": false
     }
   ]

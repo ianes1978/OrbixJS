@@ -21,10 +21,10 @@
       "crs": "EPSG:4326"
     },
     {
-      "id": "south-tyrol-dtm-25m",
+      "id": "south-tyrol-dtm-5m",
       "type": "terrain-heightmap",
-      "title": "South Tyrol DTM 2.5m candidate",
-      "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-2_5m/layer.json",
+      "title": "South Tyrol DTM 5m candidate",
+      "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json",
       "crs": "EPSG:25832",
       "preprocessManifestUrl": "preprocess/demo-preprocess.json",
       "attribution": "Autonomous Province of Bolzano/Bozen",
