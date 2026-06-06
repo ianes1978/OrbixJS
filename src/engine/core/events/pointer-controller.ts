@@ -63,9 +63,10 @@ export class PointerController {
     const deltaY = event.clientY - this.lastY;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
+    const dragScale = this.camera.dragSensitivityScale();
 
     if (event.altKey) {
-      this.camera.tilt(deltaY * 0.005);
+      this.camera.tilt(deltaY * 0.005 * dragScale);
       return;
     }
 
@@ -74,7 +75,7 @@ export class PointerController {
       return;
     }
 
-    const sensitivity = 0.006 * this.camera.dragSensitivityScale();
+    const sensitivity = 0.006 * dragScale;
     this.camera.orbit(-deltaX * sensitivity, deltaY * sensitivity);
   };
 

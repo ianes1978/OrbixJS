@@ -12,15 +12,17 @@ import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
 import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./loaders/tiles3d/tileset";
 import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
+import { type QuadtreeTile } from "./globe/imagery/quadtree-tile";
 import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 import { WebGPURenderer } from "./renderer/webgpu/webgpu-renderer";
+import { type RendererBackend } from "./renderer/interface/renderer";
 
 export type GeoViewerOptions = {
   container: HTMLElement | string;
-  renderer?: "webgl2" | "webgpu";
+  renderer?: RendererBackend;
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -60,18 +62,32 @@ export type GeoViewerTilesetOptions = {
   id?: string;
 };
 
+type DebugModelMesh = {
+  positions: Float32Array;
+  texcoords?: Float32Array;
+  indices?: Uint16Array | Uint32Array;
+  lon: number;
+  lat: number;
+  height?: number;
+  scale?: number;
+  baseColorFactor?: [number, number, number, number];
+  baseColorTexture?: TexImageSource;
+};
+
 export class GeoViewer {
-  readonly canvas: HTMLCanvasElement;
+  canvas: HTMLCanvasElement;
   readonly scene = new Scene();
   readonly camera = new OrbitCamera();
   renderer: WebGL2Renderer | WebGPURenderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
+  private readonly container: HTMLElement;
   private readonly imageryTiling = new WebMercatorTilingScheme();
-  private readonly controller: PointerController;
+  private controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
   private readonly onTilesetStatsCallback?: GeoViewerOptions["onTilesetStats"];
   private debugTileOverlay = false;
+  private coastlineOverlayVisible = false;
   private debugModelVisible = false;
   private debugModelPickSphere:
     | {
@@ -90,6 +106,10 @@ export class GeoViewer {
       }
     | undefined;
   private lastActiveTileIds: string[] = [];
+  private currentImageryTexture: TexImageSource | undefined;
+  private readonly currentTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
+  private vectorLines: readonly (readonly [number, number])[][] | undefined;
+  private debugModelMesh: DebugModelMesh | undefined;
   private frame = 0;
   private disposed = false;
   private date: Date;
@@ -106,15 +126,14 @@ export class GeoViewer {
       throw new Error("GeoViewer container not found");
     }
 
+    this.container = container;
+
     if (options.renderer && options.renderer !== "webgl2" && options.renderer !== "webgpu") {
       throw new Error(`Unsupported renderer: ${options.renderer}`);
     }
 
-    this.canvas = document.createElement("canvas");
-    this.canvas.className = "geo-canvas";
-    this.canvas.setAttribute("aria-label", "OrbixJS WGS84 globe");
-    container.append(this.canvas);
-
+    this.canvas = this.createCanvas();
+    this.container.append(this.canvas);
     this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
     if (this.renderer instanceof WebGPURenderer) {
       void this.renderer
@@ -140,6 +159,7 @@ export class GeoViewer {
     this.renderer.setSunDirection(sunDirectionFromDate(this.date));
     this.imagery = new ImageryLayerCollection({
       onTextureReady: (texture) => {
+        this.currentImageryTexture = texture.image;
         try {
           this.renderer.setImagery(texture.image);
         } catch (error) {
@@ -148,6 +168,8 @@ export class GeoViewer {
         }
       },
       onTileReady: (tile, image) => {
+        this.currentTileImages.set(tile.id, { tile, image });
+        this.trimTileImageCache();
         try {
           this.renderer.setImageryTile(tile, image);
         } catch (error) {
@@ -183,12 +205,54 @@ export class GeoViewer {
   }
 
   setCoastlineOverlay(enabled: boolean): void {
+    this.coastlineOverlayVisible = enabled;
     this.renderer.setVectorLinesVisible(enabled);
   }
 
   setDebugModelVisible(enabled: boolean): void {
     this.debugModelVisible = enabled;
     this.renderer.setDebugModelVisible(enabled);
+  }
+
+  async setRendererBackend(backend: RendererBackend): Promise<void> {
+    if (this.renderer.backend === backend && !(this.renderer instanceof WebGPURenderer && !this.renderer.ready)) {
+      return;
+    }
+
+    this.controller.destroy();
+    this.renderer.destroy();
+    this.replaceCanvas();
+    this.renderer = backend === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
+    this.controller = new PointerController(this.canvas, this.camera);
+    this.rehydrateRenderer();
+
+    if (this.renderer instanceof WebGPURenderer) {
+      const renderer = this.renderer;
+
+      try {
+        const initialized = await renderer.initialize();
+
+        if (this.renderer !== renderer || this.disposed) {
+          renderer.destroy();
+          return;
+        }
+
+        if (!initialized) {
+          this.fallbackToWebGL2("WebGPU initialization returned false");
+          return;
+        }
+
+        this.rehydrateRenderer();
+      } catch (error: unknown) {
+        if (this.renderer === renderer) {
+          console.warn("WebGPU initialization failed", error);
+          this.fallbackToWebGL2(error);
+        }
+        return;
+      }
+    }
+
+    this.dispatchRendererChanged();
   }
 
   setDate(date: Date): void {
@@ -200,17 +264,8 @@ export class GeoViewer {
     return new Date(this.date);
   }
 
-  setDebugModelMesh(mesh: {
-    positions: Float32Array;
-    texcoords?: Float32Array;
-    indices?: Uint16Array | Uint32Array;
-    lon: number;
-    lat: number;
-    height?: number;
-    scale?: number;
-    baseColorFactor?: [number, number, number, number];
-    baseColorTexture?: TexImageSource;
-  }): void {
+  setDebugModelMesh(mesh: DebugModelMesh): void {
+    this.debugModelMesh = mesh;
     this.renderer.setDebugModelMesh(mesh);
   }
 
@@ -331,7 +386,8 @@ export class GeoViewer {
     }
 
     const topology = await response.json();
-    this.renderer.setVectorLines(decodeTopoJsonLand(topology));
+    this.vectorLines = decodeTopoJsonLand(topology);
+    this.renderer.setVectorLines(this.vectorLines);
   }
 
   private start(): void {
@@ -371,22 +427,27 @@ export class GeoViewer {
     }
 
     console.warn("Falling back to WebGL2 renderer", reason);
+    this.controller.destroy();
     this.renderer.destroy();
+    this.replaceCanvas();
     this.renderer = new WebGL2Renderer(this.canvas);
-    this.renderer.setSunDirection(sunDirectionFromDate(this.date));
+    this.controller = new PointerController(this.canvas, this.camera);
+    this.rehydrateRenderer();
     this.dispatchRendererChanged();
   }
 
   private dispatchRendererChanged(): void {
-    this.canvas.dispatchEvent(
-      new CustomEvent("orbix:renderer-changed", {
-        detail: {
-          backend: this.renderer.backend,
-          supported: this.renderer.supported,
-          ready: this.renderer instanceof WebGPURenderer ? this.renderer.ready : true,
-        },
-      }),
-    );
+    const event = new CustomEvent("orbix:renderer-changed", {
+      bubbles: true,
+      detail: {
+        backend: this.renderer.backend,
+        supported: this.renderer.supported,
+        ready: this.renderer instanceof WebGPURenderer ? this.renderer.ready : true,
+        canvas: this.canvas,
+      },
+    });
+
+    this.canvas.dispatchEvent(event);
   }
 
   private onImageryStats(stats: Parameters<NonNullable<GeoViewerOptions["onImageryStats"]>>[0]): void {
@@ -473,6 +534,57 @@ export class GeoViewer {
     }
 
     this.renderer.setActiveImageryTiles(tileIds);
+  }
+
+  private rehydrateRenderer(): void {
+    this.renderer.setSunDirection(sunDirectionFromDate(this.date));
+
+    if (this.currentImageryTexture) {
+      this.renderer.setImagery(this.currentImageryTexture);
+    }
+
+    for (const { tile, image } of this.currentTileImages.values()) {
+      this.renderer.setImageryTile(tile, image);
+    }
+
+    if (this.vectorLines) {
+      this.renderer.setVectorLines(this.vectorLines);
+      this.renderer.setVectorLinesVisible(this.coastlineOverlayVisible);
+    }
+
+    if (this.debugModelMesh) {
+      this.renderer.setDebugModelMesh(this.debugModelMesh);
+      this.renderer.setDebugModelVisible(this.debugModelVisible);
+    }
+
+    this.syncDebugTileOverlay();
+  }
+
+  private createCanvas(): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+
+    canvas.className = "geo-canvas";
+    canvas.setAttribute("aria-label", "OrbixJS WGS84 globe");
+    return canvas;
+  }
+
+  private replaceCanvas(): void {
+    const canvas = this.createCanvas();
+
+    this.canvas.replaceWith(canvas);
+    this.canvas = canvas;
+  }
+
+  private trimTileImageCache(maxEntries = 256): void {
+    while (this.currentTileImages.size > maxEntries) {
+      const first = this.currentTileImages.keys().next().value;
+
+      if (!first) {
+        return;
+      }
+
+      this.currentTileImages.delete(first);
+    }
   }
 
   private centerViewCartographic(): [number, number, number] | undefined {

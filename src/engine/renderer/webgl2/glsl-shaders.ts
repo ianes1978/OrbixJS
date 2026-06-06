@@ -52,7 +52,7 @@ void main() {
   float meridian = smoothstep(0.985, 1.0, abs(sin(atan(geo.z, geo.x) * 12.0)));
   float parallel = smoothstep(0.985, 1.0, abs(sin(asin(geo.y) * 12.0)));
   float line = max(meridian, parallel) * 0.18;
-  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
+  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 3.2);
   vec3 neutralBase = mix(ocean, land, landMask * 0.18);
   vec3 imagery = texture(uImagery, vImageryUv).rgb;
   float polarMask = smoothstep(0.965, 0.998, abs(geo.y));
@@ -61,7 +61,7 @@ void main() {
   vec3 polar = geo.y > 0.0 ? polarNorth : polarSouth;
   vec3 imagerySurface = mix(imagery, polar, polarMask);
   vec3 surface = uImageryEnabled ? imagerySurface : mix(base, grid, line);
-  vec3 color = surface * (0.28 + diffuse * 0.85) + rim * vec3(0.28, 0.72, 0.9);
+  vec3 color = surface * (0.28 + diffuse * 0.85) + rim * vec3(0.055, 0.13, 0.16);
   outColor = vec4(color, 1.0);
 }
 `;
@@ -104,9 +104,9 @@ void main() {
   vec3 normal = normalize(vNormal);
   vec3 light = normalize(uSunDirection);
   float diffuse = max(dot(normal, light), 0.0);
-  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 2.0);
+  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 3.2);
   vec3 imagery = texture(uImagery, vUv).rgb;
-  vec3 color = imagery * (0.42 + diffuse * 0.72) + rim * vec3(0.18, 0.45, 0.55);
+  vec3 color = imagery * (0.42 + diffuse * 0.72) + rim * vec3(0.035, 0.09, 0.11);
   float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
   float edgeFade = smoothstep(0.0, 0.025, edgeDistance);
   outColor = vec4(color, 0.86 * edgeFade);

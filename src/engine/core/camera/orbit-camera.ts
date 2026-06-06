@@ -44,7 +44,7 @@ export class OrbitCamera {
 
   dragSensitivityScale(): number {
     const normalizedAltitude = (this.distance - this.minDistance) / (3.2 - this.minDistance);
-    return clamp(normalizedAltitude, 0.04, 1);
+    return clamp(0.008 + Math.pow(clamp(normalizedAltitude, 0, 1), 2.4) * 0.992, 0.008, 1);
   }
 
   zoom(delta: number): void {
@@ -63,7 +63,7 @@ export class OrbitCamera {
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
     const altitude = Math.max(this.distance - 1, this.minDistance - 1);
     const normalizedAltitude = clamp(altitude / 2.2, 0, 1);
-    const distanceScale = 0.000004 + Math.pow(normalizedAltitude, 1.7) * 0.008;
+    const distanceScale = 0.0000006 + Math.pow(normalizedAltitude, 2.3) * 0.008;
     const movement = add(scale(right, deltaX * distanceScale), scale(up, deltaY * distanceScale));
     const nextTarget = add(this.target, movement);
     const targetLimit = 0.85;

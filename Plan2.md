@@ -839,12 +839,13 @@ Step 2: editing session
 
 Step 3: strumenti interattivi
 
+- definire `SelectionTool`, `SelectionSet` e stato di selezione per feature, vertici, segmenti, facce e oggetti derivati
+- supportare hover highlight, selezione singola, multipla, box/lasso e selezione gerarchica layer -> feature -> sub-elemento
 - tool punto, linea, poligono, rettangolo, cerchio e volume
 - tool move, rotate, scale, extrude, reshape e vertex edit
 - snapping a vertex, edge, midpoint, grid, terrain e 3D Tiles
 - guide visuali, maniglie, gizmo 3D e misure live
 - vincoli: altezza, distanza, angolo, ortogonalita, clamp to terrain
-- selezione singola, multipla, box/lasso e gerarchica
 
 Step 4: modellazione parametrica da metadata
 
@@ -1203,7 +1204,7 @@ Criterio di uscita:
 | 9 | Terrain Alto Adige | DTM 2,5m, mesh terrain, picking quota |
 | 10 | OGC 3D Tiles base | Tileset reali con SSE e culling |
 | 11 | Primitives, data layers e compositing | Point, polyline, polygon, label, GeoJSON, visibilita/opacita/blend mode |
-| 12 | GIS editing e modellazione parametrica | Feature model, editing session, extrusion/rules da metadata, snapping, undo/redo |
+| 12 | GIS editing e modellazione parametrica | Feature model, selection tools, editing session, extrusion/rules da metadata, snapping, undo/redo |
 | 13 | Digital Twin runtime | Twin assets, metadata, sensors, time-series |
 | 14 | Weather engine | WeatherProvider, vento particellare, cloud layer |
 | 15 | PBR e luci | Pipeline colore, sole, IBL, materiali |
@@ -1235,11 +1236,12 @@ La prossima sequenza migliore e:
 14. progettare `LayerState` e `LayerStyle` comuni con `visible`, `opacity`, `blendMode`, `zIndex`, color controls e compositing pass
 15. progettare `Primitive` e `Entity` come layer separati, non come cuore del renderer
 16. progettare `FeatureLayer` e `EditingSession`
-17. progettare `ParametricFeatureRule` per estrusione, sweep, roof, instancing e mesh derivate dai metadata
-18. progettare `DigitalTwinScene` e mapping asset/metadata/sensori
-19. progettare `WeatherProvider` e formato interno per vector field vento
-20. mantenere camera, materiali, metadata, timeline e coordinate locali esportabili in futuro
-21. mantenere la demo sempre pubblicabile da GitHub Pages
+17. progettare `SelectionTool`, `SelectionSet`, hover highlight, selezione multipla, box/lasso e target sub-feature per editing
+18. progettare `ParametricFeatureRule` per estrusione, sweep, roof, instancing e mesh derivate dai metadata
+19. progettare `DigitalTwinScene` e mapping asset/metadata/sensori
+20. progettare `WeatherProvider` e formato interno per vector field vento
+21. mantenere camera, materiali, metadata, timeline e coordinate locali esportabili in futuro
+22. mantenere la demo sempre pubblicabile da GitHub Pages
 
 Questa sequenza non congela il prodotto: costruisce le fondamenta per WebGPU, terrain e rendering avanzato.
 

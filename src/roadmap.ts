@@ -117,6 +117,7 @@ export const roadmap: RoadmapPhase[] = [
     title: "GIS editing",
     items: [
       { label: "Feature model", done: false },
+      { label: "Selezione feature", done: false },
       { label: "EditingSession", done: false },
       { label: "Undo/redo", done: false },
       { label: "Snapping e gizmo", done: false },

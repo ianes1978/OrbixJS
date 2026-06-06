@@ -29,6 +29,9 @@ app.innerHTML = `
           <span>Renderer</span>
           <strong id="renderer-status">WebGL2</strong>
         </div>
+        <button id="renderer-toggle" class="debug-toggle" type="button" aria-pressed="false">
+          WebGPU
+        </button>
         <div class="metric">
           <span>Imagery</span>
           <strong id="imagery-status">Ortofoto</strong>
@@ -49,8 +52,8 @@ app.innerHTML = `
           <span>Data sole</span>
           <input id="scene-date" type="datetime-local" value="2026-06-05T12:00" />
         </label>
-        <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
-          LOD overlay
+        <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="true">
+          LOD ON
         </button>
         <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
           Coastline
@@ -90,6 +93,7 @@ const list = document.querySelector<HTMLOListElement>("#roadmap");
 const overallProgress = document.querySelector<HTMLElement>("#overall-progress");
 const overallBar = document.querySelector<HTMLElement>("#overall-bar");
 const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
+const rendererToggle = document.querySelector<HTMLButtonElement>("#renderer-toggle");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
 const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
@@ -107,6 +111,7 @@ if (
   !overallProgress ||
   !overallBar ||
   !rendererStatus ||
+  !rendererToggle ||
   !imageryStatus ||
   !tileStatus ||
   !tiles3dStatus ||
@@ -122,6 +127,7 @@ if (
   throw new Error("Missing progress UI element");
 }
 
+const rendererToggleElement = rendererToggle;
 const completed = roadmap.reduce(
   (total, phase) => total + phase.items.filter((item) => item.done).length,
   0,
@@ -191,11 +197,14 @@ rendererStatus.textContent = viewer.renderer.supported
   ? `${viewer.renderer.backend === "webgpu" ? "WebGPU init" : "WebGL2"} attivo`
   : `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} non disponibile`;
 imageryStatus.textContent = "Ortofoto";
+syncRendererToggle();
 
-viewer.canvas.addEventListener("orbix:renderer-changed", (event) => {
+globeHost.addEventListener("orbix:renderer-changed", (event) => {
   const detail = (event as CustomEvent<{ backend: "webgl2" | "webgpu"; supported: boolean; ready: boolean }>).detail;
   const label = detail.backend === "webgpu" ? "WebGPU" : "WebGL2";
   rendererStatus.textContent = detail.supported && detail.ready ? `${label} attivo` : `${label} non disponibile`;
+  bindCanvasPicking();
+  syncRendererToggle();
 });
 
 sceneDateInput.addEventListener("change", () => {
@@ -212,7 +221,8 @@ viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110
   coastlineToggle.disabled = true;
 });
 
-let debugTileOverlay = false;
+let debugTileOverlay = true;
+viewer.setDebugTileOverlay(debugTileOverlay);
 tileDebugToggle.addEventListener("click", () => {
   debugTileOverlay = !debugTileOverlay;
   viewer.setDebugTileOverlay(debugTileOverlay);
@@ -234,6 +244,24 @@ modelToggle.addEventListener("click", () => {
   viewer.setDebugModelVisible(debugModelVisible);
   modelToggle.setAttribute("aria-pressed", String(debugModelVisible));
   modelToggle.textContent = debugModelVisible ? "Model ON" : "Model";
+});
+
+rendererToggleElement.addEventListener("click", () => {
+  const next = viewer.renderer.backend === "webgpu" ? "webgl2" : "webgpu";
+  const label = next === "webgpu" ? "WebGPU" : "WebGL2";
+
+  rendererToggleElement.disabled = true;
+  rendererStatus.textContent = `${label} init`;
+  void viewer
+    .setRendererBackend(next)
+    .catch((error: unknown) => {
+      console.warn("Renderer switch failed", error);
+    })
+    .finally(() => {
+      updateRendererUrl(viewer.renderer.backend);
+      syncRendererToggle();
+      rendererToggleElement.disabled = false;
+    });
 });
 
 mobileControlsToggle.addEventListener("click", () => {
@@ -259,11 +287,14 @@ flyPresetButtons.forEach((button) => {
   });
 });
 
+let activePickingCanvas: HTMLCanvasElement | undefined;
 let pickStart: { x: number; y: number } | undefined;
-viewer.canvas.addEventListener("pointerdown", (event) => {
+
+const handlePickPointerDown = (event: PointerEvent) => {
   pickStart = { x: event.clientX, y: event.clientY };
-});
-viewer.canvas.addEventListener("pointerup", (event) => {
+};
+
+const handlePickPointerUp = (event: PointerEvent) => {
   if (!pickStart || event.altKey || event.shiftKey) {
     return;
   }
@@ -277,7 +308,7 @@ viewer.canvas.addEventListener("pointerup", (event) => {
 
   if (debugModelVisible) {
     const hit = viewer.pick({ clientX: event.clientX, clientY: event.clientY });
-    viewer.canvas.dispatchEvent(new CustomEvent("orbix:pick", { detail: hit }));
+    viewer.canvas.dispatchEvent(new CustomEvent("orbix:pick", { detail: hit, bubbles: true }));
 
     if (!hit) {
       pickingStatusElement.textContent = "nessun hit";
@@ -294,7 +325,9 @@ viewer.canvas.addEventListener("pointerup", (event) => {
   }
 
   const globe = viewer.pickGlobe(event.clientX, event.clientY);
-  viewer.canvas.dispatchEvent(new CustomEvent("orbix:pick", { detail: globe ? { type: "globe" as const, ...globe } : undefined }));
+  viewer.canvas.dispatchEvent(
+    new CustomEvent("orbix:pick", { detail: globe ? { type: "globe" as const, ...globe } : undefined, bubbles: true }),
+  );
 
   if (!globe) {
     pickingStatusElement.textContent = "nessun hit";
@@ -302,7 +335,9 @@ viewer.canvas.addEventListener("pointerup", (event) => {
   }
 
   pickingStatusElement.textContent = `${toDegrees(globe.lat).toFixed(3)}, ${toDegrees(globe.lon).toFixed(3)}`;
-});
+};
+
+bindCanvasPicking();
 
 async function loadDemoProject(): Promise<void> {
   try {
@@ -356,6 +391,37 @@ function demoAssetUrl(path: string): string {
   }
 
   return `${import.meta.env.BASE_URL}${path.replace(/^\/+/u, "")}`;
+}
+
+function bindCanvasPicking(): void {
+  if (activePickingCanvas === viewer.canvas) {
+    return;
+  }
+
+  activePickingCanvas?.removeEventListener("pointerdown", handlePickPointerDown);
+  activePickingCanvas?.removeEventListener("pointerup", handlePickPointerUp);
+  activePickingCanvas = viewer.canvas;
+  activePickingCanvas.addEventListener("pointerdown", handlePickPointerDown);
+  activePickingCanvas.addEventListener("pointerup", handlePickPointerUp);
+}
+
+function syncRendererToggle(): void {
+  const isWebGpu = viewer.renderer.backend === "webgpu";
+
+  rendererToggleElement.setAttribute("aria-pressed", String(isWebGpu));
+  rendererToggleElement.textContent = isWebGpu ? "WebGL2" : "WebGPU";
+}
+
+function updateRendererUrl(backend: "webgl2" | "webgpu"): void {
+  const url = new URL(window.location.href);
+
+  if (backend === "webgpu") {
+    url.searchParams.set("renderer", "webgpu");
+  } else {
+    url.searchParams.delete("renderer");
+  }
+
+  window.history.replaceState(null, "", url);
 }
 
 function toDegrees(value: number): number {
