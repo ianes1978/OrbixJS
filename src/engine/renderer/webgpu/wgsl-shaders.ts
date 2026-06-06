@@ -14,8 +14,7 @@ struct VertexOutput {
 
 struct GlobeUniforms {
   viewProjection: mat4x4<f32>,
-  imageryReady: f32,
-  _padding0: vec3<f32>,
+  imageryState: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -49,8 +48,7 @@ export const webGpuGlobeFragmentShader = createShaderSource({
   source: `
 struct GlobeUniforms {
   viewProjection: mat4x4<f32>,
-  imageryReady: f32,
-  _padding0: vec3<f32>,
+  imageryState: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -72,7 +70,7 @@ fn main(@location(0) normal: vec3<f32>, @location(1) uv: vec2<f32>) -> @location
   let polar = select(vec3<f32>(0.72, 0.86, 0.90), vec3<f32>(0.82, 0.93, 0.94), normal.y > 0.0);
   let surface = mix(procedural, polar, polarMask);
   let imagery = textureSample(uImagery, uImagerySampler, uv).rgb;
-  let baseColor = mix(surface, imagery, uUniforms.imageryReady);
+  let baseColor = mix(surface, imagery, uUniforms.imageryState.x);
   return vec4<f32>(baseColor * (0.48 + diffuse * 0.72), 1.0);
 }
 `,

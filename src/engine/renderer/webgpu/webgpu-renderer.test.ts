@@ -43,7 +43,7 @@ describe("WebGPURenderer", () => {
       label: "OrbixJS WebGPU imagery texture",
       size: [1, 1],
       format: "rgba8unorm",
-      usage: 6,
+      usage: 22,
     });
     expect(device.createSampler).toHaveBeenCalledWith({
       label: "OrbixJS WebGPU imagery sampler",
@@ -117,7 +117,7 @@ describe("WebGPURenderer", () => {
       label: "OrbixJS WebGPU imagery texture",
       size: [512, 256],
       format: "rgba8unorm",
-      usage: 6,
+      usage: 22,
     });
     expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
       { source: image },

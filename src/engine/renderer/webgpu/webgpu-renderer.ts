@@ -587,7 +587,7 @@ export class WebGPURenderer implements Renderer {
       label: "OrbixJS WebGPU imagery texture",
       size: [size[0], size[1]],
       format: webGpuImageryFormat,
-      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
+      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst | webGpuTextureUsage.renderAttachment,
     });
     this.imageryTextureSize = [size[0], size[1]];
     this.createGlobeBindGroup();
