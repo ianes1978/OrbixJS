@@ -762,6 +762,8 @@ Criterio di uscita:
 
 Obiettivo: passare da ellissoide texturizzato a superficie terrestre 3D.
 
+Sorgente terrain reale primaria per la demo: DTM 2,5 m Alto Adige della Provincia autonoma di Bolzano/Bozen, licenza Creative Commons CCZero, CRS sorgente EPSG:25832. Il `Synthetic relief` resta solo un debug opt-in per verificare pipeline mesh/rendering e non deve essere interpretato come terrain geografico reale.
+
 Step:
 
 - definire `TerrainProvider`
