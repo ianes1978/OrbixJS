@@ -119,6 +119,8 @@ describe("OrbitCamera", () => {
     expect(snapshot.yaw).toBe(0.7);
     expect(snapshot.pitch).toBe(-0.2);
     expect(snapshot.tiltOffset).toBe(0.3);
+    expect(snapshot.minTilt).toBeCloseTo(-Math.PI * 2);
+    expect(snapshot.maxTilt).toBeCloseTo(Math.PI * 2);
   });
 
   it("restores a camera snapshot", () => {
@@ -176,13 +178,51 @@ describe("OrbitCamera", () => {
     expect(camera.viewMatrix()).not.toEqual(before);
   });
 
+  it("keeps a valid view matrix when tilting toward the sky", () => {
+    const camera = new OrbitCamera({ distance: 1.05, yaw: 0, pitch: 0 });
+
+    camera.tilt(Math.PI / 2);
+
+    expect([...camera.viewMatrix()].every(Number.isFinite)).toBe(true);
+    expect(camera.target).toEqual([0, 0, 0]);
+  });
+
   it("clamps and resets tilt", () => {
     const camera = new OrbitCamera();
 
     camera.tilt(10);
-    expect(camera.tiltOffset).toBe(1.4);
+    expect(camera.tiltOffset).toBe(Math.PI * 2);
 
     camera.flyTo({ lon: 12.5, lat: 42.5 });
     expect(camera.tiltOffset).toBe(0);
+  });
+
+  it("applies camera limits at runtime", () => {
+    const camera = new OrbitCamera({ distance: 3.2 });
+
+    camera.setLimits({
+      minDistance: 2,
+      maxDistance: 3,
+      minTilt: -0.5,
+      maxTilt: 0.5,
+      fov: (70 * Math.PI) / 180,
+    });
+    camera.tilt(10);
+    camera.zoom(-100);
+
+    expect(camera.minDistance).toBe(2);
+    expect(camera.maxDistance).toBe(3);
+    expect(camera.distance).toBeGreaterThanOrEqual(2);
+    expect(camera.tiltOffset).toBe(0.5);
+    expect(camera.fov).toBeCloseTo((70 * Math.PI) / 180);
+  });
+
+  it("allows the minimum camera distance to reach the ellipsoid surface", () => {
+    const camera = new OrbitCamera({ distance: 1.2, minDistance: 1, yaw: 0, pitch: 0 });
+
+    camera.zoom(-100);
+
+    expect(camera.distance).toBeCloseTo(1);
+    expect(camera.geocentricDistance).toBeCloseTo(1);
   });
 });

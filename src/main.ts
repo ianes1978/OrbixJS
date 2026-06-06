@@ -64,6 +64,29 @@ app.innerHTML = `
               <button data-fly-to="tokyo" type="button">Tokyo</button>
             </div>
           </section>
+          <section class="control-section" aria-label="Camera configuration">
+            <h2>Camera config</h2>
+            <label class="slider-control">
+              <span>Quota min <output data-camera-limit-value="minHeightMeters">0 m</output></span>
+              <input data-camera-limit="minHeightMeters" type="range" min="0" max="5000" step="1" value="0" />
+            </label>
+            <label class="slider-control">
+              <span>Quota max <output data-camera-limit-value="maxHeightMeters">57310 km</output></span>
+              <input data-camera-limit="maxHeightMeters" type="range" min="1000" max="120000000" step="1000" value="57310000" />
+            </label>
+            <label class="slider-control">
+              <span>Tilt min <output data-camera-limit-value="minTiltDeg">-360°</output></span>
+              <input data-camera-limit="minTiltDeg" type="range" min="-360" max="0" step="1" value="-360" />
+            </label>
+            <label class="slider-control">
+              <span>Tilt max <output data-camera-limit-value="maxTiltDeg">360°</output></span>
+              <input data-camera-limit="maxTiltDeg" type="range" min="0" max="360" step="1" value="360" />
+            </label>
+            <label class="slider-control">
+              <span>FOV <output data-camera-limit-value="fovDeg">45°</output></span>
+              <input data-camera-limit="fovDeg" type="range" min="15" max="90" step="1" value="45" />
+            </label>
+          </section>
           <section class="control-section" aria-label="Camera path">
             <h2>Camera path</h2>
             <div id="camera-paths" class="fly-presets path-presets" aria-label="Camera path presets"></div>
@@ -72,6 +95,9 @@ app.innerHTML = `
             </button>
             <button id="camera-snapshot-copy" class="debug-toggle compact-toggle" type="button">
               Copy camera
+            </button>
+            <button id="camera-keyframe-copy" class="debug-toggle compact-toggle" type="button">
+              Copy keyframe
             </button>
             <div class="metric compact-metric">
               <span>Stato path</span>
@@ -152,10 +178,13 @@ const infoToggle = document.querySelector<HTMLButtonElement>("#info-toggle");
 const infoPanel = document.querySelector<HTMLElement>("#info-panel");
 const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
+const cameraLimitInputs = document.querySelectorAll<HTMLInputElement>("[data-camera-limit]");
+const cameraLimitOutputs = document.querySelectorAll<HTMLOutputElement>("[data-camera-limit-value]");
 const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
 const cameraPathStop = document.querySelector<HTMLButtonElement>("#camera-path-stop");
 const cameraPathStatus = document.querySelector<HTMLElement>("#camera-path-status");
 const cameraSnapshotCopy = document.querySelector<HTMLButtonElement>("#camera-snapshot-copy");
+const cameraKeyframeCopy = document.querySelector<HTMLButtonElement>("#camera-keyframe-copy");
 const cameraSnapshotStatus = document.querySelector<HTMLElement>("#camera-snapshot-status");
 const cameraSnapshotOutput = document.querySelector<HTMLTextAreaElement>("#camera-snapshot-output");
 
@@ -177,10 +206,13 @@ if (
   !infoToggle ||
   !infoPanel ||
   !sceneDateInput ||
+  cameraLimitInputs.length === 0 ||
+  cameraLimitOutputs.length === 0 ||
   !cameraPathControls ||
   !cameraPathStop ||
   !cameraPathStatus ||
   !cameraSnapshotCopy ||
+  !cameraKeyframeCopy ||
   !cameraSnapshotStatus ||
   !cameraSnapshotOutput ||
   flyPresetButtons.length === 0
@@ -193,10 +225,13 @@ const menuToggleElement = mobileControlsToggle;
 const demoTocElement = hudControls;
 const infoToggleElement = infoToggle;
 const infoPanelElement = infoPanel;
+const cameraLimitInputElements = [...cameraLimitInputs];
+const cameraLimitOutputElements = [...cameraLimitOutputs];
 const cameraPathControlsElement = cameraPathControls;
 const cameraPathStopElement = cameraPathStop;
 const cameraPathStatusElement = cameraPathStatus;
 const cameraSnapshotCopyElement = cameraSnapshotCopy;
+const cameraKeyframeCopyElement = cameraKeyframeCopy;
 const cameraSnapshotStatusElement = cameraSnapshotStatus;
 const cameraSnapshotOutputElement = cameraSnapshotOutput;
 const compactLayout = window.matchMedia("(max-width: 920px)");
@@ -258,6 +293,14 @@ const rendererBackend = new URLSearchParams(window.location.search).get("rendere
 const viewer = new GeoViewer({
   container: globeHost,
   renderer: rendererBackend,
+  cameraLimits: {
+    minTilt: -Math.PI * 2,
+    maxTilt: Math.PI * 2,
+  },
+  cameraHeightLimits: {
+    minHeight: 0,
+    maxHeight: 57_310_000,
+  },
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
@@ -276,6 +319,13 @@ rendererStatus.textContent = viewer.renderer.supported
   : `${viewer.renderer.backend === "webgpu" ? "WebGPU" : "WebGL2"} non disponibile`;
 imageryStatus.textContent = "Ortofoto";
 syncRendererToggle();
+applyCameraLimitControls();
+
+cameraLimitInputElements.forEach((input) => {
+  input.addEventListener("input", () => {
+    applyCameraLimitControls();
+  });
+});
 
 globeHost.addEventListener("orbix:renderer-changed", (event) => {
   const detail = (event as CustomEvent<{ backend: "webgl2" | "webgpu"; supported: boolean; ready: boolean }>).detail;
@@ -379,6 +429,10 @@ cameraPathStopElement.addEventListener("click", () => {
 
 cameraSnapshotCopyElement.addEventListener("click", () => {
   void copyCameraSnapshot();
+});
+
+cameraKeyframeCopyElement.addEventListener("click", () => {
+  void copyCameraKeyframe();
 });
 
 let activePickingCanvas: HTMLCanvasElement | undefined;
@@ -556,19 +610,24 @@ function syncCameraPathButtons(): void {
 }
 
 async function copyCameraSnapshot(): Promise<void> {
-  const snapshot = viewer.cameraSnapshot();
-  const payload = JSON.stringify(snapshot, null, 2);
+  await copyCameraPayload(JSON.stringify(viewer.cameraSnapshot(), null, 2), cameraSnapshotCopyElement, "camera copiata");
+}
 
-  cameraSnapshotCopyElement.disabled = true;
+async function copyCameraKeyframe(): Promise<void> {
+  await copyCameraPayload(JSON.stringify(viewer.cameraKeyframe(), null, 2), cameraKeyframeCopyElement, "keyframe copiato");
+}
+
+async function copyCameraPayload(payload: string, button: HTMLButtonElement, successMessage: string): Promise<void> {
+  button.disabled = true;
   cameraSnapshotOutputElement.value = payload;
 
   if (await writeClipboardText(payload)) {
     cameraSnapshotOutputElement.hidden = true;
-    cameraSnapshotStatusElement.textContent = "copiata";
+    cameraSnapshotStatusElement.textContent = successMessage;
   } else {
     cameraSnapshotOutputElement.hidden = false;
     const copied = copySelectedSnapshotText();
-    cameraSnapshotStatusElement.textContent = copied ? "copiata fallback" : "JSON pronto";
+    cameraSnapshotStatusElement.textContent = copied ? `${successMessage} fallback` : "JSON pronto";
   }
 
   window.setTimeout(() => {
@@ -576,7 +635,7 @@ async function copyCameraSnapshot(): Promise<void> {
       cameraSnapshotStatusElement.textContent = "pronto";
     }
     window.setTimeout(() => {
-      cameraSnapshotCopyElement.disabled = false;
+      button.disabled = false;
     }, 0);
   }, 1600);
 }
@@ -605,6 +664,78 @@ function copySelectedSnapshotText(): boolean {
     console.warn("Camera snapshot fallback copy failed", error);
     return false;
   }
+}
+
+function applyCameraLimitControls(): void {
+  const minHeightMeters = cameraLimitValue("minHeightMeters");
+  const maxHeightMeters = Math.max(cameraLimitValue("maxHeightMeters"), minHeightMeters + 1);
+  const minTiltDeg = cameraLimitValue("minTiltDeg");
+  const maxTiltDeg = Math.max(cameraLimitValue("maxTiltDeg"), minTiltDeg);
+  const fovDeg = cameraLimitValue("fovDeg");
+
+  setCameraLimitInputValue("maxHeightMeters", maxHeightMeters);
+  setCameraLimitInputValue("maxTiltDeg", maxTiltDeg);
+  viewer.setCameraHeightLimits({
+    minHeight: minHeightMeters,
+    maxHeight: maxHeightMeters,
+  });
+  viewer.setCameraLimits({
+    minTilt: toRadians(minTiltDeg),
+    maxTilt: toRadians(maxTiltDeg),
+    fov: toRadians(fovDeg),
+  });
+  syncCameraLimitOutputs({
+    minHeightMeters,
+    maxHeightMeters,
+    minTiltDeg,
+    maxTiltDeg,
+    fovDeg,
+  });
+}
+
+function cameraLimitValue(key: string): number {
+  const input = cameraLimitInputElements.find((item) => item.dataset.cameraLimit === key);
+  const value = input ? Number(input.value) : Number.NaN;
+
+  return Number.isFinite(value) ? value : 0;
+}
+
+function setCameraLimitInputValue(key: string, value: number): void {
+  const input = cameraLimitInputElements.find((item) => item.dataset.cameraLimit === key);
+
+  if (input) {
+    input.value = String(value);
+  }
+}
+
+function syncCameraLimitOutputs(values: {
+  minHeightMeters: number;
+  maxHeightMeters: number;
+  minTiltDeg: number;
+  maxTiltDeg: number;
+  fovDeg: number;
+}): void {
+  setCameraLimitOutput("minHeightMeters", formatHeight(values.minHeightMeters));
+  setCameraLimitOutput("maxHeightMeters", formatHeight(values.maxHeightMeters));
+  setCameraLimitOutput("minTiltDeg", `${Math.round(values.minTiltDeg)}°`);
+  setCameraLimitOutput("maxTiltDeg", `${Math.round(values.maxTiltDeg)}°`);
+  setCameraLimitOutput("fovDeg", `${Math.round(values.fovDeg)}°`);
+}
+
+function setCameraLimitOutput(key: string, value: string): void {
+  const output = cameraLimitOutputElements.find((item) => item.dataset.cameraLimitValue === key);
+
+  if (output) {
+    output.textContent = value;
+  }
+}
+
+function formatHeight(value: number): string {
+  if (Math.abs(value) >= 10_000) {
+    return `${Math.round(value / 1000)} km`;
+  }
+
+  return `${Math.round(value)} m`;
 }
 
 function demoAssetUrl(path: string): string {
@@ -665,4 +796,8 @@ function updateRendererUrl(backend: "webgl2" | "webgpu"): void {
 
 function toDegrees(value: number): number {
   return (value * 180) / Math.PI;
+}
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
 }

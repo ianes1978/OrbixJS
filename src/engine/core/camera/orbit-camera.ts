@@ -8,11 +8,27 @@ export type CameraFlyToOptions = {
   height?: number;
 };
 
+export type CameraLimits = {
+  minDistance?: number;
+  maxDistance?: number;
+  minPitch?: number;
+  maxPitch?: number;
+  minTilt?: number;
+  maxTilt?: number;
+  fov?: number;
+  near?: number;
+  far?: number;
+};
+
 export type CameraSnapshot = {
   target: MutableVec3;
   distance: number;
   minDistance: number;
   maxDistance: number;
+  minPitch: number;
+  maxPitch: number;
+  minTilt: number;
+  maxTilt: number;
   yaw: number;
   pitch: number;
   tiltOffset: number;
@@ -25,11 +41,9 @@ export type CameraSnapshot = {
 export type OrbitCameraOptions = {
   target?: MutableVec3;
   distance?: number;
-  minDistance?: number;
-  maxDistance?: number;
   yaw?: number;
   pitch?: number;
-};
+} & CameraLimits;
 
 export type GrabbedPointMoveOptions = {
   strength?: number;
@@ -41,6 +55,10 @@ export class OrbitCamera {
   distance: number;
   minDistance: number;
   maxDistance: number;
+  minPitch = -1.42;
+  maxPitch = 1.42;
+  minTilt = -Math.PI * 2;
+  maxTilt = Math.PI * 2;
   yaw: number;
   pitch: number;
   tiltOffset = 0;
@@ -55,11 +73,12 @@ export class OrbitCamera {
     this.maxDistance = options.maxDistance ?? 10;
     this.yaw = options.yaw ?? -0.65;
     this.pitch = options.pitch ?? 0.35;
+    this.setLimits(options);
   }
 
   orbit(deltaX: number, deltaY: number): void {
     this.yaw += deltaX;
-    this.pitch = clamp(this.pitch + deltaY, -1.42, 1.42);
+    this.pitch = clamp(this.pitch + deltaY, this.minPitch, this.maxPitch);
     this.keepAboveSurface();
   }
 
@@ -89,7 +108,7 @@ export class OrbitCamera {
       this.maxDistance,
     );
     this.yaw = Math.atan2(nextDirection[0], nextDirection[2]);
-    this.pitch = clamp(Math.asin(nextDirection[1]), -1.42, 1.42);
+    this.pitch = clamp(Math.asin(nextDirection[1]), this.minPitch, this.maxPitch);
   }
 
   moveGrabbedPointToRay(point: Vec3, ray: Ray, options: GrabbedPointMoveOptions = {}): boolean {
@@ -144,7 +163,7 @@ export class OrbitCamera {
   }
 
   tilt(delta: number): void {
-    this.tiltOffset = clamp(this.tiltOffset + delta, -1.4, 1.4);
+    this.tiltOffset = clamp(this.tiltOffset + delta, this.minTilt, this.maxTilt);
   }
 
   pan(deltaX: number, deltaY: number): void {
@@ -178,7 +197,7 @@ export class OrbitCamera {
     ] as const;
 
     this.yaw = Math.atan2(direction[0], direction[2]);
-    this.pitch = clamp(Math.asin(direction[1]), -1.42, 1.42);
+    this.pitch = clamp(Math.asin(direction[1]), this.minPitch, this.maxPitch);
     this.tiltOffset = 0;
     this.target[0] = 0;
     this.target[1] = 0;
@@ -192,6 +211,10 @@ export class OrbitCamera {
       distance: this.distance,
       minDistance: this.minDistance,
       maxDistance: this.maxDistance,
+      minPitch: this.minPitch,
+      maxPitch: this.maxPitch,
+      minTilt: this.minTilt,
+      maxTilt: this.maxTilt,
       yaw: this.yaw,
       pitch: this.pitch,
       tiltOffset: this.tiltOffset,
@@ -208,13 +231,72 @@ export class OrbitCamera {
     this.target[2] = snapshot.target[2];
     this.minDistance = snapshot.minDistance;
     this.maxDistance = snapshot.maxDistance;
+    this.minPitch = snapshot.minPitch;
+    this.maxPitch = snapshot.maxPitch;
+    this.minTilt = snapshot.minTilt;
+    this.maxTilt = snapshot.maxTilt;
     this.distance = clamp(snapshot.distance, this.minDistance, this.maxDistance);
     this.yaw = snapshot.yaw;
-    this.pitch = clamp(snapshot.pitch, -1.42, 1.42);
-    this.tiltOffset = clamp(snapshot.tiltOffset, -1.4, 1.4);
+    this.pitch = clamp(snapshot.pitch, this.minPitch, this.maxPitch);
+    this.tiltOffset = clamp(snapshot.tiltOffset, this.minTilt, this.maxTilt);
     this.fov = snapshot.fov;
     this.near = snapshot.near;
     this.far = snapshot.far;
+    this.keepAboveSurface();
+  }
+
+  setLimits(limits: CameraLimits): void {
+    if (limits.minDistance !== undefined) {
+      this.minDistance = Math.max(1, finiteOr(limits.minDistance, this.minDistance));
+    }
+
+    if (limits.maxDistance !== undefined) {
+      this.maxDistance = Math.max(this.minDistance, finiteOr(limits.maxDistance, this.maxDistance));
+    }
+
+    if (this.maxDistance < this.minDistance) {
+      this.maxDistance = this.minDistance;
+    }
+
+    if (limits.minPitch !== undefined) {
+      this.minPitch = finiteOr(limits.minPitch, this.minPitch);
+    }
+
+    if (limits.maxPitch !== undefined) {
+      this.maxPitch = finiteOr(limits.maxPitch, this.maxPitch);
+    }
+
+    if (this.maxPitch < this.minPitch) {
+      this.maxPitch = this.minPitch;
+    }
+
+    if (limits.minTilt !== undefined) {
+      this.minTilt = finiteOr(limits.minTilt, this.minTilt);
+    }
+
+    if (limits.maxTilt !== undefined) {
+      this.maxTilt = finiteOr(limits.maxTilt, this.maxTilt);
+    }
+
+    if (this.maxTilt < this.minTilt) {
+      this.maxTilt = this.minTilt;
+    }
+
+    if (limits.fov !== undefined) {
+      this.fov = clamp(finiteOr(limits.fov, this.fov), (5 * Math.PI) / 180, (170 * Math.PI) / 180);
+    }
+
+    if (limits.near !== undefined) {
+      this.near = Math.max(1e-8, finiteOr(limits.near, this.near));
+    }
+
+    if (limits.far !== undefined) {
+      this.far = Math.max(this.near, finiteOr(limits.far, this.far));
+    }
+
+    this.distance = clamp(this.distance, this.minDistance, this.maxDistance);
+    this.pitch = clamp(this.pitch, this.minPitch, this.maxPitch);
+    this.tiltOffset = clamp(this.tiltOffset, this.minTilt, this.maxTilt);
     this.keepAboveSurface();
   }
 
@@ -232,23 +314,32 @@ export class OrbitCamera {
   }
 
   viewMatrix(): Mat4 {
-    return lookAt(this.position, this.lookTarget(), [0, 1, 0]);
+    const view = this.viewFrame();
+
+    return lookAt(this.position, view.target, view.up);
   }
 
   projectionMatrix(aspect: number): Mat4 {
     return perspective(this.fov, aspect, this.near, this.far);
   }
 
-  private lookTarget(): MutableVec3 {
-    if (this.tiltOffset === 0) {
-      return this.target;
-    }
-
+  private viewFrame(): { target: MutableVec3; up: MutableVec3 } {
     const position = this.position;
     const forward = normalize(subtract(this.target, position));
     const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
-    return add(this.target, scale(up, this.tiltOffset * this.distance * 0.45));
+
+    if (this.tiltOffset === 0) {
+      return { target: this.target, up };
+    }
+
+    const tiltedForward = normalize(rotateAroundAxis(forward, right, this.tiltOffset));
+    const tiltedUp = normalize(rotateAroundAxis(up, right, this.tiltOffset));
+
+    return {
+      target: add(position, scale(tiltedForward, this.distance)),
+      up: tiltedUp,
+    };
   }
 
   private orbitDirection(): MutableVec3 {
@@ -282,6 +373,10 @@ export class OrbitCamera {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function finiteOr(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function interactionAltitudeScale(normalizedAltitude: number, min: number, max: number): number {

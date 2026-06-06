@@ -139,8 +139,12 @@ select {
   gap: 16px;
   width: 286px;
   padding: 18px;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding-right: 12px;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
   transform: translateX(calc(-100% - 28px));
   opacity: 0;
 }
@@ -171,6 +175,10 @@ select {
   color: #9fb6b9;
   font-size: 0.82rem;
   text-transform: uppercase;
+}
+
+.toc-drawer > * {
+  min-width: 0;
 }
 
 .eyebrow {
@@ -293,6 +301,37 @@ h2 {
 
 .compact-metric strong {
   font-size: 0.86rem;
+}
+
+.slider-control {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(232, 237, 240, 0.14);
+  background: rgba(8, 17, 20, 0.72);
+}
+
+.slider-control span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: #9fb6b9;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.slider-control output {
+  color: #ffffff;
+  font-size: 0.78rem;
+  text-transform: none;
+}
+
+.slider-control input {
+  width: 100%;
+  accent-color: #78d4a8;
 }
 
 .snapshot-output {

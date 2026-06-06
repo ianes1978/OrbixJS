@@ -1,5 +1,6 @@
 import { OrbitCamera } from "./core/camera/orbit-camera";
-import { type CameraFlyToOptions, type CameraSnapshot } from "./core/camera/orbit-camera";
+import { type CameraFlyToOptions, type CameraLimits, type CameraSnapshot } from "./core/camera/orbit-camera";
+import { type CameraKeyframe } from "./core/camera/camera-path";
 import { sunDirectionFromDate } from "./core/astro/sun-position";
 import { PointerController } from "./core/events/pointer-controller";
 import { Ellipsoid } from "./core/geodesy/ellipsoid";
@@ -24,6 +25,8 @@ import { type RendererBackend } from "./renderer/interface/renderer";
 export type GeoViewerOptions = {
   container: HTMLElement | string;
   renderer?: RendererBackend;
+  cameraLimits?: CameraLimits;
+  cameraHeightLimits?: CameraHeightLimits;
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -34,6 +37,11 @@ export type GeoViewerOptions = {
   }) => void;
   onTilesetStats?: (stats: { status: string }) => void;
   onImageryError?: (error: unknown) => void;
+};
+
+export type CameraHeightLimits = {
+  minHeight?: number;
+  maxHeight?: number;
 };
 
 export type GeoPickResult =
@@ -80,7 +88,7 @@ const viewportSampleSteps = [-0.99, -0.84, -0.68, -0.52, -0.36, -0.2, -0.04, 0.1
 export class GeoViewer {
   canvas: HTMLCanvasElement;
   readonly scene = new Scene();
-  readonly camera = new OrbitCamera();
+  readonly camera: OrbitCamera;
   renderer: WebGL2Renderer | WebGPURenderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
@@ -137,6 +145,10 @@ export class GeoViewer {
 
     this.canvas = this.createCanvas();
     this.container.append(this.canvas);
+    this.camera = new OrbitCamera({
+      ...options.cameraLimits,
+      ...cameraHeightLimitsToCameraLimits(options.cameraHeightLimits),
+    });
     this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
     if (this.renderer instanceof WebGPURenderer) {
       void this.renderer
@@ -323,8 +335,33 @@ export class GeoViewer {
     this.camera.flyTo(options);
   }
 
+  setCameraLimits(limits: CameraLimits): void {
+    this.camera.setLimits(limits);
+  }
+
+  setCameraHeightLimits(limits: CameraHeightLimits): void {
+    this.camera.setLimits(cameraHeightLimitsToCameraLimits(limits));
+  }
+
   cameraSnapshot(): CameraSnapshot {
     return this.camera.snapshot();
+  }
+
+  cameraKeyframe(duration = 3): CameraKeyframe {
+    const center = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample();
+    const fallback = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const lon = center ? center[0] : fallback.lon;
+    const lat = center ? center[1] : fallback.lat;
+    const height = Math.max(0, (this.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
+
+    return {
+      lon: lon * (180 / Math.PI),
+      lat: lat * (180 / Math.PI),
+      height,
+      fov: this.camera.fov,
+      duration,
+      easing: "smoothstep",
+    };
   }
 
   pickGlobe(clientX: number, clientY: number): { lon: number; lat: number; height: number } | undefined {
@@ -1008,6 +1045,19 @@ function intersectSphere(ray: Ray, sphere: { center: Vec3; radius: number }): nu
   const t = near >= 0 ? near : far;
 
   return t >= 0 ? t : undefined;
+}
+
+function cameraHeightLimitsToCameraLimits(limits: CameraHeightLimits | undefined): CameraLimits {
+  if (!limits) {
+    return {};
+  }
+
+  return {
+    minDistance:
+      limits.minHeight === undefined ? undefined : 1 + Math.max(0, limits.minHeight) / Ellipsoid.WGS84.maximumRadius,
+    maxDistance:
+      limits.maxHeight === undefined ? undefined : 1 + Math.max(0, limits.maxHeight) / Ellipsoid.WGS84.maximumRadius,
+  };
 }
 
 function intersectNormalizedWgs84Surface(ray: Ray, heightMeters: number): Vec3 | undefined {
