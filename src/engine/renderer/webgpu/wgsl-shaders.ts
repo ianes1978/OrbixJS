@@ -148,3 +148,44 @@ export const webGpuImageryTileProgram: ShaderProgramSource = {
   vertex: webGpuImageryTileVertexShader,
   fragment: webGpuImageryTileFragmentShader,
 };
+
+export const webGpuVectorLineVertexShader = createShaderSource({
+  id: "webgpu.vectorLine.vertex",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "vertex",
+  source: `
+struct VectorUniforms {
+  viewProjection: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uUniforms: VectorUniforms;
+
+@vertex
+fn main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+  return uUniforms.viewProjection * vec4<f32>(position, 1.0);
+}
+`,
+});
+
+export const webGpuVectorLineFragmentShader = createShaderSource({
+  id: "webgpu.vectorLine.fragment",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "fragment",
+  source: `
+@fragment
+fn main() -> @location(0) vec4<f32> {
+  return vec4<f32>(1.0, 0.86, 0.12, 0.86);
+}
+`,
+});
+
+export const webGpuVectorLineProgram: ShaderProgramSource = {
+  id: "webgpu.vectorLine",
+  backend: "webgpu",
+  language: "wgsl",
+  vertex: webGpuVectorLineVertexShader,
+  fragment: webGpuVectorLineFragmentShader,
+};

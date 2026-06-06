@@ -39,6 +39,7 @@ La demo viene caricata da `public/projects/demo.orbix.json` e dal catalogo dati 
 ## Focus demo
 
 La demo pubblica deve evolvere verso un focus sull'Alto Adige/Südtirol.
+La demo deve anche restare una vetrina interattiva del motore: ogni feature interattiva importante va esposta, quando possibile, con controlli, preset o pannelli dedicati, cosi puo essere presentata e testata manualmente.
 
 Dataset terrain candidato:
 

@@ -98,6 +98,31 @@ OrbixJS deve puntare a:
 - ray/path tracing sperimentale senza compromettere il realtime
 - bundle piu leggero e API modulare
 
+### Regole per mantenere OrbixJS leggero
+
+OrbixJS non deve diventare un "CesiumJS piu piccolo". Deve restare un engine geospaziale modulare, leggero e moderno, capace di coprire i casi d'uso importanti senza trascinarsi dietro complessita non necessaria.
+
+Regole:
+
+- il core deve restare piccolo, headless e senza dipendenze pesanti obbligatorie
+- la demo, la UI, i pannelli debug e gli esempi non devono entrare nel bundle della libreria pubblica
+- renderer, terrain, imagery, 3D Tiles, glTF, CRS, editing e Digital Twin devono restare moduli separabili
+- ogni feature pesante deve poter vivere in un entrypoint opzionale o in un adapter sopra il core
+- evitare dipendenze grandi nel percorso di primo render; se servono, devono essere lazy, opzionali o sostituibili
+- CRS avanzati, proiezioni specialistiche, import/export, meteo, IFC/BIM, post-processing e tooling devono essere progettati come pacchetti o moduli opzionali
+- misurare regolarmente dimensione raw, gzip e brotli del bundle demo e della libreria ESM
+- mantenere budget espliciti per memoria CPU, memoria GPU, cache tile, richieste rete e allocazioni per frame
+- preferire API piccole e componibili a oggetti monolitici che imitano tutta la superficie di CesiumJS
+- copiare i casi d'uso validi di CesiumJS, non la sua complessita storica
+
+Budget iniziale indicativo:
+
+- demo pubblica: restare sotto 200 KB JS raw finche possibile, esclusi asset e sourcemap
+- libreria ESM core: restare sotto 250 KB JS raw finche possibile, esclusi sourcemap
+- ogni nuovo modulo importante deve dichiarare il proprio costo approssimativo nel piano o nella changelog
+
+Se un obiettivo funzionale richiede di superare questi budget, la regola non e bloccarlo: e misurarlo, isolarlo e renderlo opzionale quando possibile.
+
 ### Compatibilita concettuale
 
 OrbixJS dovrebbe offrire una API familiare:
@@ -1110,6 +1135,7 @@ Obiettivo: quando OrbixJS sara su GitHub, ogni push stabile deve poter pubblicar
 Step:
 
 - mantenere la demo come build statica Vite
+- usare la demo come vetrina e banco di test manuale: ogni feature interattiva importante deve avere, quando possibile, un controllo, preset o pannello dedicato per presentarla e verificarla
 - usare `base: "./"` in Vite per supportare GitHub Pages sotto sottocartella
 - aggiungere workflow GitHub Actions per test, build e deploy
 - pubblicare `dist` con GitHub Pages

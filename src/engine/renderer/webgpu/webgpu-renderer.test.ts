@@ -226,6 +226,42 @@ describe("WebGPURenderer", () => {
     expect(baseTexture?.destroy).not.toHaveBeenCalled();
   });
 
+  it("uploads and renders WebGPU vector line overlays", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+
+    await renderer.initialize();
+    renderer.setVectorLines([
+      [
+        [11, 46],
+        [12, 46],
+        [12, 47],
+      ],
+    ]);
+    renderer.setVectorLinesVisible(true);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.createBuffer).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU vector line vertices",
+      size: 12 * Float32Array.BYTES_PER_ELEMENT,
+      usage: 40,
+    });
+    expect(device.createBindGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "OrbixJS WebGPU vector line bind group",
+      }),
+    );
+    expect(device.pass.draw).toHaveBeenCalledWith(4);
+  });
+
   it("reports unsupported when WebGPU is unavailable", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const renderer = new WebGPURenderer(createCanvasMock());
@@ -260,6 +296,7 @@ function createDeviceMock() {
     setBindGroup: vi.fn(),
     setVertexBuffer: vi.fn(),
     setIndexBuffer: vi.fn(),
+    draw: vi.fn(),
     drawIndexed: vi.fn(),
     end: vi.fn(),
   };

@@ -42,6 +42,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Globo WGSL", done: true },
       { label: "Imagery WebGPU base", done: true },
       { label: "Tile overlay WebGPU", done: true },
+      { label: "Vector coastline WebGPU", done: true },
     ],
   },
   {

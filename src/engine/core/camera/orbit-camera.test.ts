@@ -28,9 +28,10 @@ describe("OrbitCamera", () => {
     const mid = new OrbitCamera({ distance: 1.8 });
     const far = new OrbitCamera({ distance: 4 });
 
-    expect(near.dragSensitivityScale()).toBeCloseTo(0.008);
+    expect(near.dragSensitivityScale()).toBeCloseTo(0.002);
     expect(mid.dragSensitivityScale()).toBeGreaterThan(near.dragSensitivityScale());
-    expect(mid.dragSensitivityScale()).toBeLessThan(0.12);
+    expect(mid.dragSensitivityScale()).toBeGreaterThan(0.18);
+    expect(mid.dragSensitivityScale()).toBeLessThan(0.26);
     expect(far.dragSensitivityScale()).toBe(1);
   });
 
@@ -73,7 +74,7 @@ describe("OrbitCamera", () => {
     far.pan(100, 0);
 
     expect(near.target[0]).toBeGreaterThan(0);
-    expect(far.target[0]).toBeGreaterThan(near.target[0] * 10_000);
+    expect(far.target[0]).toBeGreaterThan(near.target[0] * 30_000);
   });
 
   it("keeps pan target near the globe", () => {

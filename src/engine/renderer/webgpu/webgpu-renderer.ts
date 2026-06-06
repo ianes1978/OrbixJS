@@ -1,3 +1,4 @@
+import { Ellipsoid } from "../../core/geodesy/ellipsoid";
 import { type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
@@ -5,7 +6,7 @@ import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
-import { webGpuGlobeProgram, webGpuImageryTileProgram } from "./wgsl-shaders";
+import { webGpuGlobeProgram, webGpuImageryTileProgram, webGpuVectorLineProgram } from "./wgsl-shaders";
 
 const webGpuBufferUsage = {
   vertex: 0x20,
@@ -145,6 +146,7 @@ type WebGpuRenderPassEncoderLike = {
   setBindGroup(index: number, bindGroup: WebGpuBindGroupLike): void;
   setVertexBuffer(slot: number, buffer: WebGpuBufferLike): void;
   setIndexBuffer(buffer: WebGpuBufferLike, indexFormat: "uint16"): void;
+  draw(vertexCount: number): void;
   drawIndexed(indexCount: number): void;
   end(): void;
 };
@@ -184,7 +186,7 @@ type WebGpuRenderPipelineDescriptorLike = {
     }>;
   };
   primitive: {
-    topology: "triangle-list";
+    topology: "triangle-list" | "line-list";
     cullMode: "back" | "none";
   };
   depthStencil?: {
@@ -225,10 +227,15 @@ export class WebGPURenderer implements Renderer {
   private initialized = false;
   private globePipeline: WebGpuRenderPipelineLike | undefined;
   private tilePipeline: WebGpuRenderPipelineLike | undefined;
+  private vectorPipeline: WebGpuRenderPipelineLike | undefined;
   private globeBindGroup: WebGpuBindGroupLike | undefined;
+  private vectorBindGroup: WebGpuBindGroupLike | undefined;
   private globeVertexBuffer: WebGpuBufferLike | undefined;
   private globeIndexBuffer: WebGpuBufferLike | undefined;
   private globeUniformBuffer: WebGpuBufferLike | undefined;
+  private vectorVertexBuffer: WebGpuBufferLike | undefined;
+  private vectorVertexCount = 0;
+  private vectorLinesVisible = false;
   private depthTexture: WebGpuTextureLike | undefined;
   private depthTextureSize: readonly [number, number] | undefined;
   private imageryTexture: WebGpuTextureLike | undefined;
@@ -236,6 +243,7 @@ export class WebGPURenderer implements Renderer {
   private imageryTextureSize: readonly [number, number] | undefined;
   private imageryReady = false;
   private pendingImagery: TexImageSource | undefined;
+  private pendingVectorLines: readonly (readonly [number, number])[][] | undefined;
   private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
   private readonly tileEntries = new Map<string, WebGpuTileEntry>();
   private activeTileIds: readonly string[] = [];
@@ -287,12 +295,17 @@ export class WebGPURenderer implements Renderer {
     this.activeTileIds = [...ids];
   }
 
-  setVectorLines(_lines: readonly (readonly [number, number])[][]): void {
-    // Vector overlay support is WebGL2-only for now.
+  setVectorLines(lines: readonly (readonly [number, number])[][]): void {
+    if (!this.device || !this.vectorPipeline || !this.globeUniformBuffer) {
+      this.pendingVectorLines = lines;
+      return;
+    }
+
+    this.uploadVectorLines(lines);
   }
 
-  setVectorLinesVisible(_visible: boolean): void {
-    // Vector overlay support is WebGL2-only for now.
+  setVectorLinesVisible(visible: boolean): void {
+    this.vectorLinesVisible = visible;
   }
 
   setDebugModelVisible(_visible: boolean): void {
@@ -411,6 +424,7 @@ export class WebGPURenderer implements Renderer {
     pass.setIndexBuffer(this.globeIndexBuffer, "uint16");
     pass.drawIndexed(this.globeIndexCount);
     this.renderImageryTiles(pass);
+    this.renderVectorLines(pass);
     pass.end();
 
     this.device.queue.submit([encoder.finish()]);
@@ -421,6 +435,7 @@ export class WebGPURenderer implements Renderer {
     this.globeVertexBuffer?.destroy?.();
     this.globeIndexBuffer?.destroy?.();
     this.globeUniformBuffer?.destroy?.();
+    this.vectorVertexBuffer?.destroy?.();
     this.depthTexture?.destroy?.();
     this.imageryTexture?.destroy?.();
     for (const entry of this.tileEntries.values()) {
@@ -433,10 +448,15 @@ export class WebGPURenderer implements Renderer {
     this.adapter = undefined;
     this.globePipeline = undefined;
     this.tilePipeline = undefined;
+    this.vectorPipeline = undefined;
     this.globeBindGroup = undefined;
+    this.vectorBindGroup = undefined;
     this.globeVertexBuffer = undefined;
     this.globeIndexBuffer = undefined;
     this.globeUniformBuffer = undefined;
+    this.vectorVertexBuffer = undefined;
+    this.vectorVertexCount = 0;
+    this.vectorLinesVisible = false;
     this.depthTexture = undefined;
     this.depthTextureSize = undefined;
     this.imageryTexture = undefined;
@@ -444,6 +464,7 @@ export class WebGPURenderer implements Renderer {
     this.imageryTextureSize = undefined;
     this.imageryReady = false;
     this.pendingImagery = undefined;
+    this.pendingVectorLines = undefined;
     this.pendingTileImages.clear();
     this.tileEntries.clear();
     this.activeTileIds = [];
@@ -529,6 +550,7 @@ export class WebGPURenderer implements Renderer {
     });
     this.createGlobeBindGroup();
     this.createTilePipeline();
+    this.createVectorPipeline();
     this.globeIndexCount = mesh.indices.length;
 
     if (this.pendingImagery) {
@@ -540,6 +562,10 @@ export class WebGPURenderer implements Renderer {
       this.uploadImageryTile(pending.tile, pending.image);
     }
     this.pendingTileImages.clear();
+
+    if (this.pendingVectorLines) {
+      this.uploadVectorLines(this.pendingVectorLines);
+    }
   }
 
   private createTilePipeline(): void {
@@ -596,6 +622,66 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
+        cullMode: "none",
+      },
+      depthStencil: {
+        format: webGpuDepthFormat,
+        depthWriteEnabled: false,
+        depthCompare: "less",
+      },
+    });
+  }
+
+  private createVectorPipeline(): void {
+    if (!this.device || !this.format) {
+      return;
+    }
+
+    const vertexModule = this.device.createShaderModule({
+      label: webGpuVectorLineProgram.vertex.id,
+      code: webGpuVectorLineProgram.vertex.source,
+    });
+    const fragmentModule = this.device.createShaderModule({
+      label: webGpuVectorLineProgram.fragment.id,
+      code: webGpuVectorLineProgram.fragment.source,
+    });
+
+    this.vectorPipeline = this.device.createRenderPipeline({
+      label: "OrbixJS WebGPU vector line pipeline",
+      layout: "auto",
+      vertex: {
+        module: vertexModule,
+        entryPoint: "main",
+        buffers: [
+          {
+            arrayStride: 3 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }],
+          },
+        ],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "main",
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+              alpha: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+            },
+          },
+        ],
+      },
+      primitive: {
+        topology: "line-list",
         cullMode: "none",
       },
       depthStencil: {
@@ -736,6 +822,60 @@ export class WebGPURenderer implements Renderer {
     }
   }
 
+  private renderVectorLines(pass: WebGpuRenderPassEncoderLike): void {
+    if (
+      !this.vectorLinesVisible ||
+      !this.vectorPipeline ||
+      !this.vectorBindGroup ||
+      !this.vectorVertexBuffer ||
+      this.vectorVertexCount === 0
+    ) {
+      return;
+    }
+
+    pass.setPipeline(this.vectorPipeline);
+    pass.setBindGroup(0, this.vectorBindGroup);
+    pass.setVertexBuffer(0, this.vectorVertexBuffer);
+    pass.draw(this.vectorVertexCount);
+  }
+
+  private uploadVectorLines(lines: readonly (readonly [number, number])[][]): void {
+    if (!this.device || !this.vectorPipeline || !this.globeUniformBuffer) {
+      this.pendingVectorLines = lines;
+      return;
+    }
+
+    const vertices = createVectorLineVertices(lines);
+
+    this.vectorVertexBuffer?.destroy?.();
+    this.vectorVertexBuffer = undefined;
+    this.vectorVertexCount = vertices.length / 3;
+
+    if (vertices.length === 0) {
+      this.vectorBindGroup = undefined;
+      return;
+    }
+
+    this.vectorVertexBuffer = this.device.createBuffer({
+      label: "OrbixJS WebGPU vector line vertices",
+      size: vertices.byteLength,
+      usage: webGpuBufferUsage.vertex | webGpuBufferUsage.copyDst,
+    });
+    this.device.queue.writeBuffer(this.vectorVertexBuffer, 0, vertices);
+    this.vectorBindGroup = this.device.createBindGroup({
+      label: "OrbixJS WebGPU vector line bind group",
+      layout: this.vectorPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.globeUniformBuffer,
+          },
+        },
+      ],
+    });
+  }
+
   private uploadImageryTile(tile: QuadtreeTile, image: TexImageSource): void {
     if (!this.device || !this.tilePipeline || !this.globeUniformBuffer) {
       this.pendingTileImages.set(tile.id, { tile, image });
@@ -832,6 +972,46 @@ function imageSize(image: TexImageSource): [number, number] {
   const height = source.videoHeight ?? source.naturalHeight ?? source.height ?? 1;
 
   return [Math.max(1, Math.floor(width)), Math.max(1, Math.floor(height))];
+}
+
+function createVectorLineVertices(
+  lines: readonly (readonly [number, number])[][],
+  ellipsoid = Ellipsoid.WGS84,
+): Float32Array {
+  const vertices: number[] = [];
+  const maxRadius = ellipsoid.maximumRadius;
+
+  for (const line of lines) {
+    for (let index = 0; index < line.length - 1; index += 1) {
+      const current = line[index];
+      const next = line[index + 1];
+
+      if (Math.abs(next[0] - current[0]) > 180) {
+        continue;
+      }
+
+      pushVectorLineVertex(vertices, current[0], current[1], ellipsoid, maxRadius);
+      pushVectorLineVertex(vertices, next[0], next[1], ellipsoid, maxRadius);
+    }
+  }
+
+  return new Float32Array(vertices);
+}
+
+function pushVectorLineVertex(
+  vertices: number[],
+  lonDegrees: number,
+  latDegrees: number,
+  ellipsoid: Ellipsoid,
+  maxRadius: number,
+): void {
+  const position = ellipsoid.cartographicToCartesian({
+    lon: lonDegrees * (Math.PI / 180),
+    lat: latDegrees * (Math.PI / 180),
+    height: 12000,
+  });
+
+  vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
 }
 
 function destroyTileEntry(entry: WebGpuTileEntry): void {

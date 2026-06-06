@@ -15,76 +15,95 @@ app.innerHTML = `
     <section class="workspace" aria-label="OrbixJS development viewer">
       <div class="viewport">
         <div id="globe" class="globe-host"></div>
-        <div class="hud">
-          <div>
-            <span class="eyebrow">MVP 1</span>
-            <h1>OrbixJS</h1>
-            <p class="hint">Drag orbit, Shift+drag pan, Alt+drag tilt, rotellina zoom</p>
-            <button id="mobile-controls-toggle" class="controls-toggle" type="button" aria-expanded="false" aria-controls="hud-controls">
-              Controlli
+        <div class="brand-hud">
+          <span class="eyebrow">MVP 1</span>
+          <h1>OrbixJS</h1>
+          <p class="hint">Drag orbit, Shift+drag pan, Alt+drag tilt, rotellina zoom</p>
+        </div>
+
+        <button id="mobile-controls-toggle" class="drawer-tab toc-tab" type="button" aria-expanded="false" aria-controls="demo-toc">
+          Menu
+        </button>
+        <button id="info-toggle" class="drawer-tab info-tab" type="button" aria-expanded="true" aria-controls="info-panel">
+          Info ON
+        </button>
+
+        <nav id="demo-toc" class="toc-drawer" aria-label="Demo controls">
+          <header class="drawer-head">
+            <span class="eyebrow">Demo</span>
+            <strong>Comandi</strong>
+          </header>
+          <section class="control-section" aria-label="Visualizzazione">
+            <h2>Vista</h2>
+            <button id="renderer-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              WebGPU
             </button>
+            <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="true">
+              LOD ON
+            </button>
+            <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              Coastline
+            </button>
+            <button id="model-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              Model
+            </button>
+          </section>
+          <section class="control-section" aria-label="Tempo">
+            <h2>Tempo</h2>
+            <label class="metric scene-date">
+              <span>Data sole</span>
+              <input id="scene-date" type="datetime-local" value="2026-06-05T12:00" />
+            </label>
+          </section>
+          <section class="control-section" aria-label="Navigazione">
+            <h2>FlyTo</h2>
+            <div class="fly-presets" aria-label="FlyTo presets">
+              <button data-fly-to="italy" type="button">Italia</button>
+              <button data-fly-to="usa" type="button">USA</button>
+              <button data-fly-to="tokyo" type="button">Tokyo</button>
+            </div>
+          </section>
+        </nav>
+
+        <aside id="info-panel" class="panel info-panel open" aria-label="Roadmap progress">
+          <header>
+            <p class="eyebrow">Plan2.md</p>
+            <h2>Progressi</h2>
+          </header>
+          <div class="status-grid" aria-label="Runtime status">
+            <div class="metric">
+              <span>Renderer</span>
+              <strong id="renderer-status">WebGL2</strong>
+            </div>
+            <div class="metric">
+              <span>Imagery</span>
+              <strong id="imagery-status">Ortofoto</strong>
+            </div>
+            <div class="metric wide">
+              <span>Tile runtime</span>
+              <strong id="tile-status">LOD -</strong>
+            </div>
+            <div class="metric">
+              <span>3D Tiles</span>
+              <strong id="tiles3d-status">tileset -</strong>
+            </div>
+            <div class="metric wide">
+              <span>Picking</span>
+              <strong id="picking-status">click globo</strong>
+            </div>
           </div>
-        <div id="hud-controls" class="hud-controls">
-        <div class="metric">
-          <span>Renderer</span>
-          <strong id="renderer-status">WebGL2</strong>
-        </div>
-        <button id="renderer-toggle" class="debug-toggle" type="button" aria-pressed="false">
-          WebGPU
-        </button>
-        <div class="metric">
-          <span>Imagery</span>
-          <strong id="imagery-status">Ortofoto</strong>
-        </div>
-        <div class="metric wide">
-          <span>Tile runtime</span>
-          <strong id="tile-status">LOD -</strong>
-        </div>
-        <div class="metric">
-          <span>3D Tiles</span>
-          <strong id="tiles3d-status">tileset -</strong>
-        </div>
-        <div class="metric wide">
-          <span>Picking</span>
-          <strong id="picking-status">click globo</strong>
-        </div>
-        <label class="metric wide scene-date">
-          <span>Data sole</span>
-          <input id="scene-date" type="datetime-local" value="2026-06-05T12:00" />
-        </label>
-        <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="true">
-          LOD ON
-        </button>
-        <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
-          Coastline
-        </button>
-        <button id="model-toggle" class="debug-toggle" type="button" aria-pressed="false">
-          Model
-        </button>
-        <div class="fly-presets" aria-label="FlyTo presets">
-          <button data-fly-to="italy" type="button">Italia</button>
-          <button data-fly-to="usa" type="button">USA</button>
-          <button data-fly-to="tokyo" type="button">Tokyo</button>
-        </div>
-        </div>
+          <div class="overall">
+            <div class="overall-copy">
+              <span>Avanzamento Plan2</span>
+              <strong id="overall-progress">0%</strong>
+            </div>
+            <div class="bar" aria-hidden="true">
+              <span id="overall-bar"></span>
+            </div>
+          </div>
+          <ol id="roadmap" class="roadmap"></ol>
+        </aside>
       </div>
-      </div>
-      <aside class="panel" aria-label="Roadmap progress">
-        <header>
-          <p class="eyebrow">Plan2.md</p>
-          <h2>Progressi</h2>
-        </header>
-        <div class="overall">
-          <div class="overall-copy">
-            <span>Avanzamento Plan2</span>
-            <strong id="overall-progress">0%</strong>
-          </div>
-          <div class="bar" aria-hidden="true">
-            <span id="overall-bar"></span>
-          </div>
-        </div>
-        <ol id="roadmap" class="roadmap"></ol>
-      </aside>
     </section>
   </main>
 `;
@@ -102,7 +121,9 @@ const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-t
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
 const mobileControlsToggle = document.querySelector<HTMLButtonElement>("#mobile-controls-toggle");
-const hudControls = document.querySelector<HTMLElement>("#hud-controls");
+const hudControls = document.querySelector<HTMLElement>("#demo-toc");
+const infoToggle = document.querySelector<HTMLButtonElement>("#info-toggle");
+const infoPanel = document.querySelector<HTMLElement>("#info-panel");
 const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 
@@ -121,6 +142,8 @@ if (
   !modelToggle ||
   !mobileControlsToggle ||
   !hudControls ||
+  !infoToggle ||
+  !infoPanel ||
   !sceneDateInput ||
   flyPresetButtons.length === 0
 ) {
@@ -128,6 +151,17 @@ if (
 }
 
 const rendererToggleElement = rendererToggle;
+const menuToggleElement = mobileControlsToggle;
+const demoTocElement = hudControls;
+const infoToggleElement = infoToggle;
+const infoPanelElement = infoPanel;
+const compactLayout = window.matchMedia("(max-width: 920px)");
+
+syncResponsivePanels(compactLayout.matches);
+compactLayout.addEventListener("change", (event) => {
+  syncResponsivePanels(event.matches);
+});
+
 const completed = roadmap.reduce(
   (total, phase) => total + phase.items.filter((item) => item.done).length,
   0,
@@ -264,11 +298,16 @@ rendererToggleElement.addEventListener("click", () => {
     });
 });
 
-mobileControlsToggle.addEventListener("click", () => {
-  const expanded = mobileControlsToggle.getAttribute("aria-expanded") === "true";
+menuToggleElement.addEventListener("click", () => {
+  const expanded = menuToggleElement.getAttribute("aria-expanded") === "true";
 
-  mobileControlsToggle.setAttribute("aria-expanded", String(!expanded));
-  hudControls.classList.toggle("open", !expanded);
+  setMenuOpen(!expanded);
+});
+
+infoToggleElement.addEventListener("click", () => {
+  const expanded = infoToggleElement.getAttribute("aria-expanded") === "true";
+
+  setInfoOpen(!expanded);
 });
 
 const flyToPresets = {
@@ -410,6 +449,23 @@ function syncRendererToggle(): void {
 
   rendererToggleElement.setAttribute("aria-pressed", String(isWebGpu));
   rendererToggleElement.textContent = isWebGpu ? "WebGL2" : "WebGPU";
+}
+
+function syncResponsivePanels(compact: boolean): void {
+  setMenuOpen(false);
+  setInfoOpen(!compact);
+}
+
+function setMenuOpen(open: boolean): void {
+  menuToggleElement.setAttribute("aria-expanded", String(open));
+  menuToggleElement.textContent = open ? "Menu ON" : "Menu";
+  demoTocElement.classList.toggle("open", open);
+}
+
+function setInfoOpen(open: boolean): void {
+  infoToggleElement.setAttribute("aria-expanded", String(open));
+  infoToggleElement.textContent = open ? "Info ON" : "Info";
+  infoPanelElement.classList.toggle("open", open);
 }
 
 function updateRendererUrl(backend: "webgl2" | "webgpu"): void {
