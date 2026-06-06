@@ -17,6 +17,7 @@ import { createQuadtreeTile, type QuadtreeTile } from "./globe/imagery/quadtree-
 import { selectLevel } from "./globe/imagery/tile-selector";
 import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
+import { TerrainSurfaceRuntime, type TerrainSurfaceMeshEntry } from "./globe/terrain/terrain-surface-runtime";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 import { WebGPURenderer } from "./renderer/webgpu/webgpu-renderer";
@@ -28,6 +29,7 @@ export type GeoViewerOptions = {
   cameraLimits?: CameraLimits;
   cameraHeightLimits?: CameraHeightLimits;
   cameraCollision?: CameraCollisionOptions;
+  terrainExaggeration?: number;
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -98,6 +100,9 @@ export class GeoViewer {
   renderer: WebGL2Renderer | WebGPURenderer;
   readonly imagery: ImageryLayerCollection;
   terrain: TerrainProvider | undefined;
+  private terrainSurface: TerrainSurfaceRuntime | undefined;
+  private lastTerrainMeshes: TerrainSurfaceMeshEntry[] = [];
+  private readonly terrainExaggeration: number;
   private readonly container: HTMLElement;
   private readonly imageryTiling = new WebMercatorTilingScheme();
   private controller: PointerController;
@@ -138,6 +143,7 @@ export class GeoViewer {
     this.onTilesetStatsCallback = options.onTilesetStats;
     this.cameraHeightLimits = options.cameraHeightLimits ?? {};
     this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
+    this.terrainExaggeration = options.terrainExaggeration ?? 1;
     const container =
       typeof options.container === "string"
         ? document.getElementById(options.container)
@@ -340,6 +346,17 @@ export class GeoViewer {
 
   setTerrainProvider(provider: TerrainProvider | undefined): void {
     this.terrain = provider;
+    this.terrainSurface = provider
+      ? new TerrainSurfaceRuntime({
+          provider,
+          meshOptions: { exaggeration: this.terrainExaggeration },
+          maxMeshes: 1024,
+          maxPending: 24,
+          onError: (error) => console.warn("Terrain surface tile failed", error),
+        })
+      : undefined;
+    this.lastTerrainMeshes = [];
+    this.renderer.setTerrainMeshes([]);
     this.applyCameraHeightConstraints();
   }
 
@@ -481,6 +498,7 @@ export class GeoViewer {
         this.onImageryStats(stats);
       }
 
+      this.syncTerrainSurface(imageryCenter, coveragePositions);
       void this.syncDebugTilesetContent();
       this.renderer.render({ scene: this.scene, camera: this.camera });
       this.frame = requestAnimationFrame(render);
@@ -625,7 +643,30 @@ export class GeoViewer {
       this.renderer.setDebugModelVisible(this.debugModelVisible);
     }
 
+    this.renderer.setTerrainMeshes(this.lastTerrainMeshes);
     this.syncDebugTileOverlay();
+  }
+
+  private syncTerrainSurface(
+    center: readonly [number, number, number?] | undefined,
+    coveragePositions: readonly (readonly [number, number, number?])[],
+  ): void {
+    if (!this.terrainSurface || !center) {
+      if (this.lastTerrainMeshes.length > 0) {
+        this.lastTerrainMeshes = [];
+        this.renderer.setTerrainMeshes([]);
+      }
+      return;
+    }
+
+    this.terrainSurface.update(center[0], center[1], this.camera.geocentricDistance, {
+      viewportHeight: this.canvas.height || this.canvas.clientHeight,
+      fov: this.camera.fov,
+      coveragePositions: coveragePositions.map((position) => [position[0], position[1]] as const),
+      targetLevel: this.projectedImageryLevel(),
+    });
+    this.lastTerrainMeshes = this.terrainSurface.readyMeshes();
+    this.renderer.setTerrainMeshes(this.lastTerrainMeshes);
   }
 
   private createCanvas(): HTMLCanvasElement {

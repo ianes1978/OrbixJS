@@ -54,6 +54,10 @@ export {
   type TerrainTileKey,
 } from "./engine/globe/terrain/terrain-provider";
 export {
+  createProceduralTerrainProvider,
+  type ProceduralTerrainProviderOptions,
+} from "./engine/globe/terrain/procedural-terrain-provider";
+export {
   findDataSource,
   loadDataCatalog,
   parseDataCatalog,

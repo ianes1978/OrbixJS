@@ -90,7 +90,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Heightmap to mesh", done: true },
       { label: "Terrain quadtree LOD", done: true },
       { label: "Terrain mesh cache", done: true },
-      { label: "Mesh terrain render", done: false },
+      { label: "Mesh terrain render", done: true },
       { label: "Skirt e morphing", done: false },
       { label: "Picking terrain", done: false },
       { label: "Collisione camera-terrain", done: false },

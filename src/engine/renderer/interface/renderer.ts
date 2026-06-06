@@ -1,5 +1,6 @@
 import { OrbitCamera } from "../../core/camera/orbit-camera";
 import { Scene } from "../../core/scene/scene";
+import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { type RendererResourceStats } from "./resource-manager";
 
 export type RendererBackend = "webgl2" | "webgpu";
@@ -25,5 +26,6 @@ export interface Renderer {
   readonly resourceStats: RendererResourceStats;
   resize(): void;
   render(frame: RendererFrame): void;
+  setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void;
   destroy(): void;
 }

@@ -4,6 +4,8 @@ import { type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
+import { type TerrainMesh } from "../../globe/terrain/terrain-mesh";
+import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
@@ -213,6 +215,13 @@ type WebGpuModelEntry = {
   indexFormat: "uint16" | "uint32";
 };
 
+type WebGpuTerrainEntry = {
+  vertexBuffer: WebGpuBufferLike;
+  indexBuffer: WebGpuBufferLike;
+  indexCount: number;
+  indexFormat: "uint16" | "uint32";
+};
+
 type WebGpuDebugModelMesh = {
   positions: Float32Array;
   texcoords?: Float32Array;
@@ -250,6 +259,7 @@ export class WebGPURenderer implements Renderer {
   private vectorPipeline: WebGpuRenderPipelineLike | undefined;
   private modelPipeline: WebGpuRenderPipelineLike | undefined;
   private globeBindGroup: WebGpuBindGroupLike | undefined;
+  private terrainBindGroup: WebGpuBindGroupLike | undefined;
   private vectorBindGroup: WebGpuBindGroupLike | undefined;
   private modelBindGroup: WebGpuBindGroupLike | undefined;
   private globeVertexBuffer: WebGpuBufferLike | undefined;
@@ -271,9 +281,12 @@ export class WebGPURenderer implements Renderer {
   private pendingImagery: TexImageSource | undefined;
   private pendingVectorLines: readonly (readonly [number, number])[][] | undefined;
   private pendingDebugModelMesh: WebGpuDebugModelMesh | undefined;
+  private pendingTerrainMeshes: readonly TerrainSurfaceMeshEntry[] | undefined;
   private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
   private readonly tileEntries = new Map<string, WebGpuTileEntry>();
+  private readonly terrainEntries = new Map<string, WebGpuTerrainEntry>();
   private activeTileIds: readonly string[] = [];
+  private activeTerrainIds: readonly string[] = [];
   private globeIndexCount = 0;
 
   constructor(
@@ -320,6 +333,23 @@ export class WebGPURenderer implements Renderer {
 
   setActiveImageryTiles(ids: readonly string[]): void {
     this.activeTileIds = [...ids];
+  }
+
+  setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
+    this.activeTerrainIds = meshes.map((entry) => entry.id);
+
+    if (!this.device || !this.tilePipeline || !this.globeUniformBuffer) {
+      this.pendingTerrainMeshes = meshes;
+      return;
+    }
+
+    for (const entry of meshes) {
+      if (!this.terrainEntries.has(entry.id)) {
+        this.uploadTerrainMesh(entry);
+      }
+    }
+
+    this.pendingTerrainMeshes = undefined;
   }
 
   setVectorLines(lines: readonly (readonly [number, number])[][]): void {
@@ -450,6 +480,7 @@ export class WebGPURenderer implements Renderer {
       pass.drawIndexed(this.globeIndexCount);
     }
     this.renderImageryTiles(pass);
+    this.renderTerrainMeshes(pass);
     this.renderDebugModel(pass);
     this.renderVectorLines(pass);
     pass.end();
@@ -467,6 +498,9 @@ export class WebGPURenderer implements Renderer {
     if (this.debugModel) {
       destroyModelEntry(this.debugModel);
     }
+    for (const entry of this.terrainEntries.values()) {
+      destroyModelEntry(entry);
+    }
     this.depthTexture?.destroy?.();
     this.imageryTexture?.destroy?.();
     for (const entry of this.tileEntries.values()) {
@@ -482,6 +516,7 @@ export class WebGPURenderer implements Renderer {
     this.vectorPipeline = undefined;
     this.modelPipeline = undefined;
     this.globeBindGroup = undefined;
+    this.terrainBindGroup = undefined;
     this.vectorBindGroup = undefined;
     this.modelBindGroup = undefined;
     this.globeVertexBuffer = undefined;
@@ -503,9 +538,12 @@ export class WebGPURenderer implements Renderer {
     this.pendingImagery = undefined;
     this.pendingVectorLines = undefined;
     this.pendingDebugModelMesh = undefined;
+    this.pendingTerrainMeshes = undefined;
     this.pendingTileImages.clear();
     this.tileEntries.clear();
+    this.terrainEntries.clear();
     this.activeTileIds = [];
+    this.activeTerrainIds = [];
     this.globeIndexCount = 0;
   }
 
@@ -608,6 +646,10 @@ export class WebGPURenderer implements Renderer {
 
     if (this.pendingDebugModelMesh) {
       this.uploadDebugModel(this.pendingDebugModelMesh);
+    }
+
+    if (this.pendingTerrainMeshes) {
+      this.setTerrainMeshes(this.pendingTerrainMeshes);
     }
   }
 
@@ -851,6 +893,7 @@ export class WebGPURenderer implements Renderer {
     }
 
     this.imageryTexture?.destroy?.();
+    this.terrainBindGroup = undefined;
     this.imageryTexture = this.device.createTexture({
       label: "OrbixJS WebGPU imagery texture",
       size: [size[0], size[1]],
@@ -909,6 +952,33 @@ export class WebGPURenderer implements Renderer {
       pass.setBindGroup(0, entry.bindGroup);
       pass.setVertexBuffer(0, entry.vertexBuffer);
       pass.setIndexBuffer(entry.indexBuffer, "uint16");
+      pass.drawIndexed(entry.indexCount);
+    }
+  }
+
+  private renderTerrainMeshes(pass: WebGpuRenderPassEncoderLike): void {
+    if (!this.tilePipeline || this.activeTerrainIds.length === 0) {
+      return;
+    }
+
+    this.createTerrainBindGroup();
+
+    if (!this.terrainBindGroup) {
+      return;
+    }
+
+    pass.setPipeline(this.tilePipeline);
+    pass.setBindGroup(0, this.terrainBindGroup);
+
+    for (const id of this.activeTerrainIds) {
+      const entry = this.terrainEntries.get(id);
+
+      if (!entry) {
+        continue;
+      }
+
+      pass.setVertexBuffer(0, entry.vertexBuffer);
+      pass.setIndexBuffer(entry.indexBuffer, entry.indexFormat);
       pass.drawIndexed(entry.indexCount);
     }
   }
@@ -1102,6 +1172,102 @@ export class WebGPURenderer implements Renderer {
       ready: true,
     });
   }
+
+  private createTerrainBindGroup(): void {
+    if (!this.device || !this.tilePipeline || !this.globeUniformBuffer) {
+      return;
+    }
+
+    if (!this.imageryTexture || !this.imagerySampler) {
+      this.ensureImageryResources();
+    }
+
+    if (this.terrainBindGroup || !this.imageryTexture || !this.imagerySampler) {
+      return;
+    }
+
+    this.terrainBindGroup = this.device.createBindGroup({
+      label: "OrbixJS WebGPU terrain bind group",
+      layout: this.tilePipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.globeUniformBuffer,
+          },
+        },
+        {
+          binding: 1,
+          resource: this.imagerySampler,
+        },
+        {
+          binding: 2,
+          resource: this.imageryTexture.createView(),
+        },
+      ],
+    });
+  }
+
+  private uploadTerrainMesh(entry: TerrainSurfaceMeshEntry): void {
+    if (!this.device) {
+      return;
+    }
+
+    const mesh = packTerrainMesh(entry.mesh);
+    const vertexBuffer = this.device.createBuffer({
+      label: `OrbixJS WebGPU terrain vertices ${entry.id}`,
+      size: mesh.vertices.byteLength,
+      usage: webGpuBufferUsage.vertex | webGpuBufferUsage.copyDst,
+    });
+    const indexBuffer = this.device.createBuffer({
+      label: `OrbixJS WebGPU terrain indices ${entry.id}`,
+      size: mesh.indices.byteLength,
+      usage: webGpuBufferUsage.index | webGpuBufferUsage.copyDst,
+    });
+    const previous = this.terrainEntries.get(entry.id);
+
+    this.device.queue.writeBuffer(vertexBuffer, 0, mesh.vertices);
+    this.device.queue.writeBuffer(indexBuffer, 0, mesh.indices);
+
+    if (previous) {
+      destroyModelEntry(previous);
+    }
+
+    this.terrainEntries.set(entry.id, {
+      vertexBuffer,
+      indexBuffer,
+      indexCount: mesh.indices.length,
+      indexFormat: mesh.indices instanceof Uint32Array ? "uint32" : "uint16",
+    });
+  }
+}
+
+function packTerrainMesh(mesh: TerrainMesh): {
+  vertices: Float32Array;
+  indices: Uint16Array | Uint32Array;
+} {
+  const vertexCount = mesh.positions.length / 3;
+  const vertices = new Float32Array(vertexCount * 8);
+
+  for (let index = 0; index < vertexCount; index += 1) {
+    const positionOffset = index * 3;
+    const texcoordOffset = index * 2;
+    const vertexOffset = index * 8;
+
+    vertices[vertexOffset] = mesh.positions[positionOffset];
+    vertices[vertexOffset + 1] = mesh.positions[positionOffset + 1];
+    vertices[vertexOffset + 2] = mesh.positions[positionOffset + 2];
+    vertices[vertexOffset + 3] = mesh.normals[positionOffset];
+    vertices[vertexOffset + 4] = mesh.normals[positionOffset + 1];
+    vertices[vertexOffset + 5] = mesh.normals[positionOffset + 2];
+    vertices[vertexOffset + 6] = mesh.texcoords[texcoordOffset];
+    vertices[vertexOffset + 7] = mesh.texcoords[texcoordOffset + 1];
+  }
+
+  return {
+    vertices,
+    indices: mesh.indices,
+  };
 }
 
 function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {

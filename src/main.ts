@@ -4,6 +4,7 @@ import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
 import { createHeightmapTerrainProvider, loadHeightmapTerrainManifest } from "./engine/globe/terrain/heightmap-terrain-provider";
+import { createProceduralTerrainProvider } from "./engine/globe/terrain/procedural-terrain-provider";
 import { findPreprocessJob, loadPreprocessManifest } from "./engine/preprocess/preprocess-manifest";
 import { roadmap } from "./roadmap";
 
@@ -49,6 +50,9 @@ app.innerHTML = `
             </button>
             <button id="model-toggle" class="debug-toggle" type="button" aria-pressed="false">
               Model
+            </button>
+            <button id="terrain-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              Terrain
             </button>
           </section>
           <section class="control-section" aria-label="Tempo">
@@ -186,6 +190,7 @@ const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
+const terrainToggle = document.querySelector<HTMLButtonElement>("#terrain-toggle");
 const mobileControlsToggle = document.querySelector<HTMLButtonElement>("#mobile-controls-toggle");
 const hudControls = document.querySelector<HTMLElement>("#demo-toc");
 const infoToggle = document.querySelector<HTMLButtonElement>("#info-toggle");
@@ -217,6 +222,7 @@ if (
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
+  !terrainToggle ||
   !mobileControlsToggle ||
   !hudControls ||
   !infoToggle ||
@@ -252,6 +258,7 @@ const cameraSnapshotCopyElement = cameraSnapshotCopy;
 const cameraKeyframeCopyElement = cameraKeyframeCopy;
 const cameraSnapshotStatusElement = cameraSnapshotStatus;
 const cameraSnapshotOutputElement = cameraSnapshotOutput;
+const terrainToggleElement = terrainToggle;
 const compactLayout = window.matchMedia("(max-width: 920px)");
 
 syncResponsivePanels(compactLayout.matches);
@@ -324,6 +331,7 @@ const viewer = new GeoViewer({
     enabled: true,
     clearance: 1,
   },
+  terrainExaggeration: 18,
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
@@ -404,6 +412,14 @@ modelToggle.addEventListener("click", () => {
   viewer.setDebugModelVisible(debugModelVisible);
   modelToggle.setAttribute("aria-pressed", String(debugModelVisible));
   modelToggle.textContent = debugModelVisible ? "Model ON" : "Model";
+});
+
+let proceduralTerrainVisible = false;
+terrainToggleElement.addEventListener("click", () => {
+  proceduralTerrainVisible = !proceduralTerrainVisible;
+  viewer.setTerrainProvider(proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined);
+  terrainToggleElement.setAttribute("aria-pressed", String(proceduralTerrainVisible));
+  terrainToggleElement.textContent = proceduralTerrainVisible ? "Terrain ON" : "Terrain";
 });
 
 rendererToggleElement.addEventListener("click", () => {

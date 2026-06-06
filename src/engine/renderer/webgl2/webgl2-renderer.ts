@@ -4,6 +4,8 @@ import { normalize, type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
+import { type TerrainMesh } from "../../globe/terrain/terrain-mesh";
+import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { createRendererFramePlan } from "../interface/render-frame-plan";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { RendererResourceManager, type RendererResourceHandle } from "../interface/resource-manager";
@@ -121,6 +123,8 @@ export class WebGL2Renderer implements Renderer {
   private sunDirection: Vec3 = normalize([-0.25, 0.52, 0.82]);
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
+  private readonly terrainMeshes = new Map<string, GpuMesh>();
+  private readonly activeTerrainIds = new Set<string>();
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
@@ -186,6 +190,22 @@ export class WebGL2Renderer implements Renderer {
 
     for (const id of ids) {
       this.activeTileIds.add(id);
+    }
+  }
+
+  setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
+    if (!this.gl) {
+      return;
+    }
+
+    this.activeTerrainIds.clear();
+
+    for (const entry of meshes) {
+      this.activeTerrainIds.add(entry.id);
+
+      if (!this.terrainMeshes.has(entry.id)) {
+        this.terrainMeshes.set(entry.id, uploadTerrainMesh(this.gl, entry.mesh, this.resourceManager));
+      }
     }
   }
 
@@ -322,6 +342,8 @@ export class WebGL2Renderer implements Renderer {
       this.renderImageryTiles(plan.projection, plan.view);
     }
 
+    this.renderTerrainMeshes(plan.projection, plan.view);
+
     if (plan.passes.includes("vector")) {
       this.renderVectorLines(plan.projection, plan.view, plan.cameraPosition);
     }
@@ -370,6 +392,10 @@ export class WebGL2Renderer implements Renderer {
       this.gl.deleteTexture(entry.texture);
       this.resourceManager.release(entry.textureResource);
     }
+
+    for (const mesh of this.terrainMeshes.values()) {
+      deleteMesh(this.gl, mesh, this.resourceManager);
+    }
   }
 
   private renderImageryTiles(projection: Float32Array, view: Float32Array): void {
@@ -398,6 +424,33 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
+  }
+
+  private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
+    if (!this.gl || !this.tileProgram || this.activeTerrainIds.size === 0 || !this.imageryTexture) {
+      return;
+    }
+
+    this.gl.useProgram(this.tileProgram.program);
+    this.gl.depthMask(true);
+    this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
+    this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, identityMatrix());
+    this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
+    this.gl.uniform1i(this.tileProgram.uImagery, 0);
+
+    for (const id of this.activeTerrainIds) {
+      const mesh = this.terrainMeshes.get(id);
+
+      if (!mesh) {
+        continue;
+      }
+
+      this.gl.bindVertexArray(mesh.vao);
+      this.gl.drawElements(this.gl.TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+    }
   }
 
   private renderVectorLines(projection: Float32Array, view: Float32Array, cameraPosition: readonly [number, number, number]): void {
@@ -701,7 +754,7 @@ function uploadMesh(
 
 function uploadTileMesh(
   gl: WebGL2RenderingContext,
-  mesh: ReturnType<typeof createEllipsoidTileMesh>,
+  mesh: { vertices: Float32Array; indices: Uint16Array | Uint32Array; vertexStride: number },
   resources: RendererResourceManager,
 ): GpuMesh {
   const vao = gl.createVertexArray();
@@ -735,7 +788,41 @@ function uploadTileMesh(
     indexBuffer,
     indexBufferResource: resources.track("buffer"),
     indexCount: mesh.indices.length,
-    indexType: gl.UNSIGNED_SHORT,
+    indexType: mesh.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+  };
+}
+
+function uploadTerrainMesh(gl: WebGL2RenderingContext, mesh: TerrainMesh, resources: RendererResourceManager): GpuMesh {
+  return uploadTileMesh(gl, packTerrainMesh(mesh), resources);
+}
+
+function packTerrainMesh(mesh: TerrainMesh): {
+  vertices: Float32Array;
+  indices: Uint16Array | Uint32Array;
+  vertexStride: number;
+} {
+  const vertexCount = mesh.positions.length / 3;
+  const vertices = new Float32Array(vertexCount * 8);
+
+  for (let index = 0; index < vertexCount; index += 1) {
+    const positionOffset = index * 3;
+    const texcoordOffset = index * 2;
+    const vertexOffset = index * 8;
+
+    vertices[vertexOffset] = mesh.positions[positionOffset];
+    vertices[vertexOffset + 1] = mesh.positions[positionOffset + 1];
+    vertices[vertexOffset + 2] = mesh.positions[positionOffset + 2];
+    vertices[vertexOffset + 3] = mesh.normals[positionOffset];
+    vertices[vertexOffset + 4] = mesh.normals[positionOffset + 1];
+    vertices[vertexOffset + 5] = mesh.normals[positionOffset + 2];
+    vertices[vertexOffset + 6] = mesh.texcoords[texcoordOffset];
+    vertices[vertexOffset + 7] = mesh.texcoords[texcoordOffset + 1];
+  }
+
+  return {
+    vertices,
+    indices: mesh.indices,
+    vertexStride: 8,
   };
 }
 

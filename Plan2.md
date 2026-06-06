@@ -757,6 +757,7 @@ Step:
 - generare mesh tile su ellissoide WGS84 da heightmap normalizzata per il renderer
 - aggiungere LOD quadtree terrain con budget tile e copertura viewport
 - aggiungere runtime terrain surface con cache mesh CPU e throttling richieste
+- renderizzare mesh terrain nei backend WebGL2/WebGPU con toggle demo procedurale
 - aggiungere skirt per evitare crepe tra tile
 - aggiungere morphing tra livelli LOD
 - calcolare normali terrain
