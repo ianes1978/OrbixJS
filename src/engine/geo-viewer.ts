@@ -1,5 +1,5 @@
 import { OrbitCamera } from "./core/camera/orbit-camera";
-import { type CameraFlyToOptions } from "./core/camera/orbit-camera";
+import { type CameraFlyToOptions, type CameraSnapshot } from "./core/camera/orbit-camera";
 import { sunDirectionFromDate } from "./core/astro/sun-position";
 import { PointerController } from "./core/events/pointer-controller";
 import { Ellipsoid } from "./core/geodesy/ellipsoid";
@@ -321,6 +321,10 @@ export class GeoViewer {
 
   flyTo(options: CameraFlyToOptions): void {
     this.camera.flyTo(options);
+  }
+
+  cameraSnapshot(): CameraSnapshot {
+    return this.camera.snapshot();
   }
 
   pickGlobe(clientX: number, clientY: number): { lon: number; lat: number; height: number } | undefined {

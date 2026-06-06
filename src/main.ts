@@ -70,10 +70,24 @@ app.innerHTML = `
             <button id="camera-path-stop" class="debug-toggle compact-toggle" type="button" disabled>
               Stop path
             </button>
+            <button id="camera-snapshot-copy" class="debug-toggle compact-toggle" type="button">
+              Copy camera
+            </button>
             <div class="metric compact-metric">
               <span>Stato path</span>
               <strong id="camera-path-status">nessun path</strong>
             </div>
+            <div class="metric compact-metric">
+              <span>Export camera</span>
+              <strong id="camera-snapshot-status">pronto</strong>
+            </div>
+            <textarea
+              id="camera-snapshot-output"
+              class="snapshot-output"
+              aria-label="Camera snapshot JSON"
+              readonly
+              hidden
+            ></textarea>
           </section>
         </nav>
 
@@ -141,6 +155,9 @@ const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly
 const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
 const cameraPathStop = document.querySelector<HTMLButtonElement>("#camera-path-stop");
 const cameraPathStatus = document.querySelector<HTMLElement>("#camera-path-status");
+const cameraSnapshotCopy = document.querySelector<HTMLButtonElement>("#camera-snapshot-copy");
+const cameraSnapshotStatus = document.querySelector<HTMLElement>("#camera-snapshot-status");
+const cameraSnapshotOutput = document.querySelector<HTMLTextAreaElement>("#camera-snapshot-output");
 
 if (
   !list ||
@@ -163,6 +180,9 @@ if (
   !cameraPathControls ||
   !cameraPathStop ||
   !cameraPathStatus ||
+  !cameraSnapshotCopy ||
+  !cameraSnapshotStatus ||
+  !cameraSnapshotOutput ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
@@ -176,6 +196,9 @@ const infoPanelElement = infoPanel;
 const cameraPathControlsElement = cameraPathControls;
 const cameraPathStopElement = cameraPathStop;
 const cameraPathStatusElement = cameraPathStatus;
+const cameraSnapshotCopyElement = cameraSnapshotCopy;
+const cameraSnapshotStatusElement = cameraSnapshotStatus;
+const cameraSnapshotOutputElement = cameraSnapshotOutput;
 const compactLayout = window.matchMedia("(max-width: 920px)");
 
 syncResponsivePanels(compactLayout.matches);
@@ -354,6 +377,10 @@ cameraPathStopElement.addEventListener("click", () => {
   stopCameraPath("fermato");
 });
 
+cameraSnapshotCopyElement.addEventListener("click", () => {
+  void copyCameraSnapshot();
+});
+
 let activePickingCanvas: HTMLCanvasElement | undefined;
 let pickStart: { x: number; y: number } | undefined;
 
@@ -526,6 +553,58 @@ function syncCameraPathButtons(): void {
     button.disabled = activeCameraPathId !== undefined && !active;
     button.setAttribute("aria-pressed", String(active));
   });
+}
+
+async function copyCameraSnapshot(): Promise<void> {
+  const snapshot = viewer.cameraSnapshot();
+  const payload = JSON.stringify(snapshot, null, 2);
+
+  cameraSnapshotCopyElement.disabled = true;
+  cameraSnapshotOutputElement.value = payload;
+
+  if (await writeClipboardText(payload)) {
+    cameraSnapshotOutputElement.hidden = true;
+    cameraSnapshotStatusElement.textContent = "copiata";
+  } else {
+    cameraSnapshotOutputElement.hidden = false;
+    const copied = copySelectedSnapshotText();
+    cameraSnapshotStatusElement.textContent = copied ? "copiata fallback" : "JSON pronto";
+  }
+
+  window.setTimeout(() => {
+    if (cameraSnapshotStatusElement.textContent !== "JSON pronto") {
+      cameraSnapshotStatusElement.textContent = "pronto";
+    }
+    window.setTimeout(() => {
+      cameraSnapshotCopyElement.disabled = false;
+    }, 0);
+  }, 1600);
+}
+
+async function writeClipboardText(payload: string): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) {
+    return false;
+  }
+
+  try {
+    await navigator.clipboard.writeText(payload);
+    return true;
+  } catch (error) {
+    console.warn("Camera snapshot clipboard failed", error);
+    return false;
+  }
+}
+
+function copySelectedSnapshotText(): boolean {
+  cameraSnapshotOutputElement.focus();
+  cameraSnapshotOutputElement.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch (error) {
+    console.warn("Camera snapshot fallback copy failed", error);
+    return false;
+  }
 }
 
 function demoAssetUrl(path: string): string {

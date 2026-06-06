@@ -47,6 +47,7 @@ export {
   type CameraPathMode,
   type CameraPathSample,
 } from "./engine/core/camera/camera-path";
+export { type CameraFlyToOptions, type CameraSnapshot, OrbitCamera } from "./engine/core/camera/orbit-camera";
 export {
   createRenderPassList,
   createRendererFramePlan,

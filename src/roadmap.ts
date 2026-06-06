@@ -76,7 +76,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Keyframe in progetto", done: true },
       { label: "Interpolazione playback", done: true },
       { label: "Terrain-follow", done: false },
-      { label: "Export camera", done: false },
+      { label: "Export camera", done: true },
     ],
   },
   {

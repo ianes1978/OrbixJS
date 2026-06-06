@@ -106,6 +106,36 @@ describe("OrbitCamera", () => {
     expect(camera.distance).toBeCloseTo(1 + 1_000_000 / 6_378_137);
   });
 
+  it("exports an independent camera snapshot", () => {
+    const camera = new OrbitCamera({ target: [0.1, 0.2, 0.3], distance: 2.4, yaw: 0.7, pitch: -0.2 });
+
+    camera.tilt(0.3);
+    const snapshot = camera.snapshot();
+    camera.target[0] = 0.9;
+
+    expect(snapshot.target).toEqual([0.1, 0.2, 0.3]);
+    expect(snapshot.position).toHaveLength(3);
+    expect(snapshot.distance).toBe(2.4);
+    expect(snapshot.yaw).toBe(0.7);
+    expect(snapshot.pitch).toBe(-0.2);
+    expect(snapshot.tiltOffset).toBe(0.3);
+  });
+
+  it("restores a camera snapshot", () => {
+    const camera = new OrbitCamera({ target: [0.1, 0.2, 0.3], distance: 2.4, yaw: 0.7, pitch: -0.2 });
+
+    camera.tilt(0.3);
+    const snapshot = camera.snapshot();
+    camera.flyTo({ lon: 139.7, lat: 35.7, height: 1_200_000 });
+    camera.restoreSnapshot(snapshot);
+
+    expect(camera.target).toEqual([0.1, 0.2, 0.3]);
+    expect(camera.distance).toBeCloseTo(2.4);
+    expect(camera.yaw).toBeCloseTo(0.7);
+    expect(camera.pitch).toBeCloseTo(-0.2);
+    expect(camera.tiltOffset).toBeCloseTo(0.3);
+  });
+
   it("pans the camera target in the view plane", () => {
     const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
 

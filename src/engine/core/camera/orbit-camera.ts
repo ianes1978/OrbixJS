@@ -8,6 +8,20 @@ export type CameraFlyToOptions = {
   height?: number;
 };
 
+export type CameraSnapshot = {
+  target: MutableVec3;
+  distance: number;
+  minDistance: number;
+  maxDistance: number;
+  yaw: number;
+  pitch: number;
+  tiltOffset: number;
+  fov: number;
+  near: number;
+  far: number;
+  position: MutableVec3;
+};
+
 export type OrbitCameraOptions = {
   target?: MutableVec3;
   distance?: number;
@@ -170,6 +184,38 @@ export class OrbitCamera {
     this.target[1] = 0;
     this.target[2] = 0;
     this.distance = clamp(1 + height / 6_378_137, this.minDistance, this.maxDistance);
+  }
+
+  snapshot(): CameraSnapshot {
+    return {
+      target: [...this.target],
+      distance: this.distance,
+      minDistance: this.minDistance,
+      maxDistance: this.maxDistance,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      tiltOffset: this.tiltOffset,
+      fov: this.fov,
+      near: this.near,
+      far: this.far,
+      position: this.position,
+    };
+  }
+
+  restoreSnapshot(snapshot: CameraSnapshot): void {
+    this.target[0] = snapshot.target[0];
+    this.target[1] = snapshot.target[1];
+    this.target[2] = snapshot.target[2];
+    this.minDistance = snapshot.minDistance;
+    this.maxDistance = snapshot.maxDistance;
+    this.distance = clamp(snapshot.distance, this.minDistance, this.maxDistance);
+    this.yaw = snapshot.yaw;
+    this.pitch = clamp(snapshot.pitch, -1.42, 1.42);
+    this.tiltOffset = clamp(snapshot.tiltOffset, -1.4, 1.4);
+    this.fov = snapshot.fov;
+    this.near = snapshot.near;
+    this.far = snapshot.far;
+    this.keepAboveSurface();
   }
 
   get position(): MutableVec3 {

@@ -295,6 +295,18 @@ h2 {
   font-size: 0.86rem;
 }
 
+.snapshot-output {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  border: 1px solid rgba(232, 237, 240, 0.18);
+  background: rgba(8, 17, 20, 0.84);
+  color: #e8edf0;
+  font: 0.72rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  outline: none;
+  padding: 10px;
+}
+
 .metric span,
 .overall-copy span {
   display: block;
