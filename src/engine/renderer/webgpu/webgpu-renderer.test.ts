@@ -39,7 +39,19 @@ describe("WebGPURenderer", () => {
       format: "depth24plus",
       usage: 16,
     });
-    expect(device.createSampler).not.toHaveBeenCalled();
+    expect(device.createTexture).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU imagery texture",
+      size: [1, 1],
+      format: "rgba8unorm",
+      usage: 6,
+    });
+    expect(device.createSampler).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU imagery sampler",
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
     expect(configure).toHaveBeenCalledWith({
       device,
       format: "rgba8unorm",
@@ -83,7 +95,7 @@ describe("WebGPURenderer", () => {
     expect(device.queue.submit).toHaveBeenCalledWith(["command-buffer"]);
   });
 
-  it("ignores imagery calls while the WebGPU texture path is disabled", async () => {
+  it("uploads globe imagery into a sampled WebGPU texture", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
     const canvas = createCanvasMock();
@@ -96,11 +108,22 @@ describe("WebGPURenderer", () => {
     const renderer = new WebGPURenderer(canvas, { gpu });
 
     await renderer.initialize();
-    renderer.setImagery({ width: 512, height: 256 } as TexImageSource);
+    const image = { width: 512, height: 256 } as TexImageSource;
+
+    renderer.setImagery(image);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
 
-    expect(device.createTexture).toHaveBeenCalledTimes(1);
-    expect(device.createSampler).not.toHaveBeenCalled();
+    expect(device.createTexture).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU imagery texture",
+      size: [512, 256],
+      format: "rgba8unorm",
+      usage: 6,
+    });
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      { texture: expect.anything() },
+      [512, 256],
+    );
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
 
@@ -148,6 +171,7 @@ function createDeviceMock() {
   return {
     queue: {
       writeBuffer: vi.fn(),
+      copyExternalImageToTexture: vi.fn(),
       submit: vi.fn(),
     },
     pass,
@@ -158,7 +182,7 @@ function createDeviceMock() {
     })),
     createBuffer: vi.fn((options) => ({ options, destroy: vi.fn() })),
     createTexture: vi.fn(() => ({ createView: vi.fn(() => "depth-view"), destroy: vi.fn() })),
-    createSampler: vi.fn(),
+    createSampler: vi.fn(() => "sampler"),
     createBindGroup: vi.fn((options) => ({ options })),
     commandEncoder,
     createCommandEncoder: vi.fn(() => commandEncoder),

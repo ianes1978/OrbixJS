@@ -14,10 +14,13 @@ const webGpuBufferUsage = {
 } as const;
 
 const webGpuTextureUsage = {
+  copyDst: 0x02,
+  textureBinding: 0x04,
   renderAttachment: 0x10,
 } as const;
 
 const webGpuDepthFormat = "depth24plus";
+const webGpuImageryFormat = "rgba8unorm";
 
 const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
 
@@ -48,9 +51,16 @@ type WebGpuDeviceLike = {
   createTexture(options: {
     label?: string;
     size: [number, number];
-    format: typeof webGpuDepthFormat;
+    format: typeof webGpuDepthFormat | typeof webGpuImageryFormat;
     usage: number;
   }): WebGpuTextureLike;
+  createSampler(options: {
+    label?: string;
+    magFilter: "linear";
+    minFilter: "linear";
+    addressModeU: "clamp-to-edge";
+    addressModeV: "clamp-to-edge";
+  }): WebGpuSamplerLike;
   createBindGroup(options: {
     label?: string;
     layout: unknown;
@@ -83,6 +93,11 @@ type WebGpuQueueLike = {
     dataOffset?: number,
     size?: number,
   ): void;
+  copyExternalImageToTexture(
+    source: { source: TexImageSource },
+    destination: { texture: WebGpuTextureLike },
+    copySize: [number, number],
+  ): void;
   submit(commandBuffers: readonly unknown[]): void;
 };
 
@@ -96,6 +111,8 @@ type WebGpuTextureLike = {
   createView(): unknown;
   destroy?: () => void;
 };
+
+type WebGpuSamplerLike = unknown;
 
 type WebGpuRenderPipelineLike = {
   getBindGroupLayout(index: number): unknown;
@@ -203,6 +220,11 @@ export class WebGPURenderer implements Renderer {
   private globeUniformBuffer: WebGpuBufferLike | undefined;
   private depthTexture: WebGpuTextureLike | undefined;
   private depthTextureSize: readonly [number, number] | undefined;
+  private imageryTexture: WebGpuTextureLike | undefined;
+  private imagerySampler: WebGpuSamplerLike | undefined;
+  private imageryTextureSize: readonly [number, number] | undefined;
+  private imageryReady = false;
+  private pendingImagery: TexImageSource | undefined;
   private globeIndexCount = 0;
 
   constructor(
@@ -225,8 +247,13 @@ export class WebGPURenderer implements Renderer {
     return this.initialized;
   }
 
-  setImagery(_image: TexImageSource): void {
-    // WebGPU imagery is intentionally disabled until the texture path is reintroduced safely.
+  setImagery(image: TexImageSource): void {
+    if (!this.device || !this.globePipeline) {
+      this.pendingImagery = image;
+      return;
+    }
+
+    this.uploadImagery(image);
   }
 
   setImageryTile(_tile: QuadtreeTile, _image: TexImageSource): void {
@@ -334,8 +361,8 @@ export class WebGPURenderer implements Renderer {
     this.ensureDepthTexture();
 
     const aspect = this.canvas.width / this.canvas.height;
-    const viewProjection = webGpuViewProjection(frame, aspect);
-    this.device.queue.writeBuffer(this.globeUniformBuffer, 0, viewProjection);
+    const uniforms = createGlobeUniforms(webGpuViewProjection(frame, aspect), this.imageryReady);
+    this.device.queue.writeBuffer(this.globeUniformBuffer, 0, uniforms);
 
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder({ label: "OrbixJS WebGPU frame" });
@@ -375,6 +402,7 @@ export class WebGPURenderer implements Renderer {
     this.globeIndexBuffer?.destroy?.();
     this.globeUniformBuffer?.destroy?.();
     this.depthTexture?.destroy?.();
+    this.imageryTexture?.destroy?.();
     this.device?.destroy?.();
     this.initialized = false;
     this.context = undefined;
@@ -387,6 +415,11 @@ export class WebGPURenderer implements Renderer {
     this.globeUniformBuffer = undefined;
     this.depthTexture = undefined;
     this.depthTextureSize = undefined;
+    this.imageryTexture = undefined;
+    this.imagerySampler = undefined;
+    this.imageryTextureSize = undefined;
+    this.imageryReady = false;
+    this.pendingImagery = undefined;
     this.globeIndexCount = 0;
   }
 
@@ -428,7 +461,7 @@ export class WebGPURenderer implements Renderer {
     });
     this.globeUniformBuffer = this.device.createBuffer({
       label: "OrbixJS globe uniforms",
-      size: 16 * Float32Array.BYTES_PER_ELEMENT,
+      size: 20 * Float32Array.BYTES_PER_ELEMENT,
       usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
     });
     this.device.queue.writeBuffer(this.globeVertexBuffer, 0, mesh.vertices);
@@ -446,6 +479,8 @@ export class WebGPURenderer implements Renderer {
             attributes: [
               { shaderLocation: 0, offset: 0, format: "float32x3" },
               { shaderLocation: 1, offset: 3 * Float32Array.BYTES_PER_ELEMENT, format: "float32x3" },
+              { shaderLocation: 2, offset: 6 * Float32Array.BYTES_PER_ELEMENT, format: "float32x3" },
+              { shaderLocation: 3, offset: 9 * Float32Array.BYTES_PER_ELEMENT, format: "float32x2" },
             ],
           },
         ],
@@ -467,6 +502,11 @@ export class WebGPURenderer implements Renderer {
     });
     this.createGlobeBindGroup();
     this.globeIndexCount = mesh.indices.length;
+
+    if (this.pendingImagery) {
+      this.uploadImagery(this.pendingImagery);
+      this.pendingImagery = undefined;
+    }
   }
 
   private ensureDepthTexture(): void {
@@ -495,6 +535,12 @@ export class WebGPURenderer implements Renderer {
       return;
     }
 
+    this.ensureImageryResources();
+
+    if (!this.imagerySampler || !this.imageryTexture) {
+      return;
+    }
+
     this.globeBindGroup = this.device.createBindGroup({
       label: "OrbixJS globe bind group",
       layout: this.globePipeline.getBindGroupLayout(0),
@@ -505,11 +551,89 @@ export class WebGPURenderer implements Renderer {
             buffer: this.globeUniformBuffer,
           },
         },
+        {
+          binding: 1,
+          resource: this.imagerySampler,
+        },
+        {
+          binding: 2,
+          resource: this.imageryTexture.createView(),
+        },
       ],
     });
+  }
+
+  private ensureImageryResources(size: readonly [number, number] = [1, 1]): void {
+    if (!this.device) {
+      return;
+    }
+
+    if (!this.imagerySampler) {
+      this.imagerySampler = this.device.createSampler({
+        label: "OrbixJS WebGPU imagery sampler",
+        magFilter: "linear",
+        minFilter: "linear",
+        addressModeU: "clamp-to-edge",
+        addressModeV: "clamp-to-edge",
+      });
+    }
+
+    if (this.imageryTexture && this.imageryTextureSize?.[0] === size[0] && this.imageryTextureSize[1] === size[1]) {
+      return;
+    }
+
+    this.imageryTexture?.destroy?.();
+    this.imageryTexture = this.device.createTexture({
+      label: "OrbixJS WebGPU imagery texture",
+      size: [size[0], size[1]],
+      format: webGpuImageryFormat,
+      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
+    });
+    this.imageryTextureSize = [size[0], size[1]];
+    this.createGlobeBindGroup();
+  }
+
+  private uploadImagery(image: TexImageSource): void {
+    if (!this.device) {
+      this.pendingImagery = image;
+      return;
+    }
+
+    const size = imageSize(image);
+    this.ensureImageryResources(size);
+
+    if (!this.imageryTexture) {
+      return;
+    }
+
+    this.device.queue.copyExternalImageToTexture({ source: image }, { texture: this.imageryTexture }, [size[0], size[1]]);
+    this.imageryReady = true;
+    this.createGlobeBindGroup();
   }
 }
 
 function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {
   return multiply(webGpuClipSpaceCorrection, multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix()));
+}
+
+function createGlobeUniforms(viewProjection: Float32Array, imageryReady: boolean): Float32Array {
+  const uniforms = new Float32Array(20);
+  uniforms.set(viewProjection, 0);
+  uniforms[16] = imageryReady ? 1 : 0;
+  return uniforms;
+}
+
+function imageSize(image: TexImageSource): [number, number] {
+  const source = image as {
+    width?: number;
+    height?: number;
+    videoWidth?: number;
+    videoHeight?: number;
+    naturalWidth?: number;
+    naturalHeight?: number;
+  };
+  const width = source.videoWidth ?? source.naturalWidth ?? source.width ?? 1;
+  const height = source.videoHeight ?? source.naturalHeight ?? source.height ?? 1;
+
+  return [Math.max(1, Math.floor(width)), Math.max(1, Math.floor(height))];
 }
