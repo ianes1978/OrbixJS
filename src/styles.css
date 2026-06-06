@@ -267,6 +267,10 @@ h2 {
   font-weight: 700;
 }
 
+.path-presets {
+  margin-top: 4px;
+}
+
 .metric span,
 .overall-copy span {
   display: block;

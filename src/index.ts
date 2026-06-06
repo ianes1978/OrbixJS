@@ -38,6 +38,16 @@ export {
 } from "./engine/project/orbix-project";
 export { sunDirectionFromDate } from "./engine/core/astro/sun-position";
 export {
+  cameraPathDuration,
+  sampleCameraPath,
+  validateCameraPath,
+  type CameraKeyframe,
+  type CameraPath,
+  type CameraPathEasing,
+  type CameraPathMode,
+  type CameraPathSample,
+} from "./engine/core/camera/camera-path";
+export {
   createRenderPassList,
   createRendererFramePlan,
   type RendererFrameNode,

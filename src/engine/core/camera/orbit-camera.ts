@@ -1,4 +1,5 @@
 import { lookAt, perspective, type Mat4 } from "../math/mat4";
+import { type Ray } from "../math/ray";
 import { add, cross, dot, length, normalize, scale, subtract, type MutableVec3, type Vec3 } from "../math/vec3";
 
 export type CameraFlyToOptions = {
@@ -14,6 +15,11 @@ export type OrbitCameraOptions = {
   maxDistance?: number;
   yaw?: number;
   pitch?: number;
+};
+
+export type GrabbedPointMoveOptions = {
+  strength?: number;
+  maxStep?: number;
 };
 
 export class OrbitCamera {
@@ -70,6 +76,44 @@ export class OrbitCamera {
     );
     this.yaw = Math.atan2(nextDirection[0], nextDirection[2]);
     this.pitch = clamp(Math.asin(nextDirection[1]), -1.42, 1.42);
+  }
+
+  moveGrabbedPointToRay(point: Vec3, ray: Ray, options: GrabbedPointMoveOptions = {}): boolean {
+    const rayDistance = dot(subtract(point, ray.origin), ray.direction);
+
+    if (!Number.isFinite(rayDistance) || rayDistance <= 0) {
+      return false;
+    }
+
+    const closestPoint = add(ray.origin, scale(ray.direction, rayDistance));
+    const correction = this.limitTargetOffset(subtract(point, closestPoint));
+    const correctionLength = length(correction);
+
+    if (!Number.isFinite(correctionLength)) {
+      return false;
+    }
+
+    if (correctionLength < 1e-10) {
+      return true;
+    }
+
+    const strength = clamp(options.strength ?? 1, 0, 1);
+    const maxStep = Math.max(0, options.maxStep ?? Number.POSITIVE_INFINITY);
+    const stepLength = Math.min(correctionLength * strength, maxStep);
+    const offset = scale(correction, stepLength / correctionLength);
+    const nextTarget = add(this.target, offset);
+    const nextPosition = add(this.position, offset);
+    const nextPositionLength = length(nextPosition);
+
+    this.target[0] = nextTarget[0];
+    this.target[1] = nextTarget[1];
+    this.target[2] = nextTarget[2];
+
+    if (nextPositionLength < this.minDistance) {
+      this.distance += this.minDistance - nextPositionLength;
+    }
+
+    return true;
   }
 
   dragSensitivityScale(): number {
@@ -168,6 +212,25 @@ export class OrbitCamera {
 
   private keepAboveSurface(): void {
     this.distance = clamp(this.distance, surfaceExitDistance(this.target, this.orbitDirection(), this.minDistance), this.maxDistance);
+  }
+
+  private limitTargetOffset(offset: Vec3): MutableVec3 {
+    const nextTarget = add(this.target, offset);
+    const targetLimit = 0.95;
+    const nextTargetLength = length(nextTarget);
+
+    if (nextTargetLength <= targetLimit) {
+      return [offset[0], offset[1], offset[2]];
+    }
+
+    const currentTargetLength = length(this.target);
+
+    if (currentTargetLength >= targetLimit) {
+      return [0, 0, 0];
+    }
+
+    const limitedTarget = scale(normalize(nextTarget), targetLimit);
+    return subtract(limitedTarget, this.target);
   }
 }
 

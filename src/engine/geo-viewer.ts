@@ -582,7 +582,18 @@ export class GeoViewer {
 
   private createPointerController(): PointerController {
     return new PointerController(this.canvas, this.camera, {
-      pickSurfacePoint: (clientX, clientY) => this.pickUnitSphere(clientX, clientY),
+      pickSurfacePoint: (clientX, clientY) => this.pickSurfacePatchPoint(clientX, clientY),
+      moveSurfacePointToCursor: (point, clientX, clientY) => {
+        const ray = this.pickRay(clientX, clientY);
+        const dragScale = this.camera.dragSensitivityScale();
+
+        return ray
+          ? this.camera.moveGrabbedPointToRay(point, ray, {
+              strength: 0.62,
+              maxStep: 0.0022 + dragScale * 0.032,
+            })
+          : false;
+      },
     });
   }
 
@@ -898,6 +909,50 @@ export class GeoViewer {
     return intersectUnitSphere(ray);
   }
 
+  private pickSurfacePatchPoint(clientX: number, clientY: number): Vec3 | undefined {
+    const ray = this.pickRay(clientX, clientY);
+
+    if (!ray) {
+      return undefined;
+    }
+
+    const hit = intersectNormalizedWgs84Surface(ray, 1500);
+
+    if (!hit || !hit.every(Number.isFinite)) {
+      return this.pickUnitSphere(clientX, clientY);
+    }
+
+    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(hit);
+
+    if (this.isOnVisibleImageryPatch(cartographic.lon, cartographic.lat)) {
+      return hit;
+    }
+
+    return this.pickUnitSphere(clientX, clientY);
+  }
+
+  private isOnVisibleImageryPatch(lon: number, lat: number): boolean {
+    if (this.lastActiveTileIds.length === 0) {
+      return true;
+    }
+
+    for (const tileId of this.lastActiveTileIds) {
+      const tile = this.imagery.findTile(tileId) ?? this.currentTileImages.get(tileId)?.tile;
+
+      if (!tile) {
+        continue;
+      }
+
+      const rectangle = this.imageryTiling.tileXYToRectangle(tile);
+
+      if (lat >= rectangle.south && lat <= rectangle.north && lon >= rectangle.west && lon <= rectangle.east) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private pickRayFromNdc(x: number, y: number): Ray {
     const width = this.canvas.width || this.canvas.clientWidth;
     const height = this.canvas.height || this.canvas.clientHeight;
@@ -988,4 +1043,49 @@ function intersectSphere(ray: Ray, sphere: { center: Vec3; radius: number }): nu
   const t = near >= 0 ? near : far;
 
   return t >= 0 ? t : undefined;
+}
+
+function intersectNormalizedWgs84Surface(ray: Ray, heightMeters: number): Vec3 | undefined {
+  const ellipsoid = Ellipsoid.WGS84;
+  const maxRadius = ellipsoid.maximumRadius;
+  const axes = [
+    (ellipsoid.radii[0] + heightMeters) / maxRadius,
+    (ellipsoid.radii[1] + heightMeters) / maxRadius,
+    (ellipsoid.radii[2] + heightMeters) / maxRadius,
+  ] as const;
+  const inverseAxesSquared = axes.map((axis) => 1 / (axis * axis)) as [number, number, number];
+  const a =
+    ray.direction[0] * ray.direction[0] * inverseAxesSquared[0] +
+    ray.direction[1] * ray.direction[1] * inverseAxesSquared[1] +
+    ray.direction[2] * ray.direction[2] * inverseAxesSquared[2];
+  const b =
+    2 *
+    (ray.origin[0] * ray.direction[0] * inverseAxesSquared[0] +
+      ray.origin[1] * ray.direction[1] * inverseAxesSquared[1] +
+      ray.origin[2] * ray.direction[2] * inverseAxesSquared[2]);
+  const c =
+    ray.origin[0] * ray.origin[0] * inverseAxesSquared[0] +
+    ray.origin[1] * ray.origin[1] * inverseAxesSquared[1] +
+    ray.origin[2] * ray.origin[2] * inverseAxesSquared[2] -
+    1;
+  const discriminant = b * b - 4 * a * c;
+
+  if (discriminant < 0) {
+    return undefined;
+  }
+
+  const sqrt = Math.sqrt(discriminant);
+  const near = (-b - sqrt) / (2 * a);
+  const far = (-b + sqrt) / (2 * a);
+  const t = near >= 0 ? near : far;
+
+  if (t < 0) {
+    return undefined;
+  }
+
+  return [
+    ray.origin[0] + ray.direction[0] * t,
+    ray.origin[1] + ray.direction[1] * t,
+    ray.origin[2] + ray.direction[2] * t,
+  ];
 }

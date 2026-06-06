@@ -3,6 +3,7 @@ import { type Vec3 } from "../math/vec3";
 
 export type PointerControllerOptions = {
   pickSurfacePoint?: (clientX: number, clientY: number) => Vec3 | undefined;
+  moveSurfacePointToCursor?: (point: Vec3, clientX: number, clientY: number) => boolean;
 };
 
 export class PointerController {
@@ -76,7 +77,7 @@ export class PointerController {
 
     if (event.altKey) {
       this.surfaceDragPoint = undefined;
-      this.camera.tilt(deltaY * 0.005 * dragScale);
+      this.camera.tilt(deltaY * 0.005);
       return;
     }
 
@@ -87,6 +88,10 @@ export class PointerController {
     }
 
     if (this.surfaceDragPoint) {
+      if (this.options.moveSurfacePointToCursor?.(this.surfaceDragPoint, event.clientX, event.clientY)) {
+        return;
+      }
+
       const currentSurfacePoint = this.pickSurfaceDragPoint(event);
 
       if (currentSurfacePoint) {

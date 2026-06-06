@@ -47,6 +47,36 @@ describe("OrbitCamera", () => {
     expect(camera.target[2]).toBeCloseTo(0.2);
   });
 
+  it("moves the camera so a grabbed world point stays under the cursor ray", () => {
+    const camera = new OrbitCamera({ target: [0, 0, 0], distance: 3.2, yaw: 0, pitch: 0 });
+
+    const moved = camera.moveGrabbedPointToRay([0, 0, 0], {
+      origin: [0.15, 0, 3.1],
+      direction: [0, 0, -1],
+    });
+
+    expect(moved).toBe(true);
+    expect(camera.target[0]).toBeCloseTo(-0.15);
+    expect(camera.target[1]).toBeCloseTo(0);
+    expect(camera.distance).toBeCloseTo(3.2);
+  });
+
+  it("can damp grabbed point corrections for smoother drag", () => {
+    const camera = new OrbitCamera({ target: [0, 0, 0], distance: 3.2, yaw: 0, pitch: 0 });
+
+    camera.moveGrabbedPointToRay(
+      [0, 0, 0],
+      {
+        origin: [0.15, 0, 3.1],
+        direction: [0, 0, -1],
+      },
+      { strength: 0.5, maxStep: 0.04 },
+    );
+
+    expect(camera.target[0]).toBeCloseTo(-0.04);
+    expect(camera.distance).toBeCloseTo(3.2);
+  });
+
   it("scales zoom steps from the altitude above the surface", () => {
     const near = new OrbitCamera({ distance: 1.0002 });
     const far = new OrbitCamera({ distance: 3.2 });

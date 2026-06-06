@@ -1,5 +1,6 @@
 import "./styles.css";
 import { GeoViewer } from "./engine/geo-viewer";
+import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/core/camera/camera-path";
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
 import { roadmap } from "./roadmap";
@@ -62,6 +63,7 @@ app.innerHTML = `
               <button data-fly-to="usa" type="button">USA</button>
               <button data-fly-to="tokyo" type="button">Tokyo</button>
             </div>
+            <div id="camera-paths" class="fly-presets path-presets" aria-label="Camera path presets"></div>
           </section>
         </nav>
 
@@ -126,6 +128,7 @@ const infoToggle = document.querySelector<HTMLButtonElement>("#info-toggle");
 const infoPanel = document.querySelector<HTMLElement>("#info-panel");
 const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
+const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
 
 if (
   !list ||
@@ -145,6 +148,7 @@ if (
   !infoToggle ||
   !infoPanel ||
   !sceneDateInput ||
+  !cameraPathControls ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
@@ -155,6 +159,7 @@ const menuToggleElement = mobileControlsToggle;
 const demoTocElement = hudControls;
 const infoToggleElement = infoToggle;
 const infoPanelElement = infoPanel;
+const cameraPathControlsElement = cameraPathControls;
 const compactLayout = window.matchMedia("(max-width: 920px)");
 
 syncResponsivePanels(compactLayout.matches);
@@ -315,6 +320,7 @@ const flyToPresets = {
   usa: { lon: -100, lat: 40, height: 2_500_000 },
   tokyo: { lon: 139.7, lat: 35.7, height: 1_200_000 },
 };
+let activeCameraPathFrame: number | undefined;
 
 flyPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -387,6 +393,8 @@ async function loadDemoProject(): Promise<void> {
       viewer.flyTo(project.camera);
     }
 
+    renderCameraPathControls(project.cameraPaths ?? []);
+
     for (const layer of project.layers) {
       if (layer.visible === false) {
         continue;
@@ -422,6 +430,46 @@ async function loadDemoProject(): Promise<void> {
     imageryStatusElement.textContent = "fallback";
     tiles3dStatusElement.textContent = "tileset -";
   }
+}
+
+function renderCameraPathControls(paths: readonly CameraPath[]): void {
+  cameraPathControlsElement.replaceChildren();
+
+  for (const path of paths) {
+    const button = document.createElement("button");
+
+    button.type = "button";
+    button.textContent = path.name ?? path.id;
+    button.addEventListener("click", () => {
+      playCameraPath(path);
+    });
+    cameraPathControlsElement.append(button);
+  }
+}
+
+function playCameraPath(path: CameraPath): void {
+  if (activeCameraPathFrame !== undefined) {
+    cancelAnimationFrame(activeCameraPathFrame);
+  }
+
+  const duration = cameraPathDuration(path);
+  const startedAt = performance.now();
+
+  const step = (now: number) => {
+    const elapsedSeconds = (now - startedAt) / 1000;
+    const sample = sampleCameraPath(path, elapsedSeconds);
+
+    viewer.flyTo({ lon: sample.lon, lat: sample.lat, height: sample.height });
+
+    if (!sample.finished && elapsedSeconds <= duration + 0.05) {
+      activeCameraPathFrame = requestAnimationFrame(step);
+      return;
+    }
+
+    activeCameraPathFrame = undefined;
+  };
+
+  activeCameraPathFrame = requestAnimationFrame(step);
 }
 
 function demoAssetUrl(path: string): string {

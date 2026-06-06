@@ -11,6 +11,34 @@
     "lat": 42.5,
     "height": 1500000
   },
+  "cameraPaths": [
+    {
+      "id": "italy-to-alps",
+      "name": "Italia verso Alpi",
+      "mode": "orbit",
+      "keyframes": [
+        {
+          "lon": 12.5,
+          "lat": 42.5,
+          "height": 1500000
+        },
+        {
+          "lon": 11.35,
+          "lat": 46.5,
+          "height": 650000,
+          "duration": 3,
+          "easing": "smoothstep"
+        },
+        {
+          "lon": 11.65,
+          "lat": 46.7,
+          "height": 250000,
+          "duration": 4,
+          "easing": "smoothstep"
+        }
+      ]
+    }
+  ],
   "layers": [
     {
       "id": "basemap",

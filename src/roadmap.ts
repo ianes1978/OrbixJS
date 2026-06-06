@@ -72,9 +72,9 @@ export const roadmap: RoadmapPhase[] = [
     step: "Trasv.",
     title: "Camera paths",
     items: [
-      { label: "Modello CameraPath", done: false },
-      { label: "Keyframe in progetto", done: false },
-      { label: "Interpolazione playback", done: false },
+      { label: "Modello CameraPath", done: true },
+      { label: "Keyframe in progetto", done: true },
+      { label: "Interpolazione playback", done: true },
       { label: "Terrain-follow", done: false },
       { label: "Export camera", done: false },
     ],

@@ -1,4 +1,5 @@
 import { type DataSourceDescriptor } from "../catalog/data-catalog";
+import { validateCameraPath, type CameraPath, type CameraKeyframe } from "../core/camera/camera-path";
 
 export const ORBIX_PROJECT_SCHEMA_VERSION = "0.1";
 export const ORBIX_PROJECT_SUPPORTED_SCHEMA_VERSIONS = ["0.0", ORBIX_PROJECT_SCHEMA_VERSION] as const;
@@ -18,6 +19,7 @@ export type OrbixProject = {
     lat: number;
     height: number;
   };
+  cameraPaths?: CameraPath[];
   layers: OrbixProjectLayer[];
 };
 
@@ -44,6 +46,7 @@ type RawOrbixProject = {
   catalogUrl?: unknown;
   crs?: unknown;
   camera?: unknown;
+  cameraPaths?: unknown;
   layers?: unknown;
 };
 
@@ -70,6 +73,7 @@ export function parseOrbixProject(json: unknown): OrbixProject {
     catalogUrl: optionalString(project.catalogUrl, "project.catalogUrl"),
     crs: parseProjectCrs(project.crs),
     camera: project.camera === undefined ? undefined : parseProjectCamera(project.camera),
+    cameraPaths: project.cameraPaths === undefined ? undefined : parseProjectCameraPaths(project.cameraPaths),
     layers: parseProjectLayers(project.layers),
   };
 }
@@ -143,6 +147,76 @@ function parseProjectCamera(value: unknown): OrbixProject["camera"] {
     lat: expectNumber(camera.lat, "project.camera.lat"),
     height: expectNumber(camera.height, "project.camera.height"),
   };
+}
+
+function parseProjectCameraPaths(value: unknown): CameraPath[] {
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid OrbixProject cameraPaths");
+  }
+
+  return value.map((entry, index) => {
+    const path = expectObject<{
+      id?: unknown;
+      name?: unknown;
+      mode?: unknown;
+      loop?: unknown;
+      keyframes?: unknown;
+    }>(entry, `project.cameraPaths[${index}]`);
+    const mode = optionalString(path.mode, `project.cameraPaths[${index}].mode`);
+
+    if (
+      mode !== undefined &&
+      mode !== "orbit" &&
+      mode !== "first-person" &&
+      mode !== "look-at" &&
+      mode !== "terrain-follow"
+    ) {
+      throw new Error(`Unsupported CameraPath mode: ${mode}`);
+    }
+
+    return validateCameraPath({
+      id: expectString(path.id, `project.cameraPaths[${index}].id`),
+      name: optionalString(path.name, `project.cameraPaths[${index}].name`),
+      mode,
+      loop: optionalBoolean(path.loop, `project.cameraPaths[${index}].loop`),
+      keyframes: parseCameraKeyframes(path.keyframes, `project.cameraPaths[${index}].keyframes`),
+    });
+  });
+}
+
+function parseCameraKeyframes(value: unknown, path: string): CameraKeyframe[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid ${path}`);
+  }
+
+  return value.map((entry, index) => {
+    const keyframe = expectObject<{
+      lon?: unknown;
+      lat?: unknown;
+      height?: unknown;
+      heading?: unknown;
+      pitch?: unknown;
+      fov?: unknown;
+      duration?: unknown;
+      easing?: unknown;
+    }>(entry, `${path}[${index}]`);
+    const easing = optionalString(keyframe.easing, `${path}[${index}].easing`);
+
+    if (easing !== undefined && easing !== "linear" && easing !== "smoothstep") {
+      throw new Error(`Invalid ${path}[${index}].easing`);
+    }
+
+    return {
+      lon: expectNumber(keyframe.lon, `${path}[${index}].lon`),
+      lat: expectNumber(keyframe.lat, `${path}[${index}].lat`),
+      height: expectNumber(keyframe.height, `${path}[${index}].height`),
+      heading: optionalNumber(keyframe.heading, `${path}[${index}].heading`),
+      pitch: optionalNumber(keyframe.pitch, `${path}[${index}].pitch`),
+      fov: optionalNumber(keyframe.fov, `${path}[${index}].fov`),
+      duration: optionalNumber(keyframe.duration, `${path}[${index}].duration`),
+      easing,
+    };
+  });
 }
 
 function parseProjectLayers(value: unknown): OrbixProjectLayer[] {
