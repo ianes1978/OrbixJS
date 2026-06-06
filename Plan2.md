@@ -755,7 +755,8 @@ Step:
 - supportare terrain da OGC API - Tiles dove applicabile
 - studiare COG come sorgente elevation/coverage
 - generare mesh tile su ellissoide WGS84 da heightmap normalizzata per il renderer
-- aggiungere LOD quadtree terrain
+- aggiungere LOD quadtree terrain con budget tile e copertura viewport
+- aggiungere runtime terrain surface con cache mesh CPU e throttling richieste
 - aggiungere skirt per evitare crepe tra tile
 - aggiungere morphing tra livelli LOD
 - calcolare normali terrain

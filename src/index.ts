@@ -28,6 +28,24 @@ export {
   type TerrainMeshOptions,
 } from "./engine/globe/terrain/terrain-mesh";
 export {
+  TerrainTileSelector,
+  clampTerrainLevel,
+  createTerrainQuadtreeTile,
+  selectTerrainLevel,
+  terrainCoveragePadding,
+  terrainSelectRadius,
+  type TerrainQuadtreeTile,
+  type TerrainTileSelection,
+  type TerrainTileSelectorContext,
+  type TerrainTileSelectorOptions,
+} from "./engine/globe/terrain/terrain-tile-selector";
+export {
+  TerrainSurfaceRuntime,
+  type TerrainSurfaceMeshEntry,
+  type TerrainSurfaceRuntimeOptions,
+  type TerrainSurfaceStats,
+} from "./engine/globe/terrain/terrain-surface-runtime";
+export {
   createFlatTerrainTile,
   createFlatTerrainProvider,
   createTerrainTileId,
