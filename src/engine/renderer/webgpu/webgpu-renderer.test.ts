@@ -153,6 +153,79 @@ describe("WebGPURenderer", () => {
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
 
+  it("uploads and renders active WebGPU imagery tile overlays", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+
+    await renderer.initialize();
+    const image = { width: 256, height: 256 } as TexImageSource;
+
+    renderer.setImageryTile({ id: "3/4/2", x: 4, y: 2, z: 3 }, image);
+    renderer.setActiveImageryTiles(["3/4/2"]);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.createTexture).toHaveBeenCalledWith({
+      label: "OrbixJS WebGPU imagery tile texture 3/4/2",
+      size: [256, 256],
+      format: "rgba8unorm",
+      usage: 22,
+    });
+    expect(device.queue.copyExternalImageToTexture).toHaveBeenCalledWith(
+      { source: image },
+      {
+        texture: expect.objectContaining({
+          options: expect.objectContaining({
+            label: "OrbixJS WebGPU imagery tile texture 3/4/2",
+            size: [256, 256],
+          }),
+        }),
+      },
+      [256, 256],
+    );
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          label: "OrbixJS WebGPU imagery tile indices 3/4/2",
+        }),
+      }),
+      "uint16",
+    );
+  });
+
+  it("keeps the base WebGPU imagery texture alive when tile overlays upload", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+
+    await renderer.initialize();
+    renderer.setImagery({ width: 1024, height: 512 } as TexImageSource);
+    const baseTexture = device.textures.find(
+      (texture) =>
+        (texture.options as { label?: string; size?: [number, number] }).label === "OrbixJS WebGPU imagery texture" &&
+        (texture.options as { size?: [number, number] }).size?.[0] === 1024,
+    );
+
+    renderer.setImageryTile({ id: "3/4/2", x: 4, y: 2, z: 3 }, { width: 256, height: 256 } as TexImageSource);
+
+    expect(baseTexture?.destroy).not.toHaveBeenCalled();
+  });
+
   it("reports unsupported when WebGPU is unavailable", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const renderer = new WebGPURenderer(createCanvasMock());

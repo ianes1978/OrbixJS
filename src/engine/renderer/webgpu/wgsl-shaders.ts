@@ -96,18 +96,12 @@ struct VertexOutput {
   @location(1) uv: vec2<f32>,
 };
 
-struct GlobeUniforms {
+struct TileUniforms {
   viewProjection: mat4x4<f32>,
-  imageryReady: f32,
-  _padding0: vec3<f32>,
 };
 
 @group(0) @binding(0)
-var<uniform> uUniforms: GlobeUniforms;
-@group(0) @binding(1)
-var uImagerySampler: sampler;
-@group(0) @binding(2)
-var uImagery: texture_2d<f32>;
+var<uniform> uUniforms: TileUniforms;
 
 @vertex
 fn main(
@@ -130,6 +124,11 @@ export const webGpuImageryTileFragmentShader = createShaderSource({
   language: "wgsl",
   stage: "fragment",
   source: `
+@group(0) @binding(1)
+var uImagerySampler: sampler;
+@group(0) @binding(2)
+var uImagery: texture_2d<f32>;
+
 @fragment
 fn main(@location(0) normal: vec3<f32>, @location(1) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let light = normalize(vec3<f32>(-0.25, 0.52, 0.82));
