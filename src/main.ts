@@ -63,7 +63,17 @@ app.innerHTML = `
               <button data-fly-to="usa" type="button">USA</button>
               <button data-fly-to="tokyo" type="button">Tokyo</button>
             </div>
+          </section>
+          <section class="control-section" aria-label="Camera path">
+            <h2>Camera path</h2>
             <div id="camera-paths" class="fly-presets path-presets" aria-label="Camera path presets"></div>
+            <button id="camera-path-stop" class="debug-toggle compact-toggle" type="button" disabled>
+              Stop path
+            </button>
+            <div class="metric compact-metric">
+              <span>Stato path</span>
+              <strong id="camera-path-status">nessun path</strong>
+            </div>
           </section>
         </nav>
 
@@ -129,6 +139,8 @@ const infoPanel = document.querySelector<HTMLElement>("#info-panel");
 const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
+const cameraPathStop = document.querySelector<HTMLButtonElement>("#camera-path-stop");
+const cameraPathStatus = document.querySelector<HTMLElement>("#camera-path-status");
 
 if (
   !list ||
@@ -149,6 +161,8 @@ if (
   !infoPanel ||
   !sceneDateInput ||
   !cameraPathControls ||
+  !cameraPathStop ||
+  !cameraPathStatus ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
@@ -160,6 +174,8 @@ const demoTocElement = hudControls;
 const infoToggleElement = infoToggle;
 const infoPanelElement = infoPanel;
 const cameraPathControlsElement = cameraPathControls;
+const cameraPathStopElement = cameraPathStop;
+const cameraPathStatusElement = cameraPathStatus;
 const compactLayout = window.matchMedia("(max-width: 920px)");
 
 syncResponsivePanels(compactLayout.matches);
@@ -321,15 +337,21 @@ const flyToPresets = {
   tokyo: { lon: 139.7, lat: 35.7, height: 1_200_000 },
 };
 let activeCameraPathFrame: number | undefined;
+let activeCameraPathId: string | undefined;
 
 flyPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
     const preset = flyToPresets[button.dataset.flyTo as keyof typeof flyToPresets];
 
     if (preset) {
+      stopCameraPath("interrotto");
       viewer.flyTo(preset);
     }
   });
+});
+
+cameraPathStopElement.addEventListener("click", () => {
+  stopCameraPath("fermato");
 });
 
 let activePickingCanvas: HTMLCanvasElement | undefined;
@@ -434,12 +456,15 @@ async function loadDemoProject(): Promise<void> {
 
 function renderCameraPathControls(paths: readonly CameraPath[]): void {
   cameraPathControlsElement.replaceChildren();
+  cameraPathStatusElement.textContent = paths.length > 0 ? "pronto" : "nessun path";
+  cameraPathStopElement.disabled = true;
 
   for (const path of paths) {
     const button = document.createElement("button");
 
     button.type = "button";
-    button.textContent = path.name ?? path.id;
+    button.textContent = `Play: ${path.name ?? path.id}`;
+    button.dataset.cameraPathId = path.id;
     button.addEventListener("click", () => {
       playCameraPath(path);
     });
@@ -448,12 +473,14 @@ function renderCameraPathControls(paths: readonly CameraPath[]): void {
 }
 
 function playCameraPath(path: CameraPath): void {
-  if (activeCameraPathFrame !== undefined) {
-    cancelAnimationFrame(activeCameraPathFrame);
-  }
+  stopCameraPath();
 
   const duration = cameraPathDuration(path);
   const startedAt = performance.now();
+  activeCameraPathId = path.id;
+  cameraPathStatusElement.textContent = `play ${path.name ?? path.id}`;
+  cameraPathStopElement.disabled = false;
+  syncCameraPathButtons();
 
   const step = (now: number) => {
     const elapsedSeconds = (now - startedAt) / 1000;
@@ -467,9 +494,38 @@ function playCameraPath(path: CameraPath): void {
     }
 
     activeCameraPathFrame = undefined;
+    activeCameraPathId = undefined;
+    cameraPathStatusElement.textContent = "finito";
+    cameraPathStopElement.disabled = true;
+    syncCameraPathButtons();
   };
 
   activeCameraPathFrame = requestAnimationFrame(step);
+}
+
+function stopCameraPath(status?: string): void {
+  if (activeCameraPathFrame !== undefined) {
+    cancelAnimationFrame(activeCameraPathFrame);
+  }
+
+  activeCameraPathFrame = undefined;
+  activeCameraPathId = undefined;
+  cameraPathStopElement.disabled = true;
+
+  if (status) {
+    cameraPathStatusElement.textContent = status;
+  }
+
+  syncCameraPathButtons();
+}
+
+function syncCameraPathButtons(): void {
+  cameraPathControlsElement.querySelectorAll<HTMLButtonElement>("button[data-camera-path-id]").forEach((button) => {
+    const active = button.dataset.cameraPathId === activeCameraPathId;
+
+    button.disabled = activeCameraPathId !== undefined && !active;
+    button.setAttribute("aria-pressed", String(active));
+  });
 }
 
 function demoAssetUrl(path: string): string {

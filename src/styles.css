@@ -249,6 +249,16 @@ h2 {
   background: rgba(24, 78, 60, 0.72);
 }
 
+.compact-toggle {
+  height: 34px;
+  font-size: 0.78rem;
+}
+
+.compact-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 .fly-presets {
   display: grid;
   align-content: start;
@@ -269,6 +279,20 @@ h2 {
 
 .path-presets {
   margin-top: 4px;
+}
+
+.path-presets button[aria-pressed="true"] {
+  border-color: rgba(120, 212, 168, 0.72);
+  background: rgba(24, 78, 60, 0.72);
+}
+
+.compact-metric {
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.compact-metric strong {
+  font-size: 0.86rem;
 }
 
 .metric span,

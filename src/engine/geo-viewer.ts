@@ -583,17 +583,6 @@ export class GeoViewer {
   private createPointerController(): PointerController {
     return new PointerController(this.canvas, this.camera, {
       pickSurfacePoint: (clientX, clientY) => this.pickSurfacePatchPoint(clientX, clientY),
-      moveSurfacePointToCursor: (point, clientX, clientY) => {
-        const ray = this.pickRay(clientX, clientY);
-        const dragScale = this.camera.dragSensitivityScale();
-
-        return ray
-          ? this.camera.moveGrabbedPointToRay(point, ray, {
-              strength: 0.62,
-              maxStep: 0.0022 + dragScale * 0.032,
-            })
-          : false;
-      },
     });
   }
 
