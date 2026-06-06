@@ -9,7 +9,13 @@ import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surfac
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
-import { webGpuGlobeProgram, webGpuImageryTileProgram, webGpuModelProgram, webGpuVectorLineProgram } from "./wgsl-shaders";
+import {
+  webGpuGlobeProgram,
+  webGpuImageryTileProgram,
+  webGpuModelProgram,
+  webGpuTerrainProgram,
+  webGpuVectorLineProgram,
+} from "./wgsl-shaders";
 
 const webGpuBufferUsage = {
   vertex: 0x20,
@@ -256,6 +262,7 @@ export class WebGPURenderer implements Renderer {
   private initialized = false;
   private globePipeline: WebGpuRenderPipelineLike | undefined;
   private tilePipeline: WebGpuRenderPipelineLike | undefined;
+  private terrainPipeline: WebGpuRenderPipelineLike | undefined;
   private vectorPipeline: WebGpuRenderPipelineLike | undefined;
   private modelPipeline: WebGpuRenderPipelineLike | undefined;
   private globeBindGroup: WebGpuBindGroupLike | undefined;
@@ -338,7 +345,7 @@ export class WebGPURenderer implements Renderer {
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
     this.activeTerrainIds = meshes.map((entry) => entry.id);
 
-    if (!this.device || !this.tilePipeline || !this.globeUniformBuffer) {
+    if (!this.device || !this.terrainPipeline || !this.globeUniformBuffer) {
       this.pendingTerrainMeshes = meshes;
       return;
     }
@@ -515,6 +522,7 @@ export class WebGPURenderer implements Renderer {
     this.tilePipeline = undefined;
     this.vectorPipeline = undefined;
     this.modelPipeline = undefined;
+    this.terrainPipeline = undefined;
     this.globeBindGroup = undefined;
     this.terrainBindGroup = undefined;
     this.vectorBindGroup = undefined;
@@ -626,6 +634,7 @@ export class WebGPURenderer implements Renderer {
     });
     this.createGlobeBindGroup();
     this.createTilePipeline();
+    this.createTerrainPipeline();
     this.createVectorPipeline();
     this.createModelPipeline();
     this.globeIndexCount = mesh.indices.length;
@@ -699,6 +708,55 @@ export class WebGPURenderer implements Renderer {
         depthCompare: "less",
       },
     });
+  }
+
+  private createTerrainPipeline(): void {
+    if (!this.device || !this.format) {
+      return;
+    }
+
+    const vertexModule = this.device.createShaderModule({
+      label: webGpuTerrainProgram.vertex.id,
+      code: webGpuTerrainProgram.vertex.source,
+    });
+    const fragmentModule = this.device.createShaderModule({
+      label: webGpuTerrainProgram.fragment.id,
+      code: webGpuTerrainProgram.fragment.source,
+    });
+
+    this.terrainPipeline = this.device.createRenderPipeline({
+      label: "OrbixJS WebGPU terrain pipeline",
+      layout: "auto",
+      vertex: {
+        module: vertexModule,
+        entryPoint: "main",
+        buffers: [
+          {
+            arrayStride: 8 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x3" },
+              { shaderLocation: 1, offset: 3 * Float32Array.BYTES_PER_ELEMENT, format: "float32x3" },
+              { shaderLocation: 2, offset: 6 * Float32Array.BYTES_PER_ELEMENT, format: "float32x2" },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "main",
+        targets: [{ format: this.format }],
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "none",
+      },
+      depthStencil: {
+        format: webGpuDepthFormat,
+        depthWriteEnabled: true,
+        depthCompare: "less",
+      },
+    });
+    this.createTerrainBindGroup();
   }
 
   private createVectorPipeline(): void {
@@ -893,7 +951,6 @@ export class WebGPURenderer implements Renderer {
     }
 
     this.imageryTexture?.destroy?.();
-    this.terrainBindGroup = undefined;
     this.imageryTexture = this.device.createTexture({
       label: "OrbixJS WebGPU imagery texture",
       size: [size[0], size[1]],
@@ -957,7 +1014,7 @@ export class WebGPURenderer implements Renderer {
   }
 
   private renderTerrainMeshes(pass: WebGpuRenderPassEncoderLike): void {
-    if (!this.tilePipeline || this.activeTerrainIds.length === 0) {
+    if (!this.terrainPipeline || this.activeTerrainIds.length === 0) {
       return;
     }
 
@@ -967,7 +1024,7 @@ export class WebGPURenderer implements Renderer {
       return;
     }
 
-    pass.setPipeline(this.tilePipeline);
+    pass.setPipeline(this.terrainPipeline);
     pass.setBindGroup(0, this.terrainBindGroup);
 
     for (const id of this.activeTerrainIds) {
@@ -1174,35 +1231,23 @@ export class WebGPURenderer implements Renderer {
   }
 
   private createTerrainBindGroup(): void {
-    if (!this.device || !this.tilePipeline || !this.globeUniformBuffer) {
+    if (!this.device || !this.terrainPipeline || !this.globeUniformBuffer) {
       return;
     }
 
-    if (!this.imageryTexture || !this.imagerySampler) {
-      this.ensureImageryResources();
-    }
-
-    if (this.terrainBindGroup || !this.imageryTexture || !this.imagerySampler) {
+    if (this.terrainBindGroup) {
       return;
     }
 
     this.terrainBindGroup = this.device.createBindGroup({
       label: "OrbixJS WebGPU terrain bind group",
-      layout: this.tilePipeline.getBindGroupLayout(0),
+      layout: this.terrainPipeline.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
           resource: {
             buffer: this.globeUniformBuffer,
           },
-        },
-        {
-          binding: 1,
-          resource: this.imagerySampler,
-        },
-        {
-          binding: 2,
-          resource: this.imageryTexture.createView(),
         },
       ],
     });

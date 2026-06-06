@@ -16,6 +16,8 @@ import {
   imageryTileVertexShader,
   modelFragmentShader,
   modelVertexShader,
+  terrainFragmentShader,
+  terrainVertexShader,
   vectorLineFragmentShader,
   vectorLineVertexShader,
 } from "./glsl-shaders";
@@ -38,6 +40,15 @@ type TileProgram = {
   uView: WebGLUniformLocation;
   uModel: WebGLUniformLocation;
   uImagery: WebGLUniformLocation;
+  uSunDirection: WebGLUniformLocation;
+};
+
+type TerrainProgram = {
+  program: WebGLProgram;
+  resource: RendererResourceHandle;
+  uProjection: WebGLUniformLocation;
+  uView: WebGLUniformLocation;
+  uModel: WebGLUniformLocation;
   uSunDirection: WebGLUniformLocation;
 };
 
@@ -109,6 +120,7 @@ export class WebGL2Renderer implements Renderer {
   private readonly gl: WebGL2RenderingContext | null;
   private readonly program: GlobeProgram | null = null;
   private readonly tileProgram: TileProgram | null = null;
+  private readonly terrainProgram: TerrainProgram | null = null;
   private readonly vectorProgram: VectorProgram | null = null;
   private readonly modelProgram: ModelProgram | null = null;
   private readonly globe: GpuMesh | null = null;
@@ -149,6 +161,7 @@ export class WebGL2Renderer implements Renderer {
 
     this.program = createGlobeProgram(this.gl, this.resourceManager);
     this.tileProgram = createTileProgram(this.gl, this.resourceManager);
+    this.terrainProgram = createTerrainProgram(this.gl, this.resourceManager);
     this.vectorProgram = createVectorProgram(this.gl, this.resourceManager);
     this.modelProgram = createModelProgram(this.gl, this.resourceManager);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh(), this.resourceManager);
@@ -374,6 +387,11 @@ export class WebGL2Renderer implements Renderer {
       this.resourceManager.release(this.vectorProgram.resource);
     }
 
+    if (this.terrainProgram) {
+      this.gl.deleteProgram(this.terrainProgram.program);
+      this.resourceManager.release(this.terrainProgram.resource);
+    }
+
     if (this.modelProgram) {
       this.gl.deleteProgram(this.modelProgram.program);
       this.resourceManager.release(this.modelProgram.resource);
@@ -427,19 +445,16 @@ export class WebGL2Renderer implements Renderer {
   }
 
   private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
-    if (!this.gl || !this.tileProgram || this.activeTerrainIds.size === 0 || !this.imageryTexture) {
+    if (!this.gl || !this.terrainProgram || this.activeTerrainIds.size === 0) {
       return;
     }
 
-    this.gl.useProgram(this.tileProgram.program);
+    this.gl.useProgram(this.terrainProgram.program);
     this.gl.depthMask(true);
-    this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
-    this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
-    this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, identityMatrix());
-    this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
-    this.gl.activeTexture(this.gl.TEXTURE0);
-    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
-    this.gl.uniform1i(this.tileProgram.uImagery, 0);
+    this.gl.uniformMatrix4fv(this.terrainProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.terrainProgram.uView, false, view);
+    this.gl.uniformMatrix4fv(this.terrainProgram.uModel, false, identityMatrix());
+    this.gl.uniform3fv(this.terrainProgram.uSunDirection, this.sunDirection);
 
     for (const id of this.activeTerrainIds) {
       const mesh = this.terrainMeshes.get(id);
@@ -592,6 +607,43 @@ function createTileProgram(gl: WebGL2RenderingContext, resources: RendererResour
   }
 
   return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection };
+}
+
+function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): TerrainProgram {
+  const vertex = compileShader(gl, gl.VERTEX_SHADER, terrainVertexShader, resources);
+  const fragment = compileShader(gl, gl.FRAGMENT_SHADER, terrainFragmentShader, resources);
+  const program = gl.createProgram();
+
+  if (!program) {
+    throw new Error("Unable to create WebGL2 terrain program");
+  }
+
+  const resource = resources.track("program");
+  gl.attachShader(program, vertex.shader);
+  gl.attachShader(program, fragment.shader);
+  gl.bindAttribLocation(program, 0, "position");
+  gl.bindAttribLocation(program, 1, "normal");
+  gl.bindAttribLocation(program, 2, "uv");
+  gl.linkProgram(program);
+  gl.deleteShader(vertex.shader);
+  resources.release(vertex.resource);
+  gl.deleteShader(fragment.shader);
+  resources.release(fragment.resource);
+
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(program) ?? "Unable to link WebGL2 terrain program");
+  }
+
+  const uProjection = gl.getUniformLocation(program, "uProjection");
+  const uView = gl.getUniformLocation(program, "uView");
+  const uModel = gl.getUniformLocation(program, "uModel");
+  const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
+
+  if (!uProjection || !uView || !uModel || !uSunDirection) {
+    throw new Error("Missing WebGL2 terrain uniform");
+  }
+
+  return { program, resource, uProjection, uView, uModel, uSunDirection };
 }
 
 function createVectorProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): VectorProgram {

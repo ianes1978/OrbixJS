@@ -114,6 +114,57 @@ void main() {
 }
 `;
 
+export const terrainVertexShader = `#version 300 es
+in vec3 position;
+in vec3 normal;
+in vec2 uv;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform mat4 uModel;
+
+out vec3 vNormal;
+out vec3 vPosition;
+out vec2 vUv;
+
+void main() {
+  vec4 worldPosition = uModel * vec4(position, 1.0);
+  vPosition = worldPosition.xyz;
+  vNormal = mat3(uModel) * normal;
+  vUv = uv;
+  gl_Position = uProjection * uView * worldPosition;
+}
+`;
+
+export const terrainFragmentShader = `#version 300 es
+precision highp float;
+
+in vec3 vNormal;
+in vec3 vPosition;
+in vec2 vUv;
+
+uniform vec3 uSunDirection;
+
+out vec4 outColor;
+
+void main() {
+  vec3 normal = normalize(vNormal);
+  vec3 light = normalize(uSunDirection);
+  float diffuse = max(dot(normal, light), 0.0);
+  float slope = 1.0 - abs(dot(normal, normalize(vPosition)));
+  float latitudeTint = smoothstep(-0.2, 0.8, normalize(vPosition).y);
+  vec3 low = vec3(0.20, 0.42, 0.25);
+  vec3 high = vec3(0.62, 0.54, 0.38);
+  vec3 snow = vec3(0.86, 0.90, 0.86);
+  vec3 land = mix(low, high, clamp(slope * 2.8 + latitudeTint * 0.12, 0.0, 1.0));
+  vec3 color = mix(land, snow, smoothstep(0.68, 0.96, slope + latitudeTint * 0.12));
+  float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+  float edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
+  color = mix(color, vec3(0.24, 0.88, 0.82), edgeLine * 0.16);
+  outColor = vec4(color * (0.38 + diffuse * 0.78), 1.0);
+}
+`;
+
 export const vectorLineVertexShader = `#version 300 es
 in vec3 position;
 

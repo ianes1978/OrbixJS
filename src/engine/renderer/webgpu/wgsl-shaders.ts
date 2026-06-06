@@ -151,6 +151,80 @@ export const webGpuImageryTileProgram: ShaderProgramSource = {
   fragment: webGpuImageryTileFragmentShader,
 };
 
+export const webGpuTerrainVertexShader = createShaderSource({
+  id: "webgpu.terrain.vertex",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "vertex",
+  source: `
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) normal: vec3<f32>,
+  @location(1) worldPosition: vec3<f32>,
+  @location(2) uv: vec2<f32>,
+};
+
+struct TerrainUniforms {
+  viewProjection: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uUniforms: TerrainUniforms;
+
+@vertex
+fn main(
+  @location(0) position: vec3<f32>,
+  @location(1) normal: vec3<f32>,
+  @location(2) uv: vec2<f32>
+) -> VertexOutput {
+  var output: VertexOutput;
+  output.position = uUniforms.viewProjection * vec4<f32>(position, 1.0);
+  output.normal = normal;
+  output.worldPosition = position;
+  output.uv = uv;
+  return output;
+}
+`,
+});
+
+export const webGpuTerrainFragmentShader = createShaderSource({
+  id: "webgpu.terrain.fragment",
+  backend: "webgpu",
+  language: "wgsl",
+  stage: "fragment",
+  source: `
+@fragment
+fn main(
+  @location(0) normal: vec3<f32>,
+  @location(1) worldPosition: vec3<f32>,
+  @location(2) uv: vec2<f32>
+) -> @location(0) vec4<f32> {
+  let light = normalize(vec3<f32>(-0.25, 0.52, 0.82));
+  let unitNormal = normalize(normal);
+  let diffuse = max(dot(unitNormal, light), 0.0);
+  let slope = 1.0 - abs(dot(unitNormal, normalize(worldPosition)));
+  let latitudeTint = smoothstep(-0.2, 0.8, normalize(worldPosition).y);
+  let low = vec3<f32>(0.20, 0.42, 0.25);
+  let high = vec3<f32>(0.62, 0.54, 0.38);
+  let snow = vec3<f32>(0.86, 0.90, 0.86);
+  let land = mix(low, high, clamp(slope * 2.8 + latitudeTint * 0.12, 0.0, 1.0));
+  var color = mix(land, snow, smoothstep(0.68, 0.96, slope + latitudeTint * 0.12));
+  let edgeDistance = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  let edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
+  color = mix(color, vec3<f32>(0.24, 0.88, 0.82), edgeLine * 0.16);
+  return vec4<f32>(color * (0.38 + diffuse * 0.78), 1.0);
+}
+`,
+});
+
+export const webGpuTerrainProgram: ShaderProgramSource = {
+  id: "webgpu.terrain",
+  backend: "webgpu",
+  language: "wgsl",
+  vertex: webGpuTerrainVertexShader,
+  fragment: webGpuTerrainFragmentShader,
+};
+
 export const webGpuVectorLineVertexShader = createShaderSource({
   id: "webgpu.vectorLine.vertex",
   backend: "webgpu",
