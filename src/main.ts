@@ -346,7 +346,7 @@ const viewer = new GeoViewer({
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
-    const mode = debugTileOverlay ? "surface" : "base";
+    const mode = debugTileOverlay ? "surface grid" : "surface";
     tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
   },
   onTilesetStats: (stats) => {

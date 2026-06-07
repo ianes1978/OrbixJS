@@ -41,6 +41,7 @@ type TileProgram = {
   uModel: WebGLUniformLocation;
   uImagery: WebGLUniformLocation;
   uSunDirection: WebGLUniformLocation;
+  uDebugOverlay: WebGLUniformLocation;
 };
 
 type TerrainProgram = {
@@ -131,6 +132,7 @@ export class WebGL2Renderer implements Renderer {
   private vectorLines: GpuLineMesh | null = null;
   private vectorLinesVisible = false;
   private debugModelVisible = false;
+  private tileDebugOverlayVisible = false;
   private debugModelBaseColorFactor: [number, number, number, number] = [1, 0.75, 0.15, 1];
   private sunDirection: Vec3 = normalize([-0.25, 0.52, 0.82]);
   private readonly tileEntries = new Map<string, TileEntry>();
@@ -204,6 +206,10 @@ export class WebGL2Renderer implements Renderer {
     for (const id of ids) {
       this.activeTileIds.add(id);
     }
+  }
+
+  setTileDebugOverlayVisible(visible: boolean): void {
+    this.tileDebugOverlayVisible = visible;
   }
 
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
@@ -326,8 +332,9 @@ export class WebGL2Renderer implements Renderer {
     this.resize();
 
     const aspect = this.canvas.width / this.canvas.height;
+    const surfaceTilesActive = this.hasDrawableSurfaceTiles();
     const plan = createRendererFramePlan(frame, aspect, {
-      imageryEnabled: this.imageryEnabled && this.activeTileIds.size > 0,
+      imageryEnabled: this.imageryEnabled && surfaceTilesActive,
       vectorLinesVisible: this.vectorLinesVisible && this.vectorLines !== null,
       modelVisible: this.debugModelVisible && this.debugModel !== null,
     });
@@ -427,9 +434,14 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
     this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
+    this.gl.uniform1i(this.tileProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
 
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
+
+      if (this.hasReadyTerrainSurface(id)) {
+        continue;
+      }
 
       if (!entry?.ready) {
         continue;
@@ -444,6 +456,26 @@ export class WebGL2Renderer implements Renderer {
 
   }
 
+  private hasReadyTerrainSurface(id: string): boolean {
+    return this.activeTerrainIds.has(id) && this.terrainMeshes.has(id);
+  }
+
+  private hasDrawableSurfaceTiles(): boolean {
+    for (const id of this.activeTileIds) {
+      if (!this.hasReadyTerrainSurface(id) && this.tileEntries.get(id)?.ready) {
+        return true;
+      }
+    }
+
+    for (const id of this.activeTerrainIds) {
+      if (this.terrainMeshes.has(id) && this.tileEntries.get(id)?.ready) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
     if (!this.gl || !this.tileProgram || this.activeTerrainIds.size === 0) {
       return;
@@ -455,6 +487,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, identityMatrix());
     this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
+    this.gl.uniform1i(this.tileProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
 
     for (const id of this.activeTerrainIds) {
       const mesh = this.terrainMeshes.get(id);
@@ -605,12 +638,13 @@ function createTileProgram(gl: WebGL2RenderingContext, resources: RendererResour
   const uModel = gl.getUniformLocation(program, "uModel");
   const uImagery = gl.getUniformLocation(program, "uImagery");
   const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
+  const uDebugOverlay = gl.getUniformLocation(program, "uDebugOverlay");
 
-  if (!uProjection || !uView || !uModel || !uImagery || !uSunDirection) {
+  if (!uProjection || !uView || !uModel || !uImagery || !uSunDirection || !uDebugOverlay) {
     throw new Error("Missing WebGL2 tile uniform");
   }
 
-  return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection };
+  return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection, uDebugOverlay };
 }
 
 function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): TerrainProgram {

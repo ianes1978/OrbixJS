@@ -34,6 +34,7 @@ in vec2 vImageryUv;
 uniform bool uImageryEnabled;
 uniform sampler2D uImagery;
 uniform vec3 uSunDirection;
+uniform bool uDebugOverlay;
 
 out vec4 outColor;
 
@@ -110,7 +111,7 @@ void main() {
   float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
   float edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
   vec3 lineColor = vec3(0.36, 0.95, 1.0);
-  outColor = vec4(mix(color, lineColor, edgeLine * 0.28), 1.0);
+  outColor = vec4(mix(color, lineColor, uDebugOverlay ? edgeLine * 0.28 : 0.0), 1.0);
 }
 `;
 

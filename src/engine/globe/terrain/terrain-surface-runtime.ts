@@ -8,6 +8,8 @@ export type TerrainSurfaceMeshEntry = {
   mesh: TerrainMesh;
 };
 
+export type TerrainSurfaceTileState = "none" | "loading" | "ready" | "error";
+
 export type TerrainSurfaceStats = {
   level: number;
   activeTiles: number;
@@ -32,7 +34,9 @@ export class TerrainSurfaceRuntime {
   private readonly maxPending: number;
   private readonly meshCache = new Map<string, TerrainSurfaceMeshEntry>();
   private readonly pending = new Map<string, Promise<TerrainSurfaceMeshEntry>>();
+  private readonly errors = new Set<string>();
   private activeTileIds = new Set<string>();
+  private activeTilesById = new Map<string, TerrainTileKey>();
   private lastStats: TerrainSurfaceStats = {
     level: 0,
     activeTiles: 0,
@@ -51,6 +55,7 @@ export class TerrainSurfaceRuntime {
     const selection = this.selector.select(lon, lat, cameraDistance, context);
     const availableTiles = selection.tiles.filter((tile) => this.options.provider.isTileAvailable?.(tile) ?? true);
     this.activeTileIds = new Set(availableTiles.map((tile) => tile.id));
+    this.activeTilesById = new Map(availableTiles.map((tile) => [tile.id, tile]));
 
     for (const tile of availableTiles) {
       if (this.pending.size >= this.maxPending) {
@@ -82,6 +87,34 @@ export class TerrainSurfaceRuntime {
       .filter((entry): entry is TerrainSurfaceMeshEntry => entry !== undefined);
   }
 
+  activeTiles(): TerrainTileKey[] {
+    return [...this.activeTilesById.values()];
+  }
+
+  loadingTileIds(): string[] {
+    return [...this.activeTileIds].filter((id) => this.pending.has(id));
+  }
+
+  errorTileIds(): string[] {
+    return [...this.activeTileIds].filter((id) => this.errors.has(id));
+  }
+
+  terrainStateForTile(id: string): TerrainSurfaceTileState {
+    if (this.meshCache.has(id)) {
+      return "ready";
+    }
+
+    if (this.pending.has(id)) {
+      return "loading";
+    }
+
+    if (this.errors.has(id)) {
+      return "error";
+    }
+
+    return "none";
+  }
+
   meshForTile(tile: TerrainTileKey): TerrainSurfaceMeshEntry | undefined {
     return this.meshCache.get(createTerrainTileId(tile));
   }
@@ -97,6 +130,10 @@ export class TerrainSurfaceRuntime {
       return;
     }
 
+    if (this.errors.has(id)) {
+      return;
+    }
+
     const request = this.options.provider
       .getTile(tile)
       .then((heightmap) => {
@@ -107,10 +144,12 @@ export class TerrainSurfaceRuntime {
         };
 
         this.meshCache.set(id, entry);
+        this.errors.delete(id);
         this.trimMeshCache();
         return entry;
       })
       .catch((error: unknown) => {
+        this.errors.add(id);
         this.options.onError?.(error);
         throw error;
       })

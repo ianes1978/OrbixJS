@@ -60,7 +60,8 @@ function layerJson(): Record<string, unknown> {
 
 function quantizedMeshTile(): ArrayBuffer {
   const vertexCount = 4;
-  const buffer = new ArrayBuffer(88 + 4 + vertexCount * 2 * 3);
+  const triangleCount = 2;
+  const buffer = new ArrayBuffer(88 + 4 + vertexCount * 2 * 3 + 4 + triangleCount * 3 * 2);
   const view = new DataView(buffer);
   let offset = 24;
 
@@ -75,6 +76,10 @@ function quantizedMeshTile(): ArrayBuffer {
   writeEncodedVertexBuffer(view, offset, [0, 0, 32767, 32767]);
   offset += vertexCount * 2;
   writeEncodedVertexBuffer(view, offset, [0, 32767, 32767, 0]);
+  offset += vertexCount * 2;
+  view.setUint32(offset, triangleCount, true);
+  offset += 4;
+  writeEncodedIndexBuffer(view, offset, [0, 1, 2, 1, 3, 2]);
 
   return buffer;
 }
@@ -85,6 +90,19 @@ function writeEncodedVertexBuffer(view: DataView, offset: number, values: readon
   values.forEach((value, index) => {
     view.setUint16(offset + index * 2, zigZagEncode(value - previous), true);
     previous = value;
+  });
+}
+
+function writeEncodedIndexBuffer(view: DataView, offset: number, indices: readonly number[]): void {
+  let highest = 0;
+
+  indices.forEach((value, index) => {
+    const code = highest - value;
+    view.setUint16(offset + index * 2, code, true);
+
+    if (code === 0) {
+      highest += 1;
+    }
   });
 }
 

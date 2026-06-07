@@ -98,6 +98,7 @@ struct VertexOutput {
 
 struct TileUniforms {
   viewProjection: mat4x4<f32>,
+  imageryState: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -124,6 +125,13 @@ export const webGpuImageryTileFragmentShader = createShaderSource({
   language: "wgsl",
   stage: "fragment",
   source: `
+struct TileUniforms {
+  viewProjection: mat4x4<f32>,
+  imageryState: vec4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> uUniforms: TileUniforms;
 @group(0) @binding(1)
 var uImagerySampler: sampler;
 @group(0) @binding(2)
@@ -138,7 +146,7 @@ fn main(@location(0) normal: vec3<f32>, @location(1) uv: vec2<f32>) -> @location
   let edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
   let color = imagery * (0.42 + diffuse * 0.72);
   let lineColor = vec3<f32>(0.36, 0.95, 1.0);
-  return vec4<f32>(mix(color, lineColor, edgeLine * 0.28), 1.0);
+  return vec4<f32>(mix(color, lineColor, edgeLine * 0.28 * uUniforms.imageryState.y), 1.0);
 }
 `,
 });

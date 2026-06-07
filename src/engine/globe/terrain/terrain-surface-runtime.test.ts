@@ -55,6 +55,36 @@ describe("TerrainSurfaceRuntime", () => {
     expect(stats.pendingTiles).toBe(3);
   });
 
+  it("tracks terrain tile states for surface fallback decisions", async () => {
+    const getTile = vi.fn<TerrainProvider["getTile"]>(async (key) => {
+      if (key.x % 2 === 0) {
+        throw new Error("missing terrain");
+      }
+
+      return createFlatTerrainTile(key, { size: 2 });
+    });
+    const runtime = new TerrainSurfaceRuntime({
+      provider: { getTile },
+      selector: new TerrainTileSelector({ minLevel: 2, maxLevel: 2 }),
+      maxPending: 64,
+    });
+
+    runtime.update(0, 0, 1.2, { targetLevel: 2 });
+    const loadingIds = runtime.loadingTileIds();
+
+    expect(loadingIds.length).toBeGreaterThan(0);
+    expect(runtime.terrainStateForTile(loadingIds[0])).toBe("loading");
+
+    await runtime.settle();
+    runtime.update(0, 0, 1.2, { targetLevel: 2 });
+
+    const states = runtime.activeTiles().map((tile) => runtime.terrainStateForTile(`${tile.level}/${tile.x}/${tile.y}`));
+
+    expect(states).toContain("ready");
+    expect(states).toContain("error");
+    expect(runtime.errorTileIds().length).toBeGreaterThan(0);
+  });
+
   it("skips unavailable provider tiles", async () => {
     const getTile = vi.fn<TerrainProvider["getTile"]>(async (key) => createFlatTerrainTile(key, { size: 2 }));
     const provider = {

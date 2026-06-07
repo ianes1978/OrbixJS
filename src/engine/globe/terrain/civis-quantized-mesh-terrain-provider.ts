@@ -34,6 +34,7 @@ type DecodedQuantizedMeshTile = {
   u: Uint16Array;
   v: Uint16Array;
   heights: Float32Array;
+  indices: Uint32Array;
 };
 
 type RawCivisLayer = {
@@ -305,13 +306,15 @@ function decodeQuantizedMesh(buffer: ArrayBuffer): DecodedQuantizedMeshTile {
   const v = decodeVertexBuffer(view, offset, vertexCount);
   offset += vertexCount * 2;
   const quantizedHeights = decodeVertexBuffer(view, offset, vertexCount);
+  offset += vertexCount * 2;
+  const indices = decodeTriangleIndices(view, offset, vertexCount);
   const heights = new Float32Array(vertexCount);
 
   for (let index = 0; index < vertexCount; index += 1) {
     heights[index] = minHeight + (quantizedHeights[index] / quantizedMeshMax) * (maxHeight - minHeight);
   }
 
-  return { minHeight, maxHeight, u, v, heights };
+  return { minHeight, maxHeight, u, v, heights, indices };
 }
 
 function decodeVertexBuffer(view: DataView, offset: number, count: number): Uint16Array {
@@ -343,6 +346,12 @@ function sampleCollectedHeight(samples: readonly SourceSampleTile[], lon: number
 }
 
 function sampleQuantizedMeshHeight(mesh: DecodedQuantizedMeshTile, u: number, v: number): number {
+  const triangulatedHeight = sampleTriangleHeight(mesh, u, v);
+
+  if (triangulatedHeight !== undefined) {
+    return triangulatedHeight;
+  }
+
   let weightedHeight = 0;
   let weightTotal = 0;
   let nearestDistance = Number.POSITIVE_INFINITY;
@@ -368,6 +377,112 @@ function sampleQuantizedMeshHeight(mesh: DecodedQuantizedMeshTile, u: number, v:
   }
 
   return weightTotal > 0 ? weightedHeight / weightTotal : nearestHeight;
+}
+
+function sampleTriangleHeight(mesh: DecodedQuantizedMeshTile, u: number, v: number): number | undefined {
+  for (let index = 0; index < mesh.indices.length; index += 3) {
+    const a = mesh.indices[index];
+    const b = mesh.indices[index + 1];
+    const c = mesh.indices[index + 2];
+
+    if (a >= mesh.heights.length || b >= mesh.heights.length || c >= mesh.heights.length) {
+      continue;
+    }
+
+    const weights = barycentricWeights(
+      u,
+      v,
+      mesh.u[a] / quantizedMeshMax,
+      mesh.v[a] / quantizedMeshMax,
+      mesh.u[b] / quantizedMeshMax,
+      mesh.v[b] / quantizedMeshMax,
+      mesh.u[c] / quantizedMeshMax,
+      mesh.v[c] / quantizedMeshMax,
+    );
+
+    if (!weights) {
+      continue;
+    }
+
+    return mesh.heights[a] * weights[0] + mesh.heights[b] * weights[1] + mesh.heights[c] * weights[2];
+  }
+
+  return undefined;
+}
+
+function decodeTriangleIndices(
+  view: DataView,
+  offset: number,
+  vertexCount: number,
+): Uint32Array {
+  const indexBytes = vertexCount > 65_536 ? 4 : 2;
+  const alignedOffset = alignOffset(offset, indexBytes);
+
+  if (alignedOffset + 4 > view.byteLength) {
+    return new Uint32Array(0);
+  }
+
+  const triangleCount = view.getUint32(alignedOffset, true);
+  const indexCount = triangleCount * 3;
+  const indicesOffset = alignedOffset + 4;
+
+  if (indicesOffset + indexCount * indexBytes > view.byteLength) {
+    return new Uint32Array(0);
+  }
+
+  const indices = new Uint32Array(indexCount);
+  let highest = 0;
+
+  for (let index = 0; index < indexCount; index += 1) {
+    const code =
+      indexBytes === 4
+        ? view.getUint32(indicesOffset + index * 4, true)
+        : view.getUint16(indicesOffset + index * 2, true);
+
+    indices[index] = highest - code;
+
+    if (code === 0) {
+      highest += 1;
+    }
+  }
+
+  return indices;
+}
+
+function barycentricWeights(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+): [number, number, number] | undefined {
+  const v0x = bx - ax;
+  const v0y = by - ay;
+  const v1x = cx - ax;
+  const v1y = cy - ay;
+  const v2x = px - ax;
+  const v2y = py - ay;
+  const denominator = v0x * v1y - v1x * v0y;
+
+  if (Math.abs(denominator) < 1e-12) {
+    return undefined;
+  }
+
+  const b = (v2x * v1y - v1x * v2y) / denominator;
+  const c = (v0x * v2y - v2x * v0y) / denominator;
+  const a = 1 - b - c;
+  const epsilon = 1e-5;
+
+  return a >= -epsilon && b >= -epsilon && c >= -epsilon ? [a, b, c] : undefined;
+}
+
+function alignOffset(offset: number, bytes: number): number {
+  const remainder = offset % bytes;
+
+  return remainder === 0 ? offset : offset + bytes - remainder;
 }
 
 function geographicTileForPosition(lon: number, lat: number, level: number): GeographicTileKey {

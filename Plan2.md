@@ -227,6 +227,203 @@ Per il terrain non conviene aspettare un unico standard perfetto. Conviene proge
 
 Il motore deve convertire queste sorgenti in una pipeline comune di tile terrain.
 
+### LOD globale configurabile, con decisioni locali per layer
+
+OrbixJS deve avere un sistema LOD centrale, ma non un singolo numero globale applicato indistintamente a tutto.
+
+La regola architetturale e:
+
+```text
+camera + viewport + budget + profilo qualita
+  -> LodContext per frame
+  -> policy specifiche per imagery, terrain, 3D Tiles, glTF, vector, label, meteo e debug
+```
+
+Un `LOD 15` di imagery non equivale a un `depth 15` di 3D Tiles, a una mesh terrain di livello 15 o a un `LOD1` glTF. Il sistema globale deve quindi fornire misure comuni, mentre ogni sottosistema traduce quelle misure nel proprio modello.
+
+Obiettivi:
+
+- mantenere la configurazione semplice per l'uso base
+- rendere il comportamento LOD prevedibile tra layer diversi
+- coordinare performance, qualita grafica, rete e memoria
+- evitare duplicazioni di euristiche tra imagery, terrain e 3D Tiles
+- permettere override professionali per GIS, Digital Twin, demo e hardware diversi
+- rendere misurabile ogni regressione di qualita o performance
+
+#### Default automatico
+
+OrbixJS deve funzionare bene senza configurazione LOD esplicita:
+
+```ts
+const viewer = new GeoViewer({
+  container: "map"
+});
+```
+
+Il default deve essere conservativo e adatto alla maggior parte dei casi:
+
+```ts
+lod: {
+  profile: "balanced",
+  adaptive: true,
+  devicePixelRatioLimit: 2,
+  pixelErrorBudget: 2.5,
+  hysteresis: 0.15,
+  maxRequestsPerFrame: 6,
+  maxNetworkRequests: 24,
+  maxVisibleTiles: 384,
+  maxGpuMemoryMb: "auto"
+}
+```
+
+`maxGpuMemoryMb: "auto"` deve stimare un budget prudente in base a backend, device pixel ratio, viewport e capacita note del browser. WebGL2 deve usare budget piu prudenti; WebGPU puo permettere budget piu alti quando disponibile.
+
+#### Profili semplici
+
+Per il 90% degli usi deve bastare un preset:
+
+```ts
+new GeoViewer({
+  container: "map",
+  lod: "performance"
+});
+
+new GeoViewer({
+  container: "map",
+  lod: "quality"
+});
+```
+
+Profili target:
+
+- `performance`: carica meno tile, riduce dettaglio terrain/3D Tiles, limita richieste e memoria
+- `balanced`: default, compromesso tra stabilita, dettaglio e costo
+- `quality`: privilegia dettaglio imagery, terrain e 3D Tiles su desktop medi
+- `ultra`: solo per desktop forti, screenshot, demo flagship o uso esplicito
+
+#### Configurazione avanzata
+
+Le applicazioni GIS/Digital Twin devono poter configurare budget globali e policy per sottosistema:
+
+```ts
+new GeoViewer({
+  container: "map",
+  lod: {
+    profile: "quality",
+    adaptive: true,
+    maxGpuMemoryMb: 768,
+    maxNetworkRequests: 48,
+    imagery: {
+      maxLevel: 19,
+      lodBias: 1
+    },
+    terrain: {
+      maxLevel: 15,
+      maxScreenSpaceError: 2
+    },
+    tiles3d: {
+      maxScreenSpaceError: 16
+    }
+  }
+});
+```
+
+Ogni layer deve poter dichiarare override locali:
+
+```ts
+viewer.imagery.addXYZLayer({
+  url,
+  lod: {
+    minLevel: 8,
+    maxLevel: 18,
+    lodBias: 0,
+    priority: 20
+  }
+});
+```
+
+Questi override non devono rompere il budget globale. Se una scena supera rete, memoria o tile budget, lo scheduler deve degradare prima i layer meno prioritari o meno visibili.
+
+#### LodContext per frame
+
+Il motore deve calcolare una volta per frame un contesto condiviso:
+
+```ts
+type LodContext = {
+  profile: "performance" | "balanced" | "quality" | "ultra";
+  adaptive: boolean;
+  cameraDistance: number;
+  altitudeMeters: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  devicePixelRatio: number;
+  fov: number;
+  metersPerPixel: number;
+  pixelErrorBudget: number;
+  tileBudget: number;
+  requestBudget: number;
+  gpuMemoryBudgetMb: number;
+  qualityBias: number;
+};
+```
+
+Mapping previsto:
+
+- imagery: `metersPerPixel` e `targetLevel` verso livelli XYZ/WMTS/OGC Tiles
+- terrain: screen-space error, livello quadtree, tile budget e morphing tra livelli
+- 3D Tiles: `geometricError`, distanza, viewport e `maxScreenSpaceError`
+- glTF/modelli: dimensione proiettata su schermo, LOD0/LOD1/LOD2 e impostor futuri
+- vector GIS: semplificazione geometrie, clustering, densita feature e priorita semantica
+- label/annotation: visibilita, decluttering, distanza, importanza e leggibilita
+- meteo/atmosfera: risoluzione simulazione/rendering e frequenza update
+- debug overlay: sempre degradabile per primo
+
+#### Stabilita visiva
+
+Il sistema deve evitare oscillazioni tra livelli vicini.
+
+Regole:
+
+- usare hysteresis per salire/scendere di LOD
+- preferire transizioni progressive quando possibile
+- mantenere tile parent finche i figli non sono pronti
+- evitare buchi visivi durante caricamento, pan e zoom
+- aggiungere morphing terrain quando disponibile
+- mantenere coerenza tra terrain e imagery drappata
+
+#### Qualita adattiva
+
+Il LOD deve poter reagire al frame time e al carico runtime:
+
+- se il frame time resta alto, aumentare `pixelErrorBudget`, ridurre richieste e limitare detail bias
+- se il frame time resta basso, migliorare la qualita progressivamente
+- se la rete e lenta, privilegiare tile visibili e layer ad alta priorita
+- se la memoria GPU cresce troppo, evictare prima debug, meteo, overlay secondari e tile lontane
+- non cambiare profilo in modo aggressivo durante voli camera o interazioni rapide
+
+#### Priorita GIS
+
+In una scena GIS reale non tutti i dati hanno lo stesso valore. Il sistema LOD deve supportare priorita dichiarate:
+
+- terrain: priorita alta quando sostiene picking, quota, editing e collisione
+- imagery base: priorita alta per leggibilita geografica
+- vector GIS e feature selezionate: priorita alta per valore semantico
+- 3D Tiles: priorita variabile in base a visibilita, distanza, selezione e scenario
+- labels: priorita per leggibilita, non per densita massima
+- meteo, debug e overlay temporanei: degradabili prima
+
+Questa priorita deve influenzare richieste rete, cache, upload GPU e scelta del fallback visivo.
+
+#### Sequenza di implementazione
+
+1. introdurre tipi `LodOptions`, `LodProfile`, `LodContext` e normalizzazione dei default
+2. spostare le euristiche esistenti di imagery/terrain verso il `LodContext`
+3. aggiungere `lodBias`, `priority`, `minLevel`, `maxLevel` e budget per layer
+4. collegare 3D Tiles a `maxScreenSpaceError` derivato dal profilo
+5. introdurre hysteresis e parent fallback per stabilita visiva
+6. aggiungere metriche demo: profilo, livello imagery, livello terrain, SSE 3D Tiles, tile visibili, richieste, cache e memoria stimata
+7. aggiungere qualita adattiva basata su frame time e budget
+
 ### CRS e sistemi di coordinate sono core
 
 OrbixJS deve supportare i CRS piu comuni in ambito GIS e Digital Twin. Non basta supportare WGS84 e Web Mercator: ogni layer deve dichiarare il proprio CRS, il motore deve trasformare i dati in modo verificabile e la GPU deve lavorare in coordinate locali stabili.
@@ -778,6 +975,8 @@ Step:
 - supportare terrain da OGC API - Tiles dove applicabile
 - studiare COG come sorgente elevation/coverage
 - generare mesh tile su ellissoide WGS84 da heightmap normalizzata per il renderer
+- sostituire progressivamente il globo monolitico con `SurfaceTile` quadtree: ogni tile deve scegliere una sola superficie attiva tra ellipsoid fallback, terrain loading/ready/error e futura mesh ottimizzata
+- evitare il rendering doppio terrain + ellipsoid per la stessa tile; il terrain pronto vince, l'ellissoide resta solo fallback di caricamento o assenza dati
 - aggiungere LOD quadtree terrain con budget tile e copertura viewport
 - aggiungere runtime terrain surface con cache mesh CPU e throttling richieste
 - renderizzare mesh terrain nei backend WebGL2/WebGPU con toggle demo procedurale

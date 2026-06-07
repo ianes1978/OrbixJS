@@ -15,6 +15,7 @@ import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
 import { createQuadtreeTile, type QuadtreeTile } from "./globe/imagery/quadtree-tile";
 import { selectLevel } from "./globe/imagery/tile-selector";
+import { createSurfaceTileSet, type SurfaceTile } from "./globe/surface/surface-tile";
 import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
 import { TerrainSurfaceRuntime, type TerrainSurfaceMeshEntry } from "./globe/terrain/terrain-surface-runtime";
@@ -106,6 +107,7 @@ export class GeoViewer {
   terrain: TerrainProvider | undefined;
   private terrainSurface: TerrainSurfaceRuntime | undefined;
   private lastTerrainMeshes: TerrainSurfaceMeshEntry[] = [];
+  private lastSurfaceTiles: SurfaceTile[] = [];
   private readonly defaultTerrainExaggeration: number;
   private readonly container: HTMLElement;
   private readonly imageryTiling = new WebMercatorTilingScheme();
@@ -237,6 +239,7 @@ export class GeoViewer {
 
   setDebugTileOverlay(enabled: boolean): void {
     this.debugTileOverlay = enabled;
+    this.renderer.setTileDebugOverlayVisible(enabled);
     this.syncDebugTileOverlay();
   }
 
@@ -363,6 +366,7 @@ export class GeoViewer {
       : undefined;
     this.lastTerrainMeshes = [];
     this.renderer.setTerrainMeshes([]);
+    this.syncDebugTileOverlay();
     this.applyCameraHeightConstraints();
   }
 
@@ -610,14 +614,23 @@ export class GeoViewer {
   }
 
   private syncDebugTileOverlay(): void {
-    if (!this.debugTileOverlay || this.lastActiveTileIds.length === 0) {
+    if (this.lastActiveTileIds.length === 0) {
+      this.lastSurfaceTiles = [];
       this.renderer.setActiveImageryTiles([]);
       return;
     }
 
-    const tileIds = this.lastActiveTileIds;
-
-    for (const tileId of tileIds) {
+    const tiles = this.lastActiveTileIds
+      .map((tileId) => this.imagery.findTile(tileId))
+      .filter((tile): tile is QuadtreeTile => tile !== undefined);
+    this.lastSurfaceTiles = createSurfaceTileSet({
+      imageryTiles: tiles,
+      terrainMeshes: this.lastTerrainMeshes,
+      loadingTerrainIds: this.terrainSurface?.loadingTileIds() ?? [],
+      errorTerrainIds: this.terrainSurface?.errorTileIds() ?? [],
+      tiling: this.imageryTiling,
+    });
+    for (const tileId of this.lastActiveTileIds) {
       const tile = this.imagery.findTile(tileId);
 
       if (tile) {
@@ -625,11 +638,12 @@ export class GeoViewer {
       }
     }
 
-    this.renderer.setActiveImageryTiles(tileIds);
+    this.renderer.setActiveImageryTiles(this.lastActiveTileIds);
   }
 
   private rehydrateRenderer(): void {
     this.renderer.setSunDirection(sunDirectionFromDate(this.date));
+    this.renderer.setTileDebugOverlayVisible(this.debugTileOverlay);
 
     if (this.currentImageryTexture) {
       this.renderer.setImagery(this.currentImageryTexture);
@@ -661,6 +675,7 @@ export class GeoViewer {
       if (this.lastTerrainMeshes.length > 0) {
         this.lastTerrainMeshes = [];
         this.renderer.setTerrainMeshes([]);
+        this.syncDebugTileOverlay();
       }
       return;
     }
@@ -673,6 +688,7 @@ export class GeoViewer {
     });
     this.lastTerrainMeshes = this.terrainSurface.readyMeshes();
     this.renderer.setTerrainMeshes(this.lastTerrainMeshes);
+    this.syncDebugTileOverlay();
   }
 
   private createCanvas(): HTMLCanvasElement {

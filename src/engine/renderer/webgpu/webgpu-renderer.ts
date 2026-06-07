@@ -278,6 +278,7 @@ export class WebGPURenderer implements Renderer {
   private vectorLinesVisible = false;
   private debugModel: WebGpuModelEntry | undefined;
   private debugModelVisible = false;
+  private tileDebugOverlayVisible = false;
   private debugModelBaseColorFactor: [number, number, number, number] = [1, 0.75, 0.15, 1];
   private depthTexture: WebGpuTextureLike | undefined;
   private depthTextureSize: readonly [number, number] | undefined;
@@ -340,6 +341,10 @@ export class WebGPURenderer implements Renderer {
 
   setActiveImageryTiles(ids: readonly string[]): void {
     this.activeTileIds = [...ids];
+  }
+
+  setTileDebugOverlayVisible(visible: boolean): void {
+    this.tileDebugOverlayVisible = visible;
   }
 
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
@@ -453,7 +458,7 @@ export class WebGPURenderer implements Renderer {
 
     const aspect = this.canvas.width / this.canvas.height;
     const viewProjection = webGpuViewProjection(frame, aspect);
-    const uniforms = createGlobeUniforms(viewProjection, this.imageryReady);
+    const uniforms = createGlobeUniforms(viewProjection, this.imageryReady, this.tileDebugOverlayVisible);
     this.device.queue.writeBuffer(this.globeUniformBuffer, 0, uniforms);
     this.writeDebugModelUniforms(viewProjection);
 
@@ -479,7 +484,7 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    if (this.activeTileIds.length === 0) {
+    if (!this.hasDrawableSurfaceTiles()) {
       pass.setPipeline(this.globePipeline);
       pass.setBindGroup(0, this.globeBindGroup);
       pass.setVertexBuffer(0, this.globeVertexBuffer);
@@ -536,6 +541,7 @@ export class WebGPURenderer implements Renderer {
     this.vectorLinesVisible = false;
     this.debugModel = undefined;
     this.debugModelVisible = false;
+    this.tileDebugOverlayVisible = false;
     this.debugModelBaseColorFactor = [1, 0.75, 0.15, 1];
     this.depthTexture = undefined;
     this.depthTextureSize = undefined;
@@ -1002,6 +1008,10 @@ export class WebGPURenderer implements Renderer {
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
 
+      if (this.hasReadyTerrainSurface(id)) {
+        continue;
+      }
+
       if (!entry?.ready) {
         continue;
       }
@@ -1011,6 +1021,26 @@ export class WebGPURenderer implements Renderer {
       pass.setIndexBuffer(entry.indexBuffer, "uint16");
       pass.drawIndexed(entry.indexCount);
     }
+  }
+
+  private hasReadyTerrainSurface(id: string): boolean {
+    return this.activeTerrainIds.includes(id) && this.terrainEntries.has(id);
+  }
+
+  private hasDrawableSurfaceTiles(): boolean {
+    for (const id of this.activeTileIds) {
+      if (!this.hasReadyTerrainSurface(id) && this.tileEntries.get(id)?.ready) {
+        return true;
+      }
+    }
+
+    for (const id of this.activeTerrainIds) {
+      if (this.terrainEntries.has(id) && this.tileEntries.get(id)?.ready) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private renderTerrainMeshes(pass: WebGpuRenderPassEncoderLike): void {
@@ -1314,10 +1344,11 @@ function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Arra
   return multiply(webGpuClipSpaceCorrection, multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix()));
 }
 
-function createGlobeUniforms(viewProjection: Float32Array, imageryReady: boolean): Float32Array {
+function createGlobeUniforms(viewProjection: Float32Array, imageryReady: boolean, tileDebugOverlayVisible = false): Float32Array {
   const uniforms = new Float32Array(20);
   uniforms.set(viewProjection, 0);
   uniforms[16] = imageryReady ? 1 : 0;
+  uniforms[17] = tileDebugOverlayVisible ? 1 : 0;
   return uniforms;
 }
 
