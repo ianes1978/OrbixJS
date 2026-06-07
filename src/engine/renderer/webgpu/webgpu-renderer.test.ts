@@ -34,6 +34,18 @@ describe("WebGPURenderer", () => {
     expect(canvas.width).toBe(640);
     expect(canvas.height).toBe(360);
     expect(device.createRenderPipeline).toHaveBeenCalled();
+    expect(device.createRenderPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "OrbixJS WebGPU globe pipeline",
+        primitive: expect.objectContaining({ cullMode: "back" }),
+      }),
+    );
+    expect(device.createRenderPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "OrbixJS WebGPU imagery tile pipeline",
+        primitive: expect.objectContaining({ cullMode: "back" }),
+      }),
+    );
     expect(device.createBindGroup).toHaveBeenCalled();
     expect(device.createTexture).toHaveBeenCalledWith({
       label: "OrbixJS WebGPU depth texture",

@@ -1174,7 +1174,7 @@ export class GeoViewer {
     const horizonDot = 1 / cameraDistance;
     const centerDot = dot(cameraNormal, center);
 
-    return centerDot + radius * 1.35 >= horizonDot && this.tileFacesCamera(tile);
+    return centerDot + radius >= horizonDot - 0.002 && this.tileFacesCamera(tile);
   }
 
   private tileFacesCamera(tile: { x: number; y: number; z: number }): boolean {
