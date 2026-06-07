@@ -32,6 +32,15 @@ describe("civis-quantized-mesh-terrain-provider", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
+  it("reports tile availability from layer bounds", () => {
+    const layer = parseCivisQuantizedMeshLayer({ ...layerJson(), bounds: [-10, -10, 10, 10] });
+    const provider = createCivisQuantizedMeshTerrainProvider(layer);
+
+    expect(provider.isTileAvailable?.({ level: 0, x: 0, y: 0 })).toBe(true);
+    expect(provider.isTileAvailable?.({ level: 2, x: 0, y: 0 })).toBe(false);
+    expect(provider.isTileAvailable?.({ level: 2, x: 2, y: 2 })).toBe(true);
+  });
+
   it("rejects unsupported terrain formats", () => {
     expect(() => parseCivisQuantizedMeshLayer({ ...layerJson(), format: "png" })).toThrow("Unsupported CIVIS terrain format");
   });

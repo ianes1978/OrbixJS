@@ -49,9 +49,10 @@ export class TerrainSurfaceRuntime {
 
   update(lon: number, lat: number, cameraDistance: number, context: TerrainTileSelectorContext = {}): TerrainSurfaceStats {
     const selection = this.selector.select(lon, lat, cameraDistance, context);
-    this.activeTileIds = new Set(selection.tiles.map((tile) => tile.id));
+    const availableTiles = selection.tiles.filter((tile) => this.options.provider.isTileAvailable?.(tile) ?? true);
+    this.activeTileIds = new Set(availableTiles.map((tile) => tile.id));
 
-    for (const tile of selection.tiles) {
+    for (const tile of availableTiles) {
       if (this.pending.size >= this.maxPending) {
         break;
       }
@@ -62,7 +63,7 @@ export class TerrainSurfaceRuntime {
     this.trimMeshCache();
     this.lastStats = {
       level: selection.level,
-      activeTiles: selection.tiles.length,
+      activeTiles: availableTiles.length,
       loadedTiles: this.readyMeshes().length,
       pendingTiles: countActivePending(this.pending, this.activeTileIds),
       meshCacheSize: this.meshCache.size,

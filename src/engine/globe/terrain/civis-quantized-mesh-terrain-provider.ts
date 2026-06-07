@@ -1,3 +1,4 @@
+import { WebMercatorTilingScheme, type RectangleRadians } from "../tiling/web-mercator-tiling";
 import { tileSampleToCartographic } from "./terrain-mesh";
 import { type TerrainHeightmapTile, type TerrainProvider, type TerrainTileKey } from "./terrain-provider";
 
@@ -47,10 +48,11 @@ type RawCivisLayer = {
 };
 
 const quantizedMeshMax = 32767;
+const defaultFetch: typeof fetch = (input, init) => fetch(input, init);
 
 export async function loadCivisQuantizedMeshLayer(
   url: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = defaultFetch,
 ): Promise<CivisQuantizedMeshLayer> {
   const response = await fetchImpl(url);
 
@@ -105,6 +107,7 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
   private readonly heightmapSize: number;
   private readonly cacheSize: number;
   private readonly sourceLevelOffset: number;
+  private readonly tiling = new WebMercatorTilingScheme();
   private readonly sourceCache = new Map<string, DecodedQuantizedMeshTile>();
   private readonly pendingSourceTiles = new Map<string, Promise<DecodedQuantizedMeshTile | undefined>>();
 
@@ -113,11 +116,15 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
     options: CivisQuantizedMeshTerrainProviderOptions,
   ) {
     this.attribution = layer.attribution;
-    this.fetchImpl = options.fetch ?? fetch;
+    this.fetchImpl = options.fetch ?? defaultFetch;
     this.baseUrl = options.baseUrl;
     this.heightmapSize = options.heightmapSize ?? 33;
     this.cacheSize = options.cacheSize ?? 512;
     this.sourceLevelOffset = options.sourceLevelOffset ?? 0;
+  }
+
+  isTileAvailable(key: TerrainTileKey): boolean {
+    return rectangleIntersectsLayerBounds(this.tiling.tileXYToRectangle({ z: key.level, x: key.x, y: key.y }), this.layer.bounds);
   }
 
   async getTile(key: TerrainTileKey, signal?: AbortSignal): Promise<TerrainHeightmapTile> {
@@ -397,6 +404,15 @@ function withinBounds(bounds: CivisQuantizedMeshLayer["bounds"], lon: number, la
   const latDegrees = lat * (180 / Math.PI);
 
   return lonDegrees >= bounds[0] && lonDegrees <= bounds[2] && latDegrees >= bounds[1] && latDegrees <= bounds[3];
+}
+
+function rectangleIntersectsLayerBounds(rectangle: RectangleRadians, bounds: CivisQuantizedMeshLayer["bounds"]): boolean {
+  const west = bounds[0] * (Math.PI / 180);
+  const south = bounds[1] * (Math.PI / 180);
+  const east = bounds[2] * (Math.PI / 180);
+  const north = bounds[3] * (Math.PI / 180);
+
+  return rectangle.east >= west && rectangle.west <= east && rectangle.north >= south && rectangle.south <= north;
 }
 
 function normalizedInRange(value: number, min: number, max: number): number {

@@ -79,6 +79,10 @@ export type GeoViewerTilesetOptions = {
   id?: string;
 };
 
+export type TerrainProviderOptions = {
+  exaggeration?: number;
+};
+
 type DebugModelMesh = {
   positions: Float32Array;
   texcoords?: Float32Array;
@@ -102,7 +106,7 @@ export class GeoViewer {
   terrain: TerrainProvider | undefined;
   private terrainSurface: TerrainSurfaceRuntime | undefined;
   private lastTerrainMeshes: TerrainSurfaceMeshEntry[] = [];
-  private readonly terrainExaggeration: number;
+  private readonly defaultTerrainExaggeration: number;
   private readonly container: HTMLElement;
   private readonly imageryTiling = new WebMercatorTilingScheme();
   private controller: PointerController;
@@ -143,7 +147,7 @@ export class GeoViewer {
     this.onTilesetStatsCallback = options.onTilesetStats;
     this.cameraHeightLimits = options.cameraHeightLimits ?? {};
     this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
-    this.terrainExaggeration = options.terrainExaggeration ?? 1;
+    this.defaultTerrainExaggeration = options.terrainExaggeration ?? 1;
     const container =
       typeof options.container === "string"
         ? document.getElementById(options.container)
@@ -344,12 +348,14 @@ export class GeoViewer {
     await this.syncDebugTilesetContent();
   }
 
-  setTerrainProvider(provider: TerrainProvider | undefined): void {
+  setTerrainProvider(provider: TerrainProvider | undefined, options: TerrainProviderOptions = {}): void {
+    const exaggeration = options.exaggeration ?? this.defaultTerrainExaggeration;
+
     this.terrain = provider;
     this.terrainSurface = provider
       ? new TerrainSurfaceRuntime({
           provider,
-          meshOptions: { exaggeration: this.terrainExaggeration },
+          meshOptions: { exaggeration },
           maxMeshes: 1024,
           maxPending: 24,
           onError: (error) => console.warn("Terrain surface tile failed", error),

@@ -55,6 +55,9 @@ app.innerHTML = `
             <button id="model-toggle" class="debug-toggle" type="button" aria-pressed="false">
               Model
             </button>
+            <button id="dtm-terrain-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              DTM Alto Adige
+            </button>
             <button id="terrain-toggle" class="debug-toggle" type="button" aria-pressed="false">
               Synthetic relief
             </button>
@@ -194,6 +197,7 @@ const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
+const dtmTerrainToggle = document.querySelector<HTMLButtonElement>("#dtm-terrain-toggle");
 const terrainToggle = document.querySelector<HTMLButtonElement>("#terrain-toggle");
 const mobileControlsToggle = document.querySelector<HTMLButtonElement>("#mobile-controls-toggle");
 const hudControls = document.querySelector<HTMLElement>("#demo-toc");
@@ -226,6 +230,7 @@ if (
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
+  !dtmTerrainToggle ||
   !terrainToggle ||
   !mobileControlsToggle ||
   !hudControls ||
@@ -262,6 +267,7 @@ const cameraSnapshotCopyElement = cameraSnapshotCopy;
 const cameraKeyframeCopyElement = cameraKeyframeCopy;
 const cameraSnapshotStatusElement = cameraSnapshotStatus;
 const cameraSnapshotOutputElement = cameraSnapshotOutput;
+const dtmTerrainToggleElement = dtmTerrainToggle;
 const terrainToggleElement = terrainToggle;
 const compactLayout = window.matchMedia("(max-width: 920px)");
 
@@ -337,7 +343,6 @@ const viewer = new GeoViewer({
     enabled: true,
     clearance: 1,
   },
-  terrainExaggeration: 18,
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     imageryStatus.textContent = `LOD ${stats.level}`;
@@ -420,13 +425,25 @@ modelToggle.addEventListener("click", () => {
   modelToggle.textContent = debugModelVisible ? "Model ON" : "Model";
 });
 
+let dtmTerrainVisible = false;
+dtmTerrainToggleElement.addEventListener("click", () => {
+  void toggleDtmTerrain();
+});
+
 let proceduralTerrainVisible = false;
 terrainToggleElement.hidden = !terrainDebugEnabled;
 terrainToggleElement.disabled = !terrainDebugEnabled;
 if (terrainDebugEnabled) {
   terrainToggleElement.addEventListener("click", () => {
     proceduralTerrainVisible = !proceduralTerrainVisible;
-    viewer.setTerrainProvider(proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined);
+    if (proceduralTerrainVisible) {
+      dtmTerrainVisible = false;
+      syncDtmTerrainToggle();
+    }
+    viewer.setTerrainProvider(
+      proceduralTerrainVisible ? createProceduralTerrainProvider({ size: 33 }) : undefined,
+      { exaggeration: proceduralTerrainVisible ? 18 : undefined },
+    );
     terrainToggleElement.setAttribute("aria-pressed", String(proceduralTerrainVisible));
     terrainToggleElement.textContent = proceduralTerrainVisible ? "Synthetic relief ON" : "Synthetic relief";
   });
@@ -464,6 +481,7 @@ infoToggleElement.addEventListener("click", () => {
 
 const flyToPresets = {
   italy: { lon: 12.5, lat: 42.5, height: 1_500_000 },
+  southTyrol: { lon: 11.35, lat: 46.5, height: 120_000 },
   usa: { lon: -100, lat: 40, height: 2_500_000 },
   tokyo: { lon: 139.7, lat: 35.7, height: 1_200_000 },
 };
@@ -526,7 +544,7 @@ const handlePickPointerUp = (event: PointerEvent) => {
       return;
     }
 
-    pickingStatusElement.textContent = `${toDegrees(hit.lat).toFixed(3)}, ${toDegrees(hit.lon).toFixed(3)}`;
+    pickingStatusElement.textContent = formatPickStatus(hit);
     return;
   }
 
@@ -540,7 +558,7 @@ const handlePickPointerUp = (event: PointerEvent) => {
     return;
   }
 
-  pickingStatusElement.textContent = `${toDegrees(globe.lat).toFixed(3)}, ${toDegrees(globe.lon).toFixed(3)}`;
+  pickingStatusElement.textContent = formatPickStatus(globe);
 };
 
 bindCanvasPicking();
@@ -625,6 +643,38 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
   const manifestUrl = demoAssetUrl(output.url);
   const manifest = await loadHeightmapTerrainManifest(manifestUrl);
   viewer.setTerrainProvider(createHeightmapTerrainProvider(manifest, { baseUrl: manifestUrl }));
+}
+
+async function toggleDtmTerrain(): Promise<void> {
+  if (dtmTerrainVisible) {
+    dtmTerrainVisible = false;
+    viewer.setTerrainProvider(undefined);
+    syncDtmTerrainToggle();
+    return;
+  }
+
+  dtmTerrainToggleElement.disabled = true;
+  dtmTerrainToggleElement.textContent = "DTM loading";
+
+  try {
+    await loadTerrainHeightmapSource("preprocess/demo-preprocess.json");
+    dtmTerrainVisible = true;
+    proceduralTerrainVisible = false;
+    terrainToggleElement.setAttribute("aria-pressed", "false");
+    terrainToggleElement.textContent = "Synthetic relief";
+    viewer.flyTo(flyToPresets.southTyrol);
+    syncDtmTerrainToggle();
+  } catch (error) {
+    console.warn("DTM terrain failed", error);
+    dtmTerrainToggleElement.textContent = "DTM -";
+  } finally {
+    dtmTerrainToggleElement.disabled = false;
+  }
+}
+
+function syncDtmTerrainToggle(): void {
+  dtmTerrainToggleElement.setAttribute("aria-pressed", String(dtmTerrainVisible));
+  dtmTerrainToggleElement.textContent = dtmTerrainVisible ? "DTM Alto Adige ON" : "DTM Alto Adige";
 }
 
 function renderCameraPathControls(paths: readonly CameraPath[]): void {
@@ -858,6 +908,13 @@ function formatCameraStatus(): string {
   const lat = toDegrees(cartographic.lat).toFixed(5);
 
   return `${lat}, ${lon}, ${formatHeight(height)}`;
+}
+
+function formatPickStatus(hit: { lon: number; lat: number; height: number }): string {
+  const lat = toDegrees(hit.lat).toFixed(5);
+  const lon = toDegrees(hit.lon).toFixed(5);
+
+  return `${lat}, ${lon}, quota ${formatHeight(hit.height)}`;
 }
 
 function demoAssetUrl(path: string): string {

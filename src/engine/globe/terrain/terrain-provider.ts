@@ -14,6 +14,7 @@ export type TerrainHeightmapTile = TerrainTileKey & {
 
 export interface TerrainProvider {
   readonly attribution?: string;
+  isTileAvailable?(key: TerrainTileKey): boolean;
   getTile(key: TerrainTileKey, signal?: AbortSignal): Promise<TerrainHeightmapTile>;
   sampleHeight?(lon: number, lat: number): number | undefined;
 }
