@@ -82,6 +82,7 @@ export type GeoViewerTilesetOptions = {
 
 export type TerrainProviderOptions = {
   exaggeration?: number;
+  skirtDepth?: number;
 };
 
 type DebugModelMesh = {
@@ -358,7 +359,7 @@ export class GeoViewer {
     this.terrainSurface = provider
       ? new TerrainSurfaceRuntime({
           provider,
-          meshOptions: { exaggeration },
+          meshOptions: { exaggeration, skirtDepth: options.skirtDepth },
           maxMeshes: 1024,
           maxPending: 24,
           onError: (error) => console.warn("Terrain surface tile failed", error),
@@ -494,7 +495,7 @@ export class GeoViewer {
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const stats = this.imagery.update(
         imageryCenter ? [imageryCenter[0], imageryCenter[1], imageryCenter[2] ?? 0] : [0, 0, 0],
-        this.camera.geocentricDistance,
+        this.cameraDistanceForLod(),
         {
           viewportHeight: this.canvas.height || this.canvas.clientHeight,
           fov: this.camera.fov,
@@ -680,7 +681,7 @@ export class GeoViewer {
       return;
     }
 
-    this.terrainSurface.update(center[0], center[1], this.camera.geocentricDistance, {
+    this.terrainSurface.update(center[0], center[1], this.cameraDistanceForLod(), {
       viewportHeight: this.canvas.height || this.canvas.clientHeight,
       fov: this.camera.fov,
       coveragePositions: coveragePositions.map((position) => [position[0], position[1]] as const),
@@ -709,6 +710,7 @@ export class GeoViewer {
   private createPointerController(): PointerController {
     return new PointerController(this.canvas, this.camera, {
       pickSurfacePoint: (clientX, clientY) => this.pickSurfacePatchPoint(clientX, clientY),
+      surfaceHeightMeters: () => this.sampleTerrainHeightBelowCamera() ?? 0,
     });
   }
 
@@ -779,7 +781,7 @@ export class GeoViewer {
 
     const targetLevel =
       this.projectedImageryLevel() ??
-      selectLevel(this.camera.geocentricDistance, 22, {
+      selectLevel(this.cameraDistanceForLod(), 22, {
         viewportHeight: height,
         fov: this.camera.fov,
       });
@@ -960,7 +962,7 @@ export class GeoViewer {
     const world = this.cartographicToUnitSphere({
       lon: lon * (180 / Math.PI),
       lat: lat * (180 / Math.PI),
-      height: 1500,
+      height: this.sampleTerrainHeightAt(lon, lat) ?? 0,
     });
     const aspect = width / height;
     const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
@@ -984,7 +986,7 @@ export class GeoViewer {
     const world = this.cartographicToUnitSphere({
       lon: lon * (180 / Math.PI),
       lat: lat * (180 / Math.PI),
-      height: 1500,
+      height: this.sampleTerrainHeightAt(lon, lat) ?? 0,
     });
     const aspect = width / height;
     const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
@@ -1031,7 +1033,12 @@ export class GeoViewer {
       return undefined;
     }
 
-    const hit = intersectNormalizedWgs84Surface(ray, 1500);
+    const ellipsoidHit = this.pickUnitSphere(clientX, clientY);
+    const ellipsoidCartographic = ellipsoidHit ? Ellipsoid.WGS84.surfaceNormalToCartographic(ellipsoidHit) : undefined;
+    const terrainHeight = ellipsoidCartographic
+      ? this.sampleTerrainHeightAt(ellipsoidCartographic.lon, ellipsoidCartographic.lat)
+      : undefined;
+    const hit = intersectNormalizedWgs84Surface(ray, terrainHeight ?? 0);
 
     if (!hit || !hit.every(Number.isFinite)) {
       return this.pickUnitSphere(clientX, clientY);
@@ -1086,13 +1093,24 @@ export class GeoViewer {
 
   private sampleTerrainHeightBelowCamera(): number | undefined {
     const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
-    const sampled = this.terrain?.sampleHeight?.(cartographic.lon, cartographic.lat);
+    return this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat) ?? 0;
+  }
 
-    if (Number.isFinite(sampled)) {
-      return sampled;
-    }
+  private sampleTerrainHeightAt(lon: number, lat: number): number | undefined {
+    const sampled = this.terrain?.sampleHeight?.(lon, lat);
 
-    return 0;
+    return Number.isFinite(sampled) ? sampled : undefined;
+  }
+
+  private cameraAltitudeAboveSurfaceMeters(): number {
+    const geocentricHeight = Math.max(0, (this.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
+    const terrainHeight = this.sampleTerrainHeightBelowCamera() ?? 0;
+
+    return Math.max(this.cameraCollision.clearance, geocentricHeight - terrainHeight);
+  }
+
+  private cameraDistanceForLod(): number {
+    return 1 + this.cameraAltitudeAboveSurfaceMeters() / Ellipsoid.WGS84.maximumRadius;
   }
 }
 

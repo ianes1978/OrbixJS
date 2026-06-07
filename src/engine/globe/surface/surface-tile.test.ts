@@ -55,5 +55,31 @@ describe("surface-tile", () => {
     expect(surfaceTiles[0].bounds.east).toBeCloseTo(Math.PI);
     expect(surfaceTiles[0].bounds.south).toBeCloseTo(-1.484422, 5);
     expect(surfaceTiles[0].bounds.north).toBeCloseTo(0);
+    expect(surfaceTiles[0].boundingSphere.center).toHaveLength(3);
+    expect(surfaceTiles[0].boundingSphere.radius).toBeGreaterThan(0);
+    expect(surfaceTiles[0].boundingSphere.radius).toBeLessThan(1.5);
+  });
+
+  it("uses terrain mesh positions for ready surface bounding volumes", () => {
+    const tile = createQuadtreeTile(1, 1, 2);
+    const terrainTile = { level: tile.z, x: tile.x, y: tile.y };
+    const terrainMesh = {
+      id: tile.id,
+      tile: terrainTile,
+      mesh: createTerrainMesh(createFlatTerrainTile(terrainTile, { size: 3, height: 2500 }), { skirtDepth: 25 }),
+    };
+    const [surfaceTile] = createSurfaceTileSet({
+      imageryTiles: [tile],
+      terrainMeshes: [terrainMesh],
+    });
+    const xs = terrainMesh.mesh.positions.filter((_, index) => index % 3 === 0);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+
+    expect(surfaceTile.activeMesh).toBe("terrain");
+    expect(surfaceTile.hasSkirt).toBe(true);
+    expect(surfaceTile.boundingSphere.center[0]).toBeGreaterThanOrEqual(minX);
+    expect(surfaceTile.boundingSphere.center[0]).toBeLessThanOrEqual(maxX);
+    expect(surfaceTile.boundingSphere.radius).toBeGreaterThan(0);
   });
 });

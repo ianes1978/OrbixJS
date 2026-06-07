@@ -88,6 +88,17 @@ describe("OrbitCamera", () => {
     expect(3.2 - far.distance).toBeGreaterThan(0.2);
   });
 
+  it("keeps zoom above a raised terrain surface", () => {
+    const terrainHeight = 5000;
+    const terrainRadius = 1 + terrainHeight / 6_378_137;
+    const camera = new OrbitCamera({ distance: 1.002, minDistance: 1 });
+
+    camera.zoom(-100, terrainHeight);
+
+    expect(camera.distance).toBeCloseTo(terrainRadius);
+    expect(camera.geocentricDistance).toBeGreaterThanOrEqual(terrainRadius);
+  });
+
   it("keeps the camera above the globe when zooming with a panned target", () => {
     const camera = new OrbitCamera({ target: [0.8, 0, 0], distance: 1.2, yaw: Math.PI, pitch: 0 });
 

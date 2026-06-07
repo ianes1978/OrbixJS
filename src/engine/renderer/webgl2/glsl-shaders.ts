@@ -98,6 +98,7 @@ in vec2 vUv;
 
 uniform sampler2D uImagery;
 uniform vec3 uSunDirection;
+uniform bool uDebugOverlay;
 
 out vec4 outColor;
 

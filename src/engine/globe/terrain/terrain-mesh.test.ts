@@ -53,8 +53,27 @@ describe("terrain-mesh", () => {
 
     expect(mesh.indices).toBeInstanceOf(Uint32Array);
   });
+
+  it("adds optional skirts around terrain tile borders", () => {
+    const tile = createFlatTerrainTile({ level: 1, x: 1, y: 1 }, { size: 3, height: 1000 });
+    const mesh = createTerrainMesh(tile, { skirtDepth: 50 });
+    const baseVertexCount = tile.width * tile.height;
+    const skirtVertexCount = tile.width * 2 + (tile.height - 2) * 2;
+
+    expect(mesh.hasSkirt).toBe(true);
+    expect(mesh.positions).toHaveLength((baseVertexCount + skirtVertexCount) * 3);
+    expect(mesh.texcoords).toHaveLength((baseVertexCount + skirtVertexCount) * 2);
+    expect(mesh.indices.length).toBeGreaterThan((tile.width - 1) * (tile.height - 1) * 6);
+    expect(vertexLength(mesh.positions, baseVertexCount)).toBeLessThan(vertexLength(mesh.positions, 0));
+  });
 });
 
 function vertexAt(positions: Float32Array, index: number): [number, number, number] {
   return [positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]];
+}
+
+function vertexLength(positions: Float32Array, index: number): number {
+  const vertex = vertexAt(positions, index);
+
+  return Math.hypot(vertex[0], vertex[1], vertex[2]);
 }

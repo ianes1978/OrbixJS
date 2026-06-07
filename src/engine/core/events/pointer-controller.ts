@@ -3,6 +3,7 @@ import { add, dot, normalize, scale, type Vec3 } from "../math/vec3";
 
 export type PointerControllerOptions = {
   pickSurfacePoint?: (clientX: number, clientY: number) => Vec3 | undefined;
+  surfaceHeightMeters?: () => number;
 };
 
 export class PointerController {
@@ -60,7 +61,7 @@ export class PointerController {
       const distance = this.pinchDistance();
 
       if (distance !== undefined && this.lastPinchDistance !== undefined && distance > 0) {
-        this.camera.zoom(Math.log(this.lastPinchDistance / distance));
+        this.camera.zoom(Math.log(this.lastPinchDistance / distance), this.options.surfaceHeightMeters?.() ?? 0);
       }
 
       this.lastPinchDistance = distance;
@@ -135,7 +136,7 @@ export class PointerController {
     event.preventDefault();
     this.surfaceDragPoint = undefined;
     this.smoothedSurfacePoint = undefined;
-    this.camera.zoom(event.deltaY * 0.001);
+    this.camera.zoom(event.deltaY * 0.001, this.options.surfaceHeightMeters?.() ?? 0);
   };
 
   private pickSurfaceDragPoint(event: PointerEvent): Vec3 | undefined {

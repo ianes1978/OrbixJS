@@ -792,9 +792,10 @@ function compileShader(
   gl.compileShader(shader);
 
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const info = gl.getShaderInfoLog(shader);
     gl.deleteShader(shader);
     resources.release(resource);
-    throw new Error(gl.getShaderInfoLog(shader) ?? "Unable to compile WebGL2 shader");
+    throw new Error(info ?? "Unable to compile WebGL2 shader");
   }
 
   return { shader, resource };

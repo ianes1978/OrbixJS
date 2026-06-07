@@ -163,6 +163,30 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
     };
   }
 
+  sampleHeight(lon: number, lat: number): number | undefined {
+    const candidates = [...this.sourceCache.entries()]
+      .map(([id, mesh]) => {
+        const key = parseGeographicTileId(id);
+
+        return key ? { key, mesh, rectangle: geographicTileRectangle(key) } : undefined;
+      })
+      .filter((sample): sample is SourceSampleTile => sample !== undefined)
+      .filter((sample) => lon >= sample.rectangle.west && lon <= sample.rectangle.east && lat >= sample.rectangle.south && lat <= sample.rectangle.north)
+      .sort((a, b) => b.key.level - a.key.level);
+
+    const sample = candidates[0];
+
+    if (!sample) {
+      return undefined;
+    }
+
+    return sampleQuantizedMeshHeight(
+      sample.mesh,
+      normalizedInRange(lon, sample.rectangle.west, sample.rectangle.east),
+      normalizedInRange(lat, sample.rectangle.south, sample.rectangle.north),
+    );
+  }
+
   private async collectSamples(key: TerrainTileKey, signal?: AbortSignal): Promise<SourceSampleTile[]> {
     const level = clamp(key.level + this.sourceLevelOffset, 0, this.layer.available.length - 1);
     const sourceKeys = new Map<string, GeographicTileKey>();
@@ -536,6 +560,16 @@ function normalizedInRange(value: number, min: number, max: number): number {
 
 function geographicTileId({ level, x, y }: GeographicTileKey): string {
   return `${level}/${x}/${y}`;
+}
+
+function parseGeographicTileId(id: string): GeographicTileKey | undefined {
+  const [level, x, y] = id.split("/").map(Number);
+
+  if (![level, x, y].every(Number.isInteger)) {
+    return undefined;
+  }
+
+  return { level, x, y };
 }
 
 function zigZagDecode(value: number): number {

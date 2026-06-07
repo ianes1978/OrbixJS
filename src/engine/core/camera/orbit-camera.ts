@@ -154,10 +154,11 @@ export class OrbitCamera {
     return interactionAltitudeScale(normalizedAltitude, 0.002, 1);
   }
 
-  zoom(delta: number): void {
+  zoom(delta: number, surfaceHeightMeters = 0): void {
     const direction = this.orbitDirection();
-    const surfaceDistance = surfaceExitDistance(this.target, direction);
-    const minAllowedDistance = surfaceExitDistance(this.target, direction, this.minDistance);
+    const surfaceRadius = 1 + Math.max(0, surfaceHeightMeters) / 6_378_137;
+    const surfaceDistance = surfaceExitDistance(this.target, direction, surfaceRadius);
+    const minAllowedDistance = Math.max(surfaceDistance, surfaceExitDistance(this.target, direction, this.minDistance));
     const altitude = Math.max(this.distance - surfaceDistance, minAllowedDistance - surfaceDistance);
     this.distance = clamp(surfaceDistance + altitude * Math.exp(delta), minAllowedDistance, this.maxDistance);
   }

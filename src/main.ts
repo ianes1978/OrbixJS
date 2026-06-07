@@ -630,7 +630,9 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
     const layerUrl = demoAssetUrl(quantizedMeshInput.url);
     const layer = await loadCivisQuantizedMeshLayer(layerUrl);
 
-    viewer.setTerrainProvider(createCivisQuantizedMeshTerrainProvider(layer, { baseUrl: layerUrl, heightmapSize: 33 }));
+    viewer.setTerrainProvider(createCivisQuantizedMeshTerrainProvider(layer, { baseUrl: layerUrl, heightmapSize: 33 }), {
+      skirtDepth: 80,
+    });
     return;
   }
 
@@ -642,7 +644,7 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
 
   const manifestUrl = demoAssetUrl(output.url);
   const manifest = await loadHeightmapTerrainManifest(manifestUrl);
-  viewer.setTerrainProvider(createHeightmapTerrainProvider(manifest, { baseUrl: manifestUrl }));
+  viewer.setTerrainProvider(createHeightmapTerrainProvider(manifest, { baseUrl: manifestUrl }), { skirtDepth: 80 });
 }
 
 async function toggleDtmTerrain(): Promise<void> {
@@ -939,9 +941,13 @@ function bindCanvasPicking(): void {
 
 function syncRendererToggle(): void {
   const isWebGpu = viewer.renderer.backend === "webgpu";
+  const target = isWebGpu ? "webgl2" : "webgpu";
 
   rendererToggleElement.setAttribute("aria-pressed", String(isWebGpu));
-  rendererToggleElement.textContent = isWebGpu ? "WebGL2" : "WebGPU";
+  rendererToggleElement.dataset.currentRenderer = viewer.renderer.backend;
+  rendererToggleElement.dataset.targetRenderer = target;
+  rendererToggleElement.dataset.testid = "renderer-toggle";
+  rendererToggleElement.textContent = target === "webgl2" ? "WebGL2" : "WebGPU";
 }
 
 function syncResponsivePanels(compact: boolean): void {

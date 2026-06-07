@@ -32,6 +32,22 @@ describe("civis-quantized-mesh-terrain-provider", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
+  it("samples terrain height from cached quantized mesh source tiles", async () => {
+    const layer = parseCivisQuantizedMeshLayer(layerJson());
+    const provider = createCivisQuantizedMeshTerrainProvider(layer, {
+      baseUrl: "https://example.test/terrain/layer.json",
+      fetch: vi.fn<typeof fetch>(async () => new Response(quantizedMeshTile())),
+      heightmapSize: 5,
+    });
+
+    await provider.getTile({ level: 0, x: 0, y: 0 });
+
+    const height = provider.sampleHeight?.(0, 0);
+
+    expect(height).toBeGreaterThanOrEqual(99.99);
+    expect(height).toBeLessThanOrEqual(500);
+  });
+
   it("reports tile availability from layer bounds", () => {
     const layer = parseCivisQuantizedMeshLayer({ ...layerJson(), bounds: [-10, -10, 10, 10] });
     const provider = createCivisQuantizedMeshTerrainProvider(layer);
