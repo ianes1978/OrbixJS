@@ -54,11 +54,12 @@ export class TerrainSurfaceRuntime {
   update(lon: number, lat: number, cameraDistance: number, context: TerrainTileSelectorContext = {}): TerrainSurfaceStats {
     const selection = this.selector.select(lon, lat, cameraDistance, context);
     const availableTiles = selection.tiles.filter((tile) => this.options.provider.isTileAvailable?.(tile) ?? true);
+    const maxPending = Math.max(1, context.requestBudget ?? this.maxPending);
     this.activeTileIds = new Set(availableTiles.map((tile) => tile.id));
     this.activeTilesById = new Map(availableTiles.map((tile) => [tile.id, tile]));
 
     for (const tile of availableTiles) {
-      if (this.pending.size >= this.maxPending) {
+      if (this.pending.size >= maxPending) {
         break;
       }
 

@@ -32,6 +32,7 @@ export type CameraSnapshot = {
   yaw: number;
   pitch: number;
   tiltOffset: number;
+  lookYawOffset: number;
   fov: number;
   near: number;
   far: number;
@@ -62,6 +63,7 @@ export class OrbitCamera {
   yaw: number;
   pitch: number;
   tiltOffset = 0;
+  lookYawOffset = 0;
   fov = (45 * Math.PI) / 180;
   near = 0.000005;
   far = 20;
@@ -154,17 +156,26 @@ export class OrbitCamera {
     return interactionAltitudeScale(normalizedAltitude, 0.002, 1);
   }
 
-  zoom(delta: number, surfaceHeightMeters = 0): void {
+  zoom(delta: number, surfaceHeightMeters = 0, surfaceDistanceOverride?: number): void {
     const direction = this.orbitDirection();
     const surfaceRadius = 1 + Math.max(0, surfaceHeightMeters) / 6_378_137;
-    const surfaceDistance = surfaceExitDistance(this.target, direction, surfaceRadius);
+    const surfaceDistance =
+      surfaceDistanceOverride !== undefined && Number.isFinite(surfaceDistanceOverride)
+        ? surfaceDistanceOverride
+        : surfaceExitDistance(this.target, direction, surfaceRadius);
     const minAllowedDistance = Math.max(surfaceDistance, surfaceExitDistance(this.target, direction, this.minDistance));
     const altitude = Math.max(this.distance - surfaceDistance, minAllowedDistance - surfaceDistance);
-    this.distance = clamp(surfaceDistance + altitude * Math.exp(delta), minAllowedDistance, this.maxDistance);
+    const nextAltitude = zoomAltitude(altitude, delta);
+    this.distance = clamp(surfaceDistance + nextAltitude, minAllowedDistance, this.maxDistance);
   }
 
   tilt(delta: number): void {
     this.tiltOffset = clamp(this.tiltOffset + delta, this.minTilt, this.maxTilt);
+  }
+
+  look(deltaYaw: number, deltaTilt: number): void {
+    this.lookYawOffset = normalizeAngle(this.lookYawOffset + deltaYaw);
+    this.tilt(deltaTilt);
   }
 
   pan(deltaX: number, deltaY: number): void {
@@ -200,6 +211,7 @@ export class OrbitCamera {
     this.yaw = Math.atan2(direction[0], direction[2]);
     this.pitch = clamp(Math.asin(direction[1]), this.minPitch, this.maxPitch);
     this.tiltOffset = 0;
+    this.lookYawOffset = 0;
     this.target[0] = 0;
     this.target[1] = 0;
     this.target[2] = 0;
@@ -219,6 +231,7 @@ export class OrbitCamera {
       yaw: this.yaw,
       pitch: this.pitch,
       tiltOffset: this.tiltOffset,
+      lookYawOffset: this.lookYawOffset,
       fov: this.fov,
       near: this.near,
       far: this.far,
@@ -240,6 +253,7 @@ export class OrbitCamera {
     this.yaw = snapshot.yaw;
     this.pitch = clamp(snapshot.pitch, this.minPitch, this.maxPitch);
     this.tiltOffset = clamp(snapshot.tiltOffset, this.minTilt, this.maxTilt);
+    this.lookYawOffset = finiteOr(snapshot.lookYawOffset ?? 0, 0);
     this.fov = snapshot.fov;
     this.near = snapshot.near;
     this.far = snapshot.far;
@@ -248,7 +262,7 @@ export class OrbitCamera {
 
   setLimits(limits: CameraLimits): void {
     if (limits.minDistance !== undefined) {
-      this.minDistance = Math.max(1, finiteOr(limits.minDistance, this.minDistance));
+      this.minDistance = Math.max(0.9, finiteOr(limits.minDistance, this.minDistance));
     }
 
     if (limits.maxDistance !== undefined) {
@@ -330,12 +344,14 @@ export class OrbitCamera {
     const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
 
-    if (this.tiltOffset === 0) {
+    if (this.tiltOffset === 0 && this.lookYawOffset === 0) {
       return { target: this.target, up };
     }
 
-    const tiltedForward = normalize(rotateAroundAxis(forward, right, this.tiltOffset));
-    const tiltedUp = normalize(rotateAroundAxis(up, right, this.tiltOffset));
+    const yawForward = this.lookYawOffset === 0 ? forward : normalize(rotateAroundAxis(forward, up, this.lookYawOffset));
+    const yawRight = this.lookYawOffset === 0 ? right : safeNormalize(cross(yawForward, up), right);
+    const tiltedForward = this.tiltOffset === 0 ? yawForward : normalize(rotateAroundAxis(yawForward, yawRight, this.tiltOffset));
+    const tiltedUp = this.tiltOffset === 0 ? up : normalize(rotateAroundAxis(up, yawRight, this.tiltOffset));
 
     return {
       target: add(position, scale(tiltedForward, this.distance)),
@@ -376,6 +392,10 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function normalizeAngle(value: number): number {
+  return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
 function finiteOr(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
@@ -383,6 +403,19 @@ function finiteOr(value: number, fallback: number): number {
 function interactionAltitudeScale(normalizedAltitude: number, min: number, max: number): number {
   const t = clamp((normalizedAltitude - 0.06) / 0.94, 0, 1);
   return min + Math.pow(t, 1.35) * (max - min);
+}
+
+function zoomAltitude(altitude: number, delta: number): number {
+  const exponentialAltitude = altitude * Math.exp(delta);
+
+  if (delta >= 0 || altitude <= 0) {
+    return exponentialAltitude;
+  }
+
+  const minimumStepMeters = 0.5 * clamp(Math.abs(delta) / 0.1, 0, 1);
+  const minimumStep = minimumStepMeters / 6_378_137;
+
+  return Math.max(0, Math.min(exponentialAltitude, altitude - minimumStep));
 }
 
 function rotateAroundAxis(value: Vec3, axis: Vec3, angle: number): MutableVec3 {

@@ -4,9 +4,20 @@ import { type CameraKeyframe } from "./core/camera/camera-path";
 import { sunDirectionFromDate } from "./core/astro/sun-position";
 import { PointerController } from "./core/events/pointer-controller";
 import { Ellipsoid } from "./core/geodesy/ellipsoid";
+import {
+  applyLodBiasToLevel,
+  createAdaptiveLodState,
+  createLodContext,
+  normalizeLodOptions,
+  updateAdaptiveLodState,
+  type AdaptiveLodState,
+  type LodContext,
+  type LodOptions,
+  type NormalizedLodOptions,
+} from "./core/lod/lod";
 import { invert, multiply, transformPoint } from "./core/math/mat4";
 import { directionBetween, type Ray, intersectUnitSphere } from "./core/math/ray";
-import { dot, type MutableVec3, type Vec3 } from "./core/math/vec3";
+import { dot, length, normalize, subtract, type MutableVec3, type Vec3 } from "./core/math/vec3";
 import { loadGlb } from "./loaders/gltf/glb-loader";
 import { extractFirstMeshPrimitive } from "./loaders/gltf/gltf-mesh";
 import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
@@ -18,7 +29,11 @@ import { selectLevel } from "./globe/imagery/tile-selector";
 import { createSurfaceTileSet, type SurfaceTile } from "./globe/surface/surface-tile";
 import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider } from "./globe/terrain/terrain-provider";
-import { TerrainSurfaceRuntime, type TerrainSurfaceMeshEntry } from "./globe/terrain/terrain-surface-runtime";
+import {
+  TerrainSurfaceRuntime,
+  type TerrainSurfaceMeshEntry,
+  type TerrainSurfaceStats,
+} from "./globe/terrain/terrain-surface-runtime";
 import { decodeTopoJsonLand } from "./globe/vector/topojson-land";
 import { WebGL2Renderer } from "./renderer/webgl2/webgl2-renderer";
 import { WebGPURenderer } from "./renderer/webgpu/webgpu-renderer";
@@ -31,6 +46,7 @@ export type GeoViewerOptions = {
   cameraHeightLimits?: CameraHeightLimits;
   cameraCollision?: CameraCollisionOptions;
   terrainExaggeration?: number;
+  lod?: LodOptions;
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
@@ -39,8 +55,20 @@ export type GeoViewerOptions = {
     pendingTiles: number;
     cacheSize: number;
   }) => void;
+  onFrameStats?: (stats: GeoViewerFrameStats) => void;
   onTilesetStats?: (stats: { status: string }) => void;
   onImageryError?: (error: unknown) => void;
+};
+
+export type GeoViewerFrameStats = {
+  fps: number;
+  frameMs: number;
+  cpuMs: number;
+  updateMs: number;
+  renderMs: number;
+  coverageTiles: number;
+  terrain?: TerrainSurfaceStats;
+  lod: LodContext;
 };
 
 export type CameraHeightLimits = {
@@ -51,6 +79,15 @@ export type CameraHeightLimits = {
 export type CameraCollisionOptions = {
   enabled?: boolean;
   clearance?: number;
+};
+
+export type CameraSurfaceStatus = {
+  lon: number;
+  lat: number;
+  ellipsoidHeight: number;
+  terrainHeight?: number;
+  heightAboveTerrain: number;
+  heightReference: "terrain" | "ellipsoid";
 };
 
 export type GeoPickResult =
@@ -114,6 +151,7 @@ export class GeoViewer {
   private readonly imageryTiling = new WebMercatorTilingScheme();
   private controller: PointerController;
   private readonly onImageryStatsCallback?: GeoViewerOptions["onImageryStats"];
+  private readonly onFrameStatsCallback?: GeoViewerOptions["onFrameStats"];
   private readonly onTilesetStatsCallback?: GeoViewerOptions["onTilesetStats"];
   private debugTileOverlay = false;
   private coastlineOverlayVisible = false;
@@ -140,14 +178,24 @@ export class GeoViewer {
   private vectorLines: readonly (readonly [number, number])[][] | undefined;
   private debugModelMesh: DebugModelMesh | undefined;
   private frame = 0;
+  private lastFrameTimestamp = 0;
+  private smoothedFrameMs = 16.67;
+  private smoothedCpuMs = 0;
+  private smoothedUpdateMs = 0;
+  private smoothedRenderMs = 0;
   private disposed = false;
   private date: Date;
+  private lodOptions: NormalizedLodOptions;
+  private adaptiveLodState: AdaptiveLodState = createAdaptiveLodState();
+  private currentLodContext: LodContext | undefined;
   private cameraHeightLimits: CameraHeightLimits;
   private cameraCollision: Required<CameraCollisionOptions>;
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
+    this.onFrameStatsCallback = options.onFrameStats;
     this.onTilesetStatsCallback = options.onTilesetStats;
+    this.lodOptions = normalizeLodOptions(options.lod);
     this.cameraHeightLimits = options.cameraHeightLimits ?? {};
     this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
     this.defaultTerrainExaggeration = options.terrainExaggeration ?? 1;
@@ -384,6 +432,15 @@ export class GeoViewer {
     this.applyCameraHeightConstraints();
   }
 
+  setLod(options: LodOptions): void {
+    this.lodOptions = normalizeLodOptions(options);
+    this.adaptiveLodState = createAdaptiveLodState();
+  }
+
+  getLodContext(): LodContext | undefined {
+    return this.currentLodContext ? { ...this.currentLodContext } : undefined;
+  }
+
   setCameraCollision(options: CameraCollisionOptions): void {
     this.cameraCollision = normalizeCameraCollisionOptions({
       ...this.cameraCollision,
@@ -396,12 +453,28 @@ export class GeoViewer {
     return this.camera.snapshot();
   }
 
+  cameraSurfaceStatus(): CameraSurfaceStatus {
+    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const ellipsoidHeight = Math.max(0, this.cameraEllipsoidHeightMeters());
+    const terrainHeight = this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat);
+    const heightAboveTerrain = terrainHeight === undefined ? ellipsoidHeight : Math.max(0, ellipsoidHeight - terrainHeight);
+
+    return {
+      lon: cartographic.lon,
+      lat: cartographic.lat,
+      ellipsoidHeight,
+      terrainHeight,
+      heightAboveTerrain,
+      heightReference: terrainHeight === undefined ? "ellipsoid" : "terrain",
+    };
+  }
+
   cameraKeyframe(duration = 3): CameraKeyframe {
     const center = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample();
     const fallback = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
     const lon = center ? center[0] : fallback.lon;
     const lat = center ? center[1] : fallback.lat;
-    const height = Math.max(0, (this.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
+    const height = Math.max(0, this.cameraEllipsoidHeightMeters());
 
     return {
       lon: lon * (180 / Math.PI),
@@ -489,9 +562,17 @@ export class GeoViewer {
         return;
       }
 
+      const frameStart = performance.now();
+      const frameDelta = this.lastFrameTimestamp > 0 ? frameStart - this.lastFrameTimestamp : this.smoothedFrameMs;
+      this.lastFrameTimestamp = frameStart;
       this.applyCameraHeightConstraints();
+      const lodContext = this.createCurrentLodContext();
+      this.currentLodContext = lodContext;
+      const projectedImageryLevel = this.projectedImageryLevel(256, lodContext.pixelErrorBudget);
+      const imageryTargetLevel = applyLodBiasToLevel(projectedImageryLevel, this.lodOptions.imagery, lodContext);
+      const terrainTargetLevel = applyLodBiasToLevel(projectedImageryLevel, this.lodOptions.terrain, lodContext);
       const coveragePositions = this.visibleCartographicSamples();
-      const coverageTiles = this.screenSpaceCoverageTiles();
+      const coverageTiles = this.screenSpaceCoverageTiles(lodContext.tileBudget, imageryTargetLevel);
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const stats = this.imagery.update(
         imageryCenter ? [imageryCenter[0], imageryCenter[1], imageryCenter[2] ?? 0] : [0, 0, 0],
@@ -501,7 +582,8 @@ export class GeoViewer {
           fov: this.camera.fov,
           coveragePositions,
           coverageTiles,
-          targetLevel: this.projectedImageryLevel(),
+          requestBudget: lodContext.requestBudget,
+          targetLevel: imageryTargetLevel,
         },
       );
 
@@ -509,9 +591,26 @@ export class GeoViewer {
         this.onImageryStats(stats);
       }
 
-      this.syncTerrainSurface(imageryCenter, coveragePositions);
+      const terrainStats = this.syncTerrainSurface(imageryCenter, coveragePositions, coverageTiles, terrainTargetLevel, lodContext);
       void this.syncDebugTilesetContent();
+      const beforeRender = performance.now();
       this.renderer.render({ scene: this.scene, camera: this.camera });
+      const frameEnd = performance.now();
+      const frameMs = this.smoothFrameMetric("frame", frameDelta);
+      const cpuMs = this.smoothFrameMetric("cpu", frameEnd - frameStart);
+      const updateMs = this.smoothFrameMetric("update", beforeRender - frameStart);
+      const renderMs = this.smoothFrameMetric("render", frameEnd - beforeRender);
+      this.onFrameStats({
+        fps: 1000 / frameMs,
+        frameMs,
+        cpuMs,
+        updateMs,
+        renderMs,
+        coverageTiles: coverageTiles?.length ?? 0,
+        terrain: terrainStats,
+        lod: lodContext,
+      });
+      this.adaptiveLodState = updateAdaptiveLodState(this.adaptiveLodState, frameMs, this.lodOptions);
       this.frame = requestAnimationFrame(render);
     };
 
@@ -553,6 +652,50 @@ export class GeoViewer {
     this.canvas.dispatchEvent(event);
   }
 
+  private onFrameStats(stats: GeoViewerFrameStats): void {
+    this.onFrameStatsCallback?.(stats);
+    this.canvas.dispatchEvent(new CustomEvent("orbix:frame-stats", { detail: stats }));
+  }
+
+  private smoothFrameMetric(metric: "frame" | "cpu" | "update" | "render", value: number): number {
+    const alpha = 0.12;
+    const next = (previous: number) => previous + (value - previous) * alpha;
+
+    if (metric === "frame") {
+      this.smoothedFrameMs = next(this.smoothedFrameMs);
+      return this.smoothedFrameMs;
+    }
+
+    if (metric === "cpu") {
+      this.smoothedCpuMs = next(this.smoothedCpuMs);
+      return this.smoothedCpuMs;
+    }
+
+    if (metric === "update") {
+      this.smoothedUpdateMs = next(this.smoothedUpdateMs);
+      return this.smoothedUpdateMs;
+    }
+
+    this.smoothedRenderMs = next(this.smoothedRenderMs);
+    return this.smoothedRenderMs;
+  }
+
+  private createCurrentLodContext(): LodContext {
+    const width = this.canvas.width || this.canvas.clientWidth;
+    const height = this.canvas.height || this.canvas.clientHeight;
+    const cameraDistance = this.cameraDistanceForLod();
+
+    return createLodContext(this.lodOptions, {
+      cameraDistance,
+      altitudeMeters: this.cameraAltitudeAboveSurfaceMeters(),
+      viewportWidth: width,
+      viewportHeight: height,
+      devicePixelRatio: window.devicePixelRatio,
+      fov: this.camera.fov,
+      adaptiveState: this.adaptiveLodState,
+    });
+  }
+
   private onTilesetStats(status: string): void {
     const stats = { status };
     this.onTilesetStatsCallback?.(stats);
@@ -567,6 +710,7 @@ export class GeoViewer {
     const selected = selectTilesetTile(this.debugTileset.tileset.root, this.camera.distance, {
       cameraPosition: this.camera.position,
       cameraTarget: this.camera.target,
+      maxScreenSpaceError: this.currentLodContext?.tiles3dMaxScreenSpaceError,
     });
 
     if (!selected) {
@@ -671,25 +815,32 @@ export class GeoViewer {
   private syncTerrainSurface(
     center: readonly [number, number, number?] | undefined,
     coveragePositions: readonly (readonly [number, number, number?])[],
-  ): void {
+    coverageTiles: readonly QuadtreeTile[] | undefined,
+    targetLevel: number | undefined,
+    lodContext: LodContext,
+  ): TerrainSurfaceStats | undefined {
     if (!this.terrainSurface || !center) {
       if (this.lastTerrainMeshes.length > 0) {
         this.lastTerrainMeshes = [];
         this.renderer.setTerrainMeshes([]);
         this.syncDebugTileOverlay();
       }
-      return;
+      return undefined;
     }
 
-    this.terrainSurface.update(center[0], center[1], this.cameraDistanceForLod(), {
+    const stats = this.terrainSurface.update(center[0], center[1], this.cameraDistanceForLod(), {
       viewportHeight: this.canvas.height || this.canvas.clientHeight,
       fov: this.camera.fov,
       coveragePositions: coveragePositions.map((position) => [position[0], position[1]] as const),
-      targetLevel: this.projectedImageryLevel(),
+      coverageTiles,
+      maxTiles: Math.min(this.lodOptions.terrain.maxTiles, lodContext.tileBudget),
+      requestBudget: lodContext.requestBudget,
+      targetLevel,
     });
     this.lastTerrainMeshes = this.terrainSurface.readyMeshes();
     this.renderer.setTerrainMeshes(this.lastTerrainMeshes);
     this.syncDebugTileOverlay();
+    return stats;
   }
 
   private createCanvas(): HTMLCanvasElement {
@@ -711,6 +862,7 @@ export class GeoViewer {
     return new PointerController(this.canvas, this.camera, {
       pickSurfacePoint: (clientX, clientY) => this.pickSurfacePatchPoint(clientX, clientY),
       surfaceHeightMeters: () => this.sampleTerrainHeightBelowCamera() ?? 0,
+      surfaceDistance: () => this.cameraSurfaceDistanceForHeight(this.sampleTerrainHeightBelowCamera() ?? 0),
     });
   }
 
@@ -771,7 +923,7 @@ export class GeoViewer {
     return nearest;
   }
 
-  private screenSpaceCoverageTiles(maxTiles = 2048): QuadtreeTile[] | undefined {
+  private screenSpaceCoverageTiles(maxTiles = 2048, targetLevelOverride?: number): QuadtreeTile[] | undefined {
     const width = this.canvas.width || this.canvas.clientWidth;
     const height = this.canvas.height || this.canvas.clientHeight;
 
@@ -780,6 +932,7 @@ export class GeoViewer {
     }
 
     const targetLevel =
+      targetLevelOverride ??
       this.projectedImageryLevel() ??
       selectLevel(this.cameraDistanceForLod(), 22, {
         viewportHeight: height,
@@ -919,7 +1072,13 @@ export class GeoViewer {
   private projectTileScreenBounds(tile: { x: number; y: number; z: number }): ScreenBounds | undefined {
     const rectangle = this.imageryTiling.tileXYToRectangle(tile);
     const points: [number, number][] = [];
-    const grid = tile.z < 5 ? 4 : 3;
+    const grid = tile.z < 8 ? 5 : 3;
+    const width = this.canvas.width || this.canvas.clientWidth;
+    const height = this.canvas.height || this.canvas.clientHeight;
+
+    if (width <= 0 || height <= 0 || !this.tileCanContributeToView(tile)) {
+      return undefined;
+    }
 
     for (let row = 0; row <= grid; row += 1) {
       const v = row / grid;
@@ -928,7 +1087,7 @@ export class GeoViewer {
       for (let column = 0; column <= grid; column += 1) {
         const u = column / grid;
         const lon = rectangle.west + (rectangle.east - rectangle.west) * u;
-        const projected = this.projectCartographicToViewport(lon, lat);
+        const projected = this.projectCartographicToViewport(lon, lat, { allowDepthOutside: true });
 
         if (projected) {
           points.push(projected);
@@ -937,7 +1096,7 @@ export class GeoViewer {
     }
 
     if (points.length === 0) {
-      return undefined;
+      return this.tileFacesCamera(tile) ? conservativeViewportBounds(width, height) : undefined;
     }
 
     const xs = points.map((point) => point[0]);
@@ -975,7 +1134,68 @@ export class GeoViewer {
     return [((ndc[0] + 1) / 2) * width, ((1 - ndc[1]) / 2) * height];
   }
 
-  private projectCartographicToViewport(lon: number, lat: number): [number, number] | undefined {
+  private tileCanContributeToView(tile: { x: number; y: number; z: number }): boolean {
+    const rectangle = this.imageryTiling.tileXYToRectangle(tile);
+    const centerLon = (rectangle.west + rectangle.east) * 0.5;
+    const centerLat = (rectangle.south + rectangle.north) * 0.5;
+    const center = this.cartographicToUnitSphere({
+      lon: centerLon * (180 / Math.PI),
+      lat: centerLat * (180 / Math.PI),
+      height: 0,
+    });
+    const samples = [
+      [rectangle.west, rectangle.south],
+      [rectangle.east, rectangle.south],
+      [rectangle.west, rectangle.north],
+      [rectangle.east, rectangle.north],
+      [centerLon, rectangle.south],
+      [centerLon, rectangle.north],
+      [rectangle.west, centerLat],
+      [rectangle.east, centerLat],
+    ] as const;
+    let radius = 0;
+
+    for (const [lon, lat] of samples) {
+      const sample = this.cartographicToUnitSphere({
+        lon: lon * (180 / Math.PI),
+        lat: lat * (180 / Math.PI),
+        height: 0,
+      });
+      radius = Math.max(radius, length(subtract(sample, center)));
+    }
+
+    const cameraDistance = length(this.camera.position);
+
+    if (cameraDistance <= 1.0001) {
+      return this.tileFacesCamera(tile);
+    }
+
+    const cameraNormal = normalize(this.camera.position);
+    const horizonDot = 1 / cameraDistance;
+    const centerDot = dot(cameraNormal, center);
+
+    return centerDot + radius * 1.35 >= horizonDot && this.tileFacesCamera(tile);
+  }
+
+  private tileFacesCamera(tile: { x: number; y: number; z: number }): boolean {
+    const rectangle = this.imageryTiling.tileXYToRectangle(tile);
+    const lon = (rectangle.west + rectangle.east) * 0.5;
+    const lat = (rectangle.south + rectangle.north) * 0.5;
+    const center = this.cartographicToUnitSphere({
+      lon: lon * (180 / Math.PI),
+      lat: lat * (180 / Math.PI),
+      height: 0,
+    });
+    const toTile = subtract(center, this.camera.position);
+
+    return dot(normalize(toTile), normalize(subtract(this.camera.target, this.camera.position))) > -0.15;
+  }
+
+  private projectCartographicToViewport(
+    lon: number,
+    lat: number,
+    options: { allowDepthOutside?: boolean } = {},
+  ): [number, number] | undefined {
     const width = this.canvas.width || this.canvas.clientWidth;
     const height = this.canvas.height || this.canvas.clientHeight;
 
@@ -992,7 +1212,7 @@ export class GeoViewer {
     const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
     const clip = transformPointWithW(viewProjection, world);
 
-    if (!clip || clip.w <= 0 || clip.z < -1.1 || clip.z > 1.1) {
+    if (!clip || clip.w <= 0 || (!options.allowDepthOutside && (clip.z < -1.1 || clip.z > 1.1))) {
       return undefined;
     }
 
@@ -1082,13 +1302,14 @@ export class GeoViewer {
     const terrainHeight = this.cameraCollision.enabled ? this.sampleTerrainHeightBelowCamera() : undefined;
     const collisionMinHeight =
       terrainHeight === undefined ? baseMinHeight : Math.max(baseMinHeight, terrainHeight + this.cameraCollision.clearance);
+    const minDistance = this.cameraSurfaceDistanceForHeight(collisionMinHeight);
+    const maxDistance =
+      this.cameraHeightLimits.maxHeight === undefined ? undefined : this.cameraSurfaceDistanceForHeight(this.cameraHeightLimits.maxHeight);
 
-    this.camera.setLimits(
-      cameraHeightLimitsToCameraLimits({
-        minHeight: collisionMinHeight,
-        maxHeight: this.cameraHeightLimits.maxHeight,
-      }),
-    );
+    this.camera.setLimits({
+      minDistance,
+      maxDistance,
+    });
   }
 
   private sampleTerrainHeightBelowCamera(): number | undefined {
@@ -1103,7 +1324,7 @@ export class GeoViewer {
   }
 
   private cameraAltitudeAboveSurfaceMeters(): number {
-    const geocentricHeight = Math.max(0, (this.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
+    const geocentricHeight = Math.max(0, this.cameraEllipsoidHeightMeters());
     const terrainHeight = this.sampleTerrainHeightBelowCamera() ?? 0;
 
     return Math.max(this.cameraCollision.clearance, geocentricHeight - terrainHeight);
@@ -1111,6 +1332,27 @@ export class GeoViewer {
 
   private cameraDistanceForLod(): number {
     return 1 + this.cameraAltitudeAboveSurfaceMeters() / Ellipsoid.WGS84.maximumRadius;
+  }
+
+  private cameraEllipsoidHeightMeters(): number {
+    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const normal = Ellipsoid.WGS84.geodeticSurfaceNormal(cartographic.lon, cartographic.lat);
+    const surface = Ellipsoid.WGS84.cartographicToCartesian({ lon: cartographic.lon, lat: cartographic.lat, height: 0 });
+    const camera = [
+      this.camera.position[0] * Ellipsoid.WGS84.maximumRadius,
+      this.camera.position[1] * Ellipsoid.WGS84.maximumRadius,
+      this.camera.position[2] * Ellipsoid.WGS84.maximumRadius,
+    ] as const;
+
+    return dot(subtract(camera, surface), normal);
+  }
+
+  private cameraSurfaceDistanceForHeight(heightMeters: number): number {
+    const origin = this.camera.target;
+    const direction = directionBetween(this.camera.target, this.camera.position);
+    const hit = intersectNormalizedWgs84Surface({ origin, direction }, heightMeters);
+
+    return hit ? length(subtract(hit, origin)) : 1 + Math.max(0, heightMeters) / Ellipsoid.WGS84.maximumRadius;
   }
 }
 
@@ -1127,6 +1369,15 @@ function screenBoundsIntersectsViewport(bounds: ScreenBounds, width: number, hei
   const padding = Math.max(96, Math.min(width, height) * 0.18);
 
   return bounds.maxX >= -padding && bounds.minX <= width + padding && bounds.maxY >= -padding && bounds.minY <= height + padding;
+}
+
+function conservativeViewportBounds(width: number, height: number): ScreenBounds {
+  return {
+    minX: -width,
+    maxX: width * 2,
+    minY: -height,
+    maxY: height * 2,
+  };
 }
 
 function transformPointWithW(

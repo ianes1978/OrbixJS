@@ -55,6 +55,20 @@ describe("TerrainSurfaceRuntime", () => {
     expect(stats.pendingTiles).toBe(3);
   });
 
+  it("allows the frame LOD context to lower the in-flight request budget", () => {
+    const provider = {
+      getTile: () => new Promise<never>(() => undefined),
+    } satisfies TerrainProvider;
+    const runtime = new TerrainSurfaceRuntime({
+      provider,
+      selector: new TerrainTileSelector({ minLevel: 6, maxLevel: 6 }),
+      maxPending: 8,
+    });
+    const stats = runtime.update(0, 0, 1.05, { targetLevel: 6, requestBudget: 2 });
+
+    expect(stats.pendingTiles).toBe(2);
+  });
+
   it("tracks terrain tile states for surface fallback decisions", async () => {
     const getTile = vi.fn<TerrainProvider["getTile"]>(async (key) => {
       if (key.x % 2 === 0) {

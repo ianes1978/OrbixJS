@@ -358,6 +358,7 @@ h2 {
   display: block;
   color: #ffffff;
   font-size: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .panel {

@@ -99,6 +99,14 @@ describe("OrbitCamera", () => {
     expect(camera.geocentricDistance).toBeGreaterThanOrEqual(terrainRadius);
   });
 
+  it("keeps a physical wheel step near the terrain", () => {
+    const camera = new OrbitCamera({ distance: 1 + 2 / 6_378_137, minDistance: 1 });
+
+    camera.zoom(-0.1);
+
+    expect((camera.distance - 1) * 6_378_137).toBeCloseTo(1.5);
+  });
+
   it("keeps the camera above the globe when zooming with a panned target", () => {
     const camera = new OrbitCamera({ target: [0.8, 0, 0], distance: 1.2, yaw: Math.PI, pitch: 0 });
 
@@ -121,6 +129,7 @@ describe("OrbitCamera", () => {
     const camera = new OrbitCamera({ target: [0.1, 0.2, 0.3], distance: 2.4, yaw: 0.7, pitch: -0.2 });
 
     camera.tilt(0.3);
+    camera.look(0.2, 0);
     const snapshot = camera.snapshot();
     camera.target[0] = 0.9;
 
@@ -130,6 +139,7 @@ describe("OrbitCamera", () => {
     expect(snapshot.yaw).toBe(0.7);
     expect(snapshot.pitch).toBe(-0.2);
     expect(snapshot.tiltOffset).toBe(0.3);
+    expect(snapshot.lookYawOffset).toBeCloseTo(0.2);
     expect(snapshot.minTilt).toBeCloseTo(-Math.PI * 2);
     expect(snapshot.maxTilt).toBeCloseTo(Math.PI * 2);
   });
@@ -138,6 +148,7 @@ describe("OrbitCamera", () => {
     const camera = new OrbitCamera({ target: [0.1, 0.2, 0.3], distance: 2.4, yaw: 0.7, pitch: -0.2 });
 
     camera.tilt(0.3);
+    camera.look(0.2, 0);
     const snapshot = camera.snapshot();
     camera.flyTo({ lon: 139.7, lat: 35.7, height: 1_200_000 });
     camera.restoreSnapshot(snapshot);
@@ -147,6 +158,7 @@ describe("OrbitCamera", () => {
     expect(camera.yaw).toBeCloseTo(0.7);
     expect(camera.pitch).toBeCloseTo(-0.2);
     expect(camera.tiltOffset).toBeCloseTo(0.3);
+    expect(camera.lookYawOffset).toBeCloseTo(0.2);
   });
 
   it("pans the camera target in the view plane", () => {
@@ -189,6 +201,19 @@ describe("OrbitCamera", () => {
     expect(camera.viewMatrix()).not.toEqual(before);
   });
 
+  it("looks left and right without moving the orbit camera", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+    const beforeView = camera.viewMatrix();
+    const beforePosition = camera.position;
+
+    camera.look(0.4, 0);
+
+    expect(camera.lookYawOffset).toBeCloseTo(0.4);
+    expect(camera.position).toEqual(beforePosition);
+    expect(camera.target).toEqual([0, 0, 0]);
+    expect(camera.viewMatrix()).not.toEqual(beforeView);
+  });
+
   it("keeps a valid view matrix when tilting toward the sky", () => {
     const camera = new OrbitCamera({ distance: 1.05, yaw: 0, pitch: 0 });
 
@@ -204,8 +229,10 @@ describe("OrbitCamera", () => {
     camera.tilt(10);
     expect(camera.tiltOffset).toBe(Math.PI * 2);
 
+    camera.look(0.4, 0);
     camera.flyTo({ lon: 12.5, lat: 42.5 });
     expect(camera.tiltOffset).toBe(0);
+    expect(camera.lookYawOffset).toBe(0);
   });
 
   it("applies camera limits at runtime", () => {
@@ -235,5 +262,15 @@ describe("OrbitCamera", () => {
 
     expect(camera.distance).toBeCloseTo(1);
     expect(camera.geocentricDistance).toBeCloseTo(1);
+  });
+
+  it("allows runtime minimum distance below the unit sphere for WGS84 ellipsoid navigation", () => {
+    const camera = new OrbitCamera({ distance: 1.2, minDistance: 1 });
+
+    camera.setLimits({ minDistance: 0.998 });
+    camera.zoom(-100, 0, 0.998);
+
+    expect(camera.minDistance).toBeCloseTo(0.998);
+    expect(camera.distance).toBeCloseTo(0.998);
   });
 });

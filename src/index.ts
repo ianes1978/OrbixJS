@@ -4,6 +4,7 @@ export {
   type CameraCollisionOptions,
   type CameraHeightLimits,
   type GeoPickResult,
+  type GeoViewerFrameStats,
   type GeoViewerGltfOptions,
   type GeoViewerOptions,
   type GeoViewerTilesetOptions,
@@ -102,6 +103,20 @@ export {
   type CameraSnapshot,
   OrbitCamera,
 } from "./engine/core/camera/orbit-camera";
+export {
+  applyLodBiasToLevel,
+  createAdaptiveLodState,
+  createLodContext,
+  estimateAltitudeMeters,
+  normalizeLodOptions,
+  updateAdaptiveLodState,
+  type AdaptiveLodState,
+  type LodContext,
+  type LodLayerOptions,
+  type LodOptions,
+  type LodProfile,
+  type NormalizedLodOptions,
+} from "./engine/core/lod/lod";
 export {
   createRenderPassList,
   createRendererFramePlan,

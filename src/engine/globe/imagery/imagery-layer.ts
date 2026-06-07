@@ -27,6 +27,10 @@ export type ImageryLayerStats = {
   cacheSize: number;
 };
 
+export type ImageryLayerUpdateContext = CameraTileSelectorContext & {
+  requestBudget?: number;
+};
+
 export class ImageryLayer {
   private readonly tiling = new WebMercatorTilingScheme();
   private readonly surfaceTiles: GlobeSurfaceTileProvider;
@@ -35,6 +39,7 @@ export class ImageryLayer {
   private readonly pending = new Set<string>();
   private readonly loadQueue: QuadtreeTile[] = [];
   private activeLoads = 0;
+  private currentRequestBudget: number | undefined;
 
   constructor(
     readonly provider: RasterTileProvider,
@@ -44,7 +49,8 @@ export class ImageryLayer {
     this.surfaceTiles = new GlobeSurfaceTileProvider({ ...layerSelectorOptions(options), baseLevel: level });
   }
 
-  update(lon: number, lat: number, cameraDistance: number, context: CameraTileSelectorContext = {}): ImageryLayerStats {
+  update(lon: number, lat: number, cameraDistance: number, context: ImageryLayerUpdateContext = {}): ImageryLayerStats {
+    this.currentRequestBudget = context.requestBudget;
     const selection = this.surfaceTiles.select(lon, lat, cameraDistance, this.loaded, context);
     this.active.clear();
     this.prioritizeTileLoads(selection.requestTiles);
@@ -157,7 +163,7 @@ export class ImageryLayer {
   }
 
   private pumpTileLoadQueue(): void {
-    const maxConcurrent = this.options.maxConcurrentTileLoads ?? 16;
+    const maxConcurrent = this.currentRequestBudget ?? this.options.maxConcurrentTileLoads ?? 16;
 
     while (this.activeLoads < maxConcurrent && this.loadQueue.length > 0) {
       const tile = this.loadQueue.shift();

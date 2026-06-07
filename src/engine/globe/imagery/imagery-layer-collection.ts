@@ -1,5 +1,4 @@
-import { ImageryLayer, type ImageryLayerStats, type ImageryTexture } from "./imagery-layer";
-import { type CameraTileSelectorContext } from "./tile-selector";
+import { ImageryLayer, type ImageryLayerStats, type ImageryLayerUpdateContext, type ImageryTexture } from "./imagery-layer";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { type RasterTileProvider } from "./tile-provider";
 import { WMTSTileProvider, type WMTSTileProviderOptions } from "./wmts-tile-provider";
@@ -47,7 +46,7 @@ export class ImageryLayerCollection {
   update(
     center: readonly [number, number, number],
     cameraDistance: number,
-    context: CameraTileSelectorContext = {},
+    context: ImageryLayerUpdateContext = {},
   ): ImageryLayerStats | undefined {
     const layer = this.layers[0];
 

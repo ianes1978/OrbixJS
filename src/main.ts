@@ -1,5 +1,5 @@
 import "./styles.css";
-import { Ellipsoid, GeoViewer } from "./engine/geo-viewer";
+import { GeoViewer, type GeoViewerFrameStats } from "./engine/geo-viewer";
 import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/core/camera/camera-path";
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
@@ -26,7 +26,7 @@ app.innerHTML = `
         <div class="brand-hud">
           <span class="eyebrow">MVP 1</span>
           <h1>OrbixJS</h1>
-          <p class="hint">Drag orbit, Shift+drag pan, Alt+drag tilt, rotellina zoom</p>
+          <p class="hint">Drag orbit, Shift+drag pan, Alt+drag look, rotellina zoom</p>
         </div>
 
         <button id="mobile-controls-toggle" class="drawer-tab toc-tab" type="button" aria-expanded="false" aria-controls="demo-toc">
@@ -155,6 +155,10 @@ app.innerHTML = `
               <span>Tile runtime</span>
               <strong id="tile-status">LOD -</strong>
             </div>
+            <div class="metric wide">
+              <span>Frame</span>
+              <strong id="frame-status">fps -</strong>
+            </div>
             <div class="metric">
               <span>3D Tiles</span>
               <strong id="tiles3d-status">tileset -</strong>
@@ -191,6 +195,7 @@ const rendererStatus = document.querySelector<HTMLElement>("#renderer-status");
 const rendererToggle = document.querySelector<HTMLButtonElement>("#renderer-toggle");
 const imageryStatus = document.querySelector<HTMLElement>("#imagery-status");
 const tileStatus = document.querySelector<HTMLElement>("#tile-status");
+const frameStatus = document.querySelector<HTMLElement>("#frame-status");
 const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
 const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
@@ -224,6 +229,7 @@ if (
   !rendererToggle ||
   !imageryStatus ||
   !tileStatus ||
+  !frameStatus ||
   !tiles3dStatus ||
   !pickingStatus ||
   !cameraStatus ||
@@ -323,10 +329,23 @@ if (!globeHost) {
 const tiles3dStatusElement = tiles3dStatus;
 const pickingStatusElement = pickingStatus;
 const imageryStatusElement = imageryStatus;
+const tileStatusElement = tileStatus;
+const frameStatusElement = frameStatus;
 const cameraStatusElement = cameraStatus;
 const urlParams = new URLSearchParams(window.location.search);
 const rendererBackend = urlParams.get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 const terrainDebugEnabled = urlParams.get("debugTerrain") === "1" || urlParams.get("terrain") === "1";
+let debugTileOverlay = true;
+let lastImageryStats:
+  | {
+      level: number;
+      activeTiles: number;
+      loadedTiles: number;
+      pendingTiles: number;
+      cacheSize: number;
+    }
+  | undefined;
+let lastFrameStats: GeoViewerFrameStats | undefined;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -345,9 +364,13 @@ const viewer = new GeoViewer({
   },
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
+    lastImageryStats = stats;
     imageryStatus.textContent = `LOD ${stats.level}`;
-    const mode = debugTileOverlay ? "surface grid" : "surface";
-    tileStatus.textContent = `${stats.loadedTiles}/${stats.activeTiles} attive, ${stats.pendingTiles} pending, cache ${stats.cacheSize}, ${mode}`;
+    syncRuntimeMetrics();
+  },
+  onFrameStats: (stats) => {
+    lastFrameStats = stats;
+    syncRuntimeMetrics();
   },
   onTilesetStats: (stats) => {
     tiles3dStatusElement.textContent = stats.status;
@@ -400,13 +423,13 @@ viewer.loadCoastlineOverlay("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110
   coastlineToggle.disabled = true;
 });
 
-let debugTileOverlay = true;
 viewer.setDebugTileOverlay(debugTileOverlay);
 tileDebugToggle.addEventListener("click", () => {
   debugTileOverlay = !debugTileOverlay;
   viewer.setDebugTileOverlay(debugTileOverlay);
   tileDebugToggle.setAttribute("aria-pressed", String(debugTileOverlay));
   tileDebugToggle.textContent = debugTileOverlay ? "LOD ON" : "LOD overlay";
+  syncRuntimeMetrics();
 });
 
 let coastlineOverlay = false;
@@ -611,6 +634,29 @@ async function loadDemoProject(): Promise<void> {
     imageryStatusElement.textContent = "fallback";
     tiles3dStatusElement.textContent = "tileset -";
   }
+}
+
+function syncRuntimeMetrics(): void {
+  if (lastFrameStats) {
+    const adaptive = lastFrameStats.lod.adaptiveQualityReduction > 0.01
+      ? `, adapt -${lastFrameStats.lod.adaptiveQualityReduction.toFixed(2)}`
+      : "";
+    frameStatusElement.textContent = `${lastFrameStats.lod.profile}${adaptive}, ${Math.round(lastFrameStats.fps)} fps, ${lastFrameStats.frameMs.toFixed(
+      1,
+    )} ms, CPU ${lastFrameStats.cpuMs.toFixed(1)} ms`;
+  }
+
+  if (!lastImageryStats) {
+    tileStatusElement.textContent = "LOD -";
+    return;
+  }
+
+  const mode = debugTileOverlay ? "surface grid" : "surface";
+  const coverage = lastFrameStats ? `coverage ${lastFrameStats.coverageTiles}` : "coverage -";
+  const terrain = lastFrameStats?.terrain
+    ? `terrain ${lastFrameStats.terrain.loadedTiles}/${lastFrameStats.terrain.activeTiles}, pending ${lastFrameStats.terrain.pendingTiles}, mesh ${lastFrameStats.terrain.meshCacheSize}`
+    : "terrain off";
+  tileStatusElement.textContent = `${lastImageryStats.loadedTiles}/${lastImageryStats.activeTiles} img, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
 }
 
 async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefined): Promise<void> {
@@ -904,12 +950,15 @@ function startCameraStatusLoop(): void {
 }
 
 function formatCameraStatus(): string {
-  const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(viewer.camera.position);
-  const height = Math.max(0, (viewer.camera.geocentricDistance - 1) * Ellipsoid.WGS84.maximumRadius);
-  const lon = toDegrees(cartographic.lon).toFixed(5);
-  const lat = toDegrees(cartographic.lat).toFixed(5);
+  const status = viewer.cameraSurfaceStatus();
+  const lon = toDegrees(status.lon).toFixed(5);
+  const lat = toDegrees(status.lat).toFixed(5);
 
-  return `${lat}, ${lon}, ${formatHeight(height)}`;
+  if (status.heightReference === "terrain") {
+    return `${lat}, ${lon}, AGL ${formatHeight(status.heightAboveTerrain)}, terrain ${formatHeight(status.terrainHeight ?? 0)}`;
+  }
+
+  return `${lat}, ${lon}, ellipsoid ${formatHeight(status.ellipsoidHeight)}`;
 }
 
 function formatPickStatus(hit: { lon: number; lat: number; height: number }): string {

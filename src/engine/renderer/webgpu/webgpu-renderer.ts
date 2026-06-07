@@ -630,7 +630,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "none",
+        cullMode: "back",
       },
       depthStencil: {
         format: webGpuDepthFormat,
@@ -706,7 +706,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "none",
+        cullMode: "back",
       },
       depthStencil: {
         format: webGpuDepthFormat,

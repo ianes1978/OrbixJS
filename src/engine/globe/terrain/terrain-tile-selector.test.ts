@@ -50,6 +50,45 @@ describe("TerrainTileSelector", () => {
     expect(selection.tiles.length).toBeLessThanOrEqual(16);
   });
 
+  it("allows the frame LOD context to lower the terrain tile budget", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 12, maxTiles: 128 });
+    const selection = selector.select(0, 0, 1.0001, {
+      targetLevel: 12,
+      maxTiles: 8,
+      coveragePositions: [
+        [-0.5, -0.35],
+        [0.5, 0.35],
+      ],
+    });
+
+    expect(selection.tiles.length).toBeLessThanOrEqual(8);
+  });
+
+  it("uses explicit screen-space coverage tiles without filling their bounding box", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 8 });
+    const selection = selector.select(0, 0, 1.01, {
+      targetLevel: 8,
+      coverageTiles: [
+        { z: 8, x: 120, y: 90 },
+        { z: 8, x: 170, y: 125 },
+      ],
+    });
+
+    expect(selection.level).toBe(8);
+    expect(selection.tiles.map((tile) => tile.id)).toEqual(["8/120/90", "8/170/125"]);
+  });
+
+  it("normalizes explicit coverage tiles to terrain level limits", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 6 });
+    const selection = selector.select(0, 0, 1.01, {
+      targetLevel: 8,
+      coverageTiles: [{ z: 8, x: 120, y: 88 }],
+    });
+
+    expect(selection.level).toBe(6);
+    expect(selection.tiles.map((tile) => tile.id)).toEqual(["6/30/22"]);
+  });
+
   it("keeps terrain selection stable across the antimeridian", () => {
     const selector = new TerrainTileSelector({ minLevel: 4, maxLevel: 4 });
     const selection = selector.select(Math.PI - 0.01, 0, 1.05, {

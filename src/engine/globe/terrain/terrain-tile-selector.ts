@@ -20,11 +20,20 @@ export type TerrainTileSelectorContext = {
   viewportHeight?: number;
   fov?: number;
   coveragePositions?: readonly (readonly [number, number])[];
+  coverageTiles?: readonly TerrainCoverageTile[];
+  maxTiles?: number;
+  requestBudget?: number;
   targetLevel?: number;
 };
 
 const earthEquatorMetersPerPixelAtLevelZero = 156543.03392804097;
 const earthRadiusMeters = 6378137;
+
+type TerrainCoverageTile = {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+};
 
 export class TerrainTileSelector {
   private readonly tiling = new WebMercatorTilingScheme();
@@ -32,8 +41,12 @@ export class TerrainTileSelector {
   constructor(private readonly options: TerrainTileSelectorOptions = {}) {}
 
   select(lon: number, lat: number, cameraDistance: number, context: TerrainTileSelectorContext = {}): TerrainTileSelection {
-    const maxTiles = Math.max(1, this.options.maxTiles ?? 512);
+    const maxTiles = Math.max(1, context.maxTiles ?? this.options.maxTiles ?? 512);
     const preferredLevel = clampTerrainLevel(selectTerrainLevel(cameraDistance, this.options.maxLevel, context), this.options);
+
+    if (context.coverageTiles && context.coverageTiles.length > 0) {
+      return this.selectionFromCoverageTiles(context.coverageTiles, maxTiles);
+    }
 
     for (let level = preferredLevel; level >= (this.options.minLevel ?? 0); level -= 1) {
       const tiles = this.selectAtLevel(lon, lat, level, context);
@@ -121,6 +134,63 @@ export class TerrainTileSelector {
     }
 
     return tiles;
+  }
+
+  private selectionFromCoverageTiles(
+    coverageTiles: readonly TerrainCoverageTile[],
+    maxTiles: number,
+  ): TerrainTileSelection {
+    const tiles: TerrainQuadtreeTile[] = [];
+    const visited = new Set<string>();
+    let level = this.options.minLevel ?? 0;
+
+    for (const tile of coverageTiles) {
+      for (const normalized of this.normalizeCoverageTile(tile)) {
+        if (visited.has(normalized.id)) {
+          continue;
+        }
+
+        visited.add(normalized.id);
+        tiles.push(normalized);
+        level = Math.max(level, normalized.level);
+
+        if (tiles.length >= maxTiles) {
+          return { level, tiles };
+        }
+      }
+    }
+
+    return { level, tiles };
+  }
+
+  private normalizeCoverageTile(tile: TerrainCoverageTile): TerrainQuadtreeTile[] {
+    if (![tile.x, tile.y, tile.z].every(Number.isFinite)) {
+      return [];
+    }
+
+    const level = clampTerrainLevel(tile.z, this.options);
+
+    if (level === tile.z) {
+      return [createTerrainQuadtreeTile(tile.x, tile.y, level)];
+    }
+
+    if (level < tile.z) {
+      const factor = 2 ** (tile.z - level);
+      return [createTerrainQuadtreeTile(Math.floor(tile.x / factor), Math.floor(tile.y / factor), level)];
+    }
+
+    const factor = 2 ** (level - tile.z);
+    const startX = tile.x * factor;
+    const startY = tile.y * factor;
+    const children: TerrainQuadtreeTile[] = [];
+
+    for (let y = startY; y < startY + factor; y += 1) {
+      for (let x = startX; x < startX + factor; x += 1) {
+        children.push(createTerrainQuadtreeTile(x, y, level));
+      }
+    }
+
+    return children;
   }
 }
 
