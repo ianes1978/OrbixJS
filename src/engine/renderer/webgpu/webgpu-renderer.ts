@@ -1014,26 +1014,21 @@ export class WebGPURenderer implements Renderer {
   }
 
   private renderTerrainMeshes(pass: WebGpuRenderPassEncoderLike): void {
-    if (!this.terrainPipeline || this.activeTerrainIds.length === 0) {
+    if (!this.tilePipeline || this.activeTerrainIds.length === 0) {
       return;
     }
 
-    this.createTerrainBindGroup();
-
-    if (!this.terrainBindGroup) {
-      return;
-    }
-
-    pass.setPipeline(this.terrainPipeline);
-    pass.setBindGroup(0, this.terrainBindGroup);
+    pass.setPipeline(this.tilePipeline);
 
     for (const id of this.activeTerrainIds) {
       const entry = this.terrainEntries.get(id);
+      const imagery = this.tileEntries.get(id);
 
-      if (!entry) {
+      if (!entry || !imagery?.ready) {
         continue;
       }
 
+      pass.setBindGroup(0, imagery.bindGroup);
       pass.setVertexBuffer(0, entry.vertexBuffer);
       pass.setIndexBuffer(entry.indexBuffer, entry.indexFormat);
       pass.drawIndexed(entry.indexCount);

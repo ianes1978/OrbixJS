@@ -4,6 +4,10 @@ import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
 import { createHeightmapTerrainProvider, loadHeightmapTerrainManifest } from "./engine/globe/terrain/heightmap-terrain-provider";
+import {
+  createCivisQuantizedMeshTerrainProvider,
+  loadCivisQuantizedMeshLayer,
+} from "./engine/globe/terrain/civis-quantized-mesh-terrain-provider";
 import { createProceduralTerrainProvider } from "./engine/globe/terrain/procedural-terrain-provider";
 import { findPreprocessJob, loadPreprocessManifest } from "./engine/preprocess/preprocess-manifest";
 import { roadmap } from "./roadmap";
@@ -600,6 +604,18 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
   const job =
     findPreprocessJob(preprocessManifest, "south-tyrol-dtm-5m-heightmap") ??
     preprocessManifest.jobs.find((entry) => entry.type === "terrain-heightmap");
+  const quantizedMeshInput = job?.inputs.find(
+    (artifact) => artifact.format === "civis-quantized-mesh-layer-json" || artifact.format === "civis-layer-json",
+  );
+
+  if (quantizedMeshInput) {
+    const layerUrl = demoAssetUrl(quantizedMeshInput.url);
+    const layer = await loadCivisQuantizedMeshLayer(layerUrl);
+
+    viewer.setTerrainProvider(createCivisQuantizedMeshTerrainProvider(layer, { baseUrl: layerUrl, heightmapSize: 33 }));
+    return;
+  }
+
   const output = job?.outputs.find((artifact) => artifact.format === "orbix-heightmap-manifest");
 
   if (!output) {

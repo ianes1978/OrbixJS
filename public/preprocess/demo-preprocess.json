@@ -9,8 +9,8 @@
         {
           "id": "civis-dtm-layer-json",
           "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json",
-          "format": "civis-layer-json",
-          "crs": "EPSG:25832"
+          "format": "civis-quantized-mesh-layer-json",
+          "crs": "EPSG:4326"
         }
       ],
       "outputs": [

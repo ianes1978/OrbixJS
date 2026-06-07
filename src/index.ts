@@ -22,6 +22,14 @@ export {
   type HeightmapTileMatrixSet,
 } from "./engine/globe/terrain/heightmap-terrain-provider";
 export {
+  createCivisQuantizedMeshTerrainProvider,
+  loadCivisQuantizedMeshLayer,
+  parseCivisQuantizedMeshLayer,
+  type CivisAvailabilityLevel,
+  type CivisQuantizedMeshLayer,
+  type CivisQuantizedMeshTerrainProviderOptions,
+} from "./engine/globe/terrain/civis-quantized-mesh-terrain-provider";
+export {
   createTerrainMesh,
   tileSampleToCartographic,
   type TerrainMesh,

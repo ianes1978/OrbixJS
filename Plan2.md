@@ -531,6 +531,8 @@ Dataset iniziale:
 - tile sperimentali indicati da:
   `https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json`
 
+Nota runtime: il `layer.json` statico CIVIS attualmente disponibile espone tile `quantized-mesh-1.0` in `EPSG:4326` con schema TMS. Va trattato come adapter di ingresso, non come formato interno definitivo. La strada solida resta: sorgente DTM Alto Adige dichiarata e verificata, preprocessing riproducibile verso tile heightmap/mesh Orbix in WGS84/WebMercator o tile matrix dichiarato, poi imagery drappata sopra la surface mesh.
+
 Basemap demo candidata:
 
 - `2023 Orthofoto`
@@ -768,7 +770,9 @@ Step:
 
 - definire `TerrainProvider`
 - implementare `SouthTyrolDtmTerrainProvider` o preset equivalente per la demo
-- validare tile statiche DTM 2,5m Alto Adige: schema, encoding quota, CRS e NoData
+- validare tile statiche DTM 5m Alto Adige: schema, encoding quota, CRS, bounds e NoData
+- implementare adapter CIVIS `quantized-mesh-1.0` `EPSG:4326` -> heightmap Orbix runtime
+- preprocessare il DTM sorgente verso tile heightmap/mesh Orbix riproducibili, con CRS e provenance espliciti
 - supportare fallback da WCS/GeoTIFF preprocessato se le tile statiche non bastano
 - supportare heightmap tiled con manifest runtime, tile float32 e sampling cache
 - supportare terrain da OGC API - Tiles dove applicabile
@@ -777,6 +781,8 @@ Step:
 - aggiungere LOD quadtree terrain con budget tile e copertura viewport
 - aggiungere runtime terrain surface con cache mesh CPU e throttling richieste
 - renderizzare mesh terrain nei backend WebGL2/WebGPU con toggle demo procedurale
+- drapare imagery tile-specific sopra terrain, senza ripetere la basemap globale sulla mesh
+- gestire tile terrain assenti/fuori bounds senza generare overlay piatti fuori dataset
 - aggiungere skirt per evitare crepe tra tile
 - aggiungere morphing tra livelli LOD
 - calcolare normali terrain

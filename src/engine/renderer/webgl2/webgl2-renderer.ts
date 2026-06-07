@@ -445,24 +445,28 @@ export class WebGL2Renderer implements Renderer {
   }
 
   private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
-    if (!this.gl || !this.terrainProgram || this.activeTerrainIds.size === 0) {
+    if (!this.gl || !this.tileProgram || this.activeTerrainIds.size === 0) {
       return;
     }
 
-    this.gl.useProgram(this.terrainProgram.program);
+    this.gl.useProgram(this.tileProgram.program);
     this.gl.depthMask(true);
-    this.gl.uniformMatrix4fv(this.terrainProgram.uProjection, false, projection);
-    this.gl.uniformMatrix4fv(this.terrainProgram.uView, false, view);
-    this.gl.uniformMatrix4fv(this.terrainProgram.uModel, false, identityMatrix());
-    this.gl.uniform3fv(this.terrainProgram.uSunDirection, this.sunDirection);
+    this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
+    this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, identityMatrix());
+    this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
 
     for (const id of this.activeTerrainIds) {
       const mesh = this.terrainMeshes.get(id);
+      const imagery = this.tileEntries.get(id);
 
-      if (!mesh) {
+      if (!mesh || !imagery?.ready) {
         continue;
       }
 
+      this.gl.activeTexture(this.gl.TEXTURE0);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, imagery.texture);
+      this.gl.uniform1i(this.tileProgram.uImagery, 0);
       this.gl.bindVertexArray(mesh.vao);
       this.gl.drawElements(this.gl.TRIANGLES, mesh.indexCount, mesh.indexType, 0);
     }

@@ -25,7 +25,7 @@
       "type": "terrain-heightmap",
       "title": "South Tyrol DTM 5m candidate",
       "url": "https://test-static-mapview.civis.bz.it/working/tiles/raster/DEM/DTM/DigitalTerrainModel-5m/layer.json",
-      "crs": "EPSG:25832",
+      "crs": "EPSG:4326",
       "preprocessManifestUrl": "preprocess/demo-preprocess.json",
       "attribution": "Autonomous Province of Bolzano/Bozen",
       "license": "Creative Commons CCZero"
