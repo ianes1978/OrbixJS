@@ -20,6 +20,17 @@ describe("GlobeSurfaceTileProvider", () => {
     expect(renderIds).toContain("3/4/4");
   });
 
+  it("backs unavailable child requests off to the nearest available ancestor", () => {
+    const provider = new GlobeSurfaceTileProvider({ minLevel: 2, maxLevel: 4, baseLevel: 2 });
+    const unavailable = new Set(["4/8/8"]);
+    const selection = provider.select(0, 0, 1.2, new Set(), unavailable, {
+      coverageTiles: [{ id: "4/8/8", x: 8, y: 8, z: 4 }],
+    });
+
+    expect(selection.requestTiles.map((tile) => tile.id)).toEqual(["3/4/4"]);
+    expect(selection.level).toBe(3);
+  });
+
   it("keeps the loaded parent when requested child tiles are missing", () => {
     const provider = new GlobeSurfaceTileProvider({ minLevel: 2, maxLevel: 3, baseLevel: 2 });
     const selection = provider.select(

@@ -110,6 +110,33 @@ describe("ImageryLayer", () => {
     expect(loadTile).toHaveBeenNthCalledWith(2, { id: "6/40/40", x: 40, y: 40, z: 6 });
   });
 
+  it("backs off unavailable high LOD tiles to their parent on later updates", async () => {
+    const loadTile = vi
+      .fn<() => Promise<HTMLImageElement>>()
+      .mockRejectedValueOnce(new Error("missing high LOD"))
+      .mockReturnValue(new Promise<HTMLImageElement>(() => undefined));
+    const provider: RasterTileProvider = {
+      tileSize: 256,
+      cacheSize: 0,
+      loadTile,
+    };
+    const layer = new ImageryLayer(provider, 2, { maxLevel: 6, maxConcurrentTileLoads: 1 });
+
+    layer.update(0, 0, 1.1, {
+      coverageTiles: [{ id: "6/32/30", x: 32, y: 30, z: 6 }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const stats = layer.update(0, 0, 1.1, {
+      coverageTiles: [{ id: "6/32/30", x: 32, y: 30, z: 6 }],
+    });
+
+    expect(loadTile).toHaveBeenNthCalledWith(1, { id: "6/32/30", x: 32, y: 30, z: 6 });
+    expect(loadTile).toHaveBeenNthCalledWith(2, { id: "5/16/15", x: 16, y: 15, z: 5 });
+    expect(stats.level).toBe(5);
+    expect(stats.vtUnavailablePages).toBe(1);
+  });
+
   it("keeps the last renderable active set while newly requested tiles are still unavailable", () => {
     const provider: RasterTileProvider = {
       tileSize: 256,

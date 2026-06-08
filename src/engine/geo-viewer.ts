@@ -52,9 +52,12 @@ export type GeoViewerOptions = {
   date?: Date;
   onImageryStats?: (stats: {
     level: number;
+    layerMinLevel?: number;
+    layerMaxLevel?: number;
     activeTiles: number;
     loadedTiles: number;
     pendingTiles: number;
+    errorTiles: number;
     renderTiles: number;
     exactRenderTiles: number;
     fallbackRenderTiles: number;
@@ -62,6 +65,7 @@ export type GeoViewerOptions = {
     renderLevels: TileLevelStats;
     exactRenderLevels: TileLevelStats;
     fallbackRenderLevels: TileLevelStats;
+    errorLevels: TileLevelStats;
     compositeRenderTiles: number;
     compositeDescendants: number;
     compositeMaxLevel?: number;
@@ -69,6 +73,7 @@ export type GeoViewerOptions = {
     vtFeedbackPages: number;
     vtResidentPages: number;
     vtMissingPages: number;
+    vtUnavailablePages: number;
     vtFallbackPages: number;
     vtCompositePages: number;
     vtCompositeChildren: number;

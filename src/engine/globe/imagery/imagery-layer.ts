@@ -23,9 +23,12 @@ export type ImageryLayerOptions = {
 
 export type ImageryLayerStats = {
   level: number;
+  layerMinLevel?: number;
+  layerMaxLevel?: number;
   activeTiles: number;
   loadedTiles: number;
   pendingTiles: number;
+  errorTiles: number;
   renderTiles: number;
   exactRenderTiles: number;
   fallbackRenderTiles: number;
@@ -33,6 +36,7 @@ export type ImageryLayerStats = {
   renderLevels: TileLevelStats;
   exactRenderLevels: TileLevelStats;
   fallbackRenderLevels: TileLevelStats;
+  errorLevels: TileLevelStats;
   compositeRenderTiles: number;
   compositeDescendants: number;
   compositeMaxLevel?: number;
@@ -40,6 +44,7 @@ export type ImageryLayerStats = {
   vtFeedbackPages: number;
   vtResidentPages: number;
   vtMissingPages: number;
+  vtUnavailablePages: number;
   vtFallbackPages: number;
   vtCompositePages: number;
   vtCompositeChildren: number;
@@ -63,6 +68,7 @@ export class ImageryLayer {
   private readonly surfaceTiles: GlobeSurfaceTileProvider;
   private readonly active = new Set<string>();
   private readonly loaded = new Set<string>();
+  private readonly errors = new Set<string>();
   private readonly sourceImages = new Map<string, RasterTileImage>();
   private readonly compositeImages = new Map<
     string,
@@ -83,7 +89,7 @@ export class ImageryLayer {
 
   update(lon: number, lat: number, cameraDistance: number, context: ImageryLayerUpdateContext = {}): ImageryLayerStats {
     this.currentRequestBudget = context.requestBudget;
-    const selection = this.surfaceTiles.select(lon, lat, cameraDistance, this.loaded, context);
+    const selection = this.surfaceTiles.select(lon, lat, cameraDistance, this.loaded, this.errors, context);
     this.prioritizeTileLoads(selection.requestTiles);
 
     for (const tile of selection.requestTiles) {
@@ -111,9 +117,12 @@ export class ImageryLayer {
 
     return {
       level: selection.level,
+      layerMinLevel: this.options.minLevel,
+      layerMaxLevel: this.options.maxLevel,
       activeTiles: selection.requestTiles.length,
       loadedTiles: selection.requestTiles.filter((tile) => this.loaded.has(tile.id)).length,
       pendingTiles: selection.requestTiles.filter((tile) => this.pending.has(tile.id)).length,
+      errorTiles: selection.requestTiles.filter((tile) => this.errors.has(tile.id)).length,
       renderTiles: selection.renderTiles.length,
       exactRenderTiles: selection.renderTiles.filter((tile) => tile.state === "exact").length,
       fallbackRenderTiles: selection.renderTiles.filter((tile) => tile.state === "fallback").length,
@@ -121,13 +130,15 @@ export class ImageryLayer {
       renderLevels: summarizeTileLevels(selection.renderTiles),
       exactRenderLevels: summarizeTileLevels(selection.renderTiles.filter((tile) => tile.state === "exact")),
       fallbackRenderLevels: summarizeTileLevels(selection.renderTiles.filter((tile) => tile.state === "fallback")),
+      errorLevels: summarizeTileLevels(selection.requestTiles.filter((tile) => this.errors.has(tile.id))),
       compositeRenderTiles: activeCompositeStats.pages,
       compositeDescendants: activeCompositeStats.children,
       compositeMaxLevel: activeCompositeStats.maxLevel,
       compositeCacheSize: this.compositeImages.size,
       vtFeedbackPages: selection.requestTiles.length,
       vtResidentPages: selection.requestTiles.filter((tile) => this.sourceImages.has(tile.id)).length,
-      vtMissingPages: selection.requestTiles.filter((tile) => !this.sourceImages.has(tile.id)).length,
+      vtMissingPages: selection.requestTiles.filter((tile) => !this.sourceImages.has(tile.id) && !this.errors.has(tile.id)).length,
+      vtUnavailablePages: this.errors.size,
       vtFallbackPages: selection.renderTiles.filter((tile) => tile.state === "fallback").length,
       vtCompositePages: activeCompositeStats.pages,
       vtCompositeChildren: activeCompositeStats.children,
@@ -184,6 +195,7 @@ export class ImageryLayer {
         const image = await this.provider.loadTile(tile);
         context.drawImage(image, tile.x * size, tile.y * size, size, size);
         this.loaded.add(tile.id);
+        this.errors.delete(tile.id);
         this.sourceImages.set(tile.id, image);
         this.options.onTileReady?.(tile, image);
         return tile;
@@ -235,7 +247,7 @@ export class ImageryLayer {
         return;
       }
 
-      if (this.loaded.has(tile.id)) {
+      if (this.loaded.has(tile.id) || this.errors.has(tile.id)) {
         this.pending.delete(tile.id);
         continue;
       }
@@ -245,10 +257,12 @@ export class ImageryLayer {
         .loadTile(tile)
         .then((image) => {
           this.loaded.add(tile.id);
+          this.errors.delete(tile.id);
           this.sourceImages.set(tile.id, image);
           this.options.onTileReady?.(tile, image);
         })
         .catch((error: unknown) => {
+          this.errors.add(tile.id);
           this.options.onTileError?.(tile, error);
         })
         .finally(() => {

@@ -8,7 +8,7 @@
       "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       "crs": "EPSG:3857",
       "minLevel": 2,
-      "maxLevel": 15,
+      "maxLevel": 20,
       "tileSize": 256,
       "tileMatrixSet": "WebMercatorQuad",
       "attribution": "Esri World Imagery"

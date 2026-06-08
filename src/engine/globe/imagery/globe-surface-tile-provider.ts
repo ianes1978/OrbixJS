@@ -31,12 +31,16 @@ export class GlobeSurfaceTileProvider {
     lat: number,
     cameraDistance: number,
     loaded: ReadonlySet<string>,
+    contextOrUnavailable: CameraTileSelectorContext | ReadonlySet<string> = {},
     context: CameraTileSelectorContext = {},
   ): GlobeSurfaceTileSelection {
-    const selection = this.selector.select(lon, lat, cameraDistance, context);
+    const unavailable = isReadonlySet(contextOrUnavailable) ? contextOrUnavailable : new Set<string>();
+    const selectionContext = isReadonlySet(contextOrUnavailable) ? context : contextOrUnavailable;
+    const selection = this.selector.select(lon, lat, cameraDistance, selectionContext);
+    const requestTiles = normalizeUnavailableRequests(selection.tiles, unavailable, this.baseLevel);
     const resolved = new Map<string, GlobeSurfaceTile>();
 
-    for (const tile of selection.tiles) {
+    for (const tile of requestTiles) {
       const renderTile = this.deepestLoadedTile(tile, loaded, selection.level);
 
       if (renderTile) {
@@ -45,8 +49,8 @@ export class GlobeSurfaceTileProvider {
     }
 
     return {
-      level: selection.level,
-      requestTiles: selection.tiles,
+      level: effectiveSelectionLevel(requestTiles, selection.level),
+      requestTiles,
       renderTiles: pruneDescendants([...resolved.values()]),
     };
   }
@@ -73,6 +77,39 @@ export class GlobeSurfaceTileProvider {
 
     return undefined;
   }
+}
+
+function isReadonlySet(value: CameraTileSelectorContext | ReadonlySet<string>): value is ReadonlySet<string> {
+  return typeof (value as ReadonlySet<string>).has === "function";
+}
+
+function normalizeUnavailableRequests(
+  tiles: readonly QuadtreeTile[],
+  unavailable: ReadonlySet<string>,
+  baseLevel: number,
+): QuadtreeTile[] {
+  const normalized = new Map<string, QuadtreeTile>();
+
+  for (const tile of tiles) {
+    const requestTile = highestAvailableAncestor(tile, unavailable, baseLevel);
+    normalized.set(requestTile.id, requestTile);
+  }
+
+  return [...normalized.values()];
+}
+
+function highestAvailableAncestor(tile: QuadtreeTile, unavailable: ReadonlySet<string>, baseLevel: number): QuadtreeTile {
+  let current = tile;
+
+  while (current.z > baseLevel && unavailable.has(current.id)) {
+    current = parentTile(current);
+  }
+
+  return current;
+}
+
+function effectiveSelectionLevel(tiles: readonly QuadtreeTile[], fallbackLevel: number): number {
+  return tiles.reduce((level, tile) => Math.max(level, tile.z), tiles.length > 0 ? 0 : fallbackLevel);
 }
 
 function pruneDescendants(tiles: GlobeSurfaceTile[]): GlobeSurfaceTile[] {

@@ -348,13 +348,17 @@ const lodDebugOutputElement = lodDebugOutput;
 const urlParams = new URLSearchParams(window.location.search);
 const rendererBackend = urlParams.get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 const terrainDebugEnabled = urlParams.get("debugTerrain") === "1" || urlParams.get("terrain") === "1";
+const demoAssetCacheBust = import.meta.env.DEV ? String(Date.now()) : "";
 let debugTileOverlay = true;
 let lastImageryStats:
   | {
       level: number;
+      layerMinLevel?: number;
+      layerMaxLevel?: number;
       activeTiles: number;
       loadedTiles: number;
       pendingTiles: number;
+      errorTiles: number;
       renderTiles: number;
       exactRenderTiles: number;
       fallbackRenderTiles: number;
@@ -362,6 +366,7 @@ let lastImageryStats:
       renderLevels: TileLevelStats;
       exactRenderLevels: TileLevelStats;
       fallbackRenderLevels: TileLevelStats;
+      errorLevels: TileLevelStats;
       compositeRenderTiles: number;
       compositeDescendants: number;
       compositeMaxLevel?: number;
@@ -369,6 +374,7 @@ let lastImageryStats:
       vtFeedbackPages: number;
       vtResidentPages: number;
       vtMissingPages: number;
+      vtUnavailablePages: number;
       vtFallbackPages: number;
       vtCompositePages: number;
       vtCompositeChildren: number;
@@ -394,6 +400,9 @@ const viewer = new GeoViewer({
     clearance: 1,
   },
   lod: {
+    imagery: {
+      maxLevel: 20,
+    },
     terrain: {
       maxLevel: 15,
       maxTiles: 512,
@@ -1001,8 +1010,11 @@ function formatLodDebugStatus(): string {
 
   return [
     `imagery.lod=${imagery?.level ?? "-"}`,
+    `imagery.layerMinLevel=${imagery?.layerMinLevel ?? "-"}`,
+    `imagery.layerMaxLevel=${imagery?.layerMaxLevel ?? "-"}`,
     `imagery.tiles=${imagery ? `${imagery.loadedTiles}/${imagery.activeTiles}` : "-"}`,
     `imagery.pending=${imagery?.pendingTiles ?? "-"}`,
+    `imagery.errors=${imagery?.errorTiles ?? "-"}`,
     `imagery.render=${imagery?.renderTiles ?? "-"}`,
     `imagery.renderExact=${imagery?.exactRenderTiles ?? "-"}`,
     `imagery.renderFallback=${imagery?.fallbackRenderTiles ?? "-"}`,
@@ -1012,6 +1024,7 @@ function formatLodDebugStatus(): string {
     `imagery.renderLevels=${formatLevelHistogram(imagery?.renderLevels)}`,
     `imagery.exactRenderLevels=${formatLevelHistogram(imagery?.exactRenderLevels)}`,
     `imagery.fallbackRenderLevels=${formatLevelHistogram(imagery?.fallbackRenderLevels)}`,
+    `imagery.errorLevels=${formatLevelHistogram(imagery?.errorLevels)}`,
     `imagery.compositeRender=${imagery?.compositeRenderTiles ?? "-"}`,
     `imagery.compositeDescendants=${imagery?.compositeDescendants ?? "-"}`,
     `imagery.compositeMaxLevel=${imagery?.compositeMaxLevel ?? "-"}`,
@@ -1019,6 +1032,7 @@ function formatLodDebugStatus(): string {
     `vt.feedbackPages=${imagery?.vtFeedbackPages ?? "-"}`,
     `vt.residentPages=${imagery?.vtResidentPages ?? "-"}`,
     `vt.missingPages=${imagery?.vtMissingPages ?? "-"}`,
+    `vt.unavailablePages=${imagery?.vtUnavailablePages ?? "-"}`,
     `vt.fallbackPages=${imagery?.vtFallbackPages ?? "-"}`,
     `vt.compositePages=${imagery?.vtCompositePages ?? "-"}`,
     `vt.compositeChildren=${imagery?.vtCompositeChildren ?? "-"}`,
@@ -1102,7 +1116,9 @@ function demoAssetUrl(path: string): string {
     return path;
   }
 
-  return `${import.meta.env.BASE_URL}${path.replace(/^\/+/u, "")}`;
+  const url = `${import.meta.env.BASE_URL}${path.replace(/^\/+/u, "")}`;
+
+  return demoAssetCacheBust ? `${url}${url.includes("?") ? "&" : "?"}v=${demoAssetCacheBust}` : url;
 }
 
 function bindCanvasPicking(): void {
