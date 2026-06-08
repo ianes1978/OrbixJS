@@ -1,5 +1,6 @@
 import "./styles.css";
 import { GeoViewer, type GeoViewerFrameStats } from "./engine/geo-viewer";
+import { type TileLevelStats } from "./engine/globe/imagery/imagery-layer";
 import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/core/camera/camera-path";
 import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
@@ -357,6 +358,21 @@ let lastImageryStats:
       renderTiles: number;
       exactRenderTiles: number;
       fallbackRenderTiles: number;
+      requestLevels: TileLevelStats;
+      renderLevels: TileLevelStats;
+      exactRenderLevels: TileLevelStats;
+      fallbackRenderLevels: TileLevelStats;
+      compositeRenderTiles: number;
+      compositeDescendants: number;
+      compositeMaxLevel?: number;
+      compositeCacheSize: number;
+      vtFeedbackPages: number;
+      vtResidentPages: number;
+      vtMissingPages: number;
+      vtFallbackPages: number;
+      vtCompositePages: number;
+      vtCompositeChildren: number;
+      vtCompositeMaxLevel?: number;
       cacheSize: number;
     }
   | undefined;
@@ -990,6 +1006,23 @@ function formatLodDebugStatus(): string {
     `imagery.render=${imagery?.renderTiles ?? "-"}`,
     `imagery.renderExact=${imagery?.exactRenderTiles ?? "-"}`,
     `imagery.renderFallback=${imagery?.fallbackRenderTiles ?? "-"}`,
+    `imagery.requestLevelRange=${formatLevelRange(imagery?.requestLevels)}`,
+    `imagery.requestLevels=${formatLevelHistogram(imagery?.requestLevels)}`,
+    `imagery.renderLevelRange=${formatLevelRange(imagery?.renderLevels)}`,
+    `imagery.renderLevels=${formatLevelHistogram(imagery?.renderLevels)}`,
+    `imagery.exactRenderLevels=${formatLevelHistogram(imagery?.exactRenderLevels)}`,
+    `imagery.fallbackRenderLevels=${formatLevelHistogram(imagery?.fallbackRenderLevels)}`,
+    `imagery.compositeRender=${imagery?.compositeRenderTiles ?? "-"}`,
+    `imagery.compositeDescendants=${imagery?.compositeDescendants ?? "-"}`,
+    `imagery.compositeMaxLevel=${imagery?.compositeMaxLevel ?? "-"}`,
+    `imagery.compositeCache=${imagery?.compositeCacheSize ?? "-"}`,
+    `vt.feedbackPages=${imagery?.vtFeedbackPages ?? "-"}`,
+    `vt.residentPages=${imagery?.vtResidentPages ?? "-"}`,
+    `vt.missingPages=${imagery?.vtMissingPages ?? "-"}`,
+    `vt.fallbackPages=${imagery?.vtFallbackPages ?? "-"}`,
+    `vt.compositePages=${imagery?.vtCompositePages ?? "-"}`,
+    `vt.compositeChildren=${imagery?.vtCompositeChildren ?? "-"}`,
+    `vt.compositeMaxLevel=${imagery?.vtCompositeMaxLevel ?? "-"}`,
     `imagery.cache=${imagery?.cacheSize ?? "-"}`,
     `terrain.lod=${terrain?.level ?? "-"}`,
     `terrain.tiles=${terrain ? `${terrain.loadedTiles}/${terrain.activeTiles}` : "-"}`,
@@ -999,6 +1032,8 @@ function formatLodDebugStatus(): string {
     `coverage.budget=${lastFrameStats?.coverageBudget ?? "-"}`,
     `coverage.samples=${lastFrameStats?.coverageSamples ?? "-"}`,
     `coverage.strategy=${lastFrameStats?.coverageStrategy ?? "-"}`,
+    `coverage.levelRange=${formatLevelRange(lastFrameStats?.coverageLevels)}`,
+    `coverage.levels=${formatLevelHistogram(lastFrameStats?.coverageLevels)}`,
     `lod.effectiveRequestBudget=${lastFrameStats?.effectiveRequestBudget ?? "-"}`,
     `lod.profile=${lod?.profile ?? "-"}`,
     `lod.adaptiveReduction=${lod ? lod.adaptiveQualityReduction.toFixed(2) : "-"}`,
@@ -1020,6 +1055,27 @@ function formatLodDebugStatus(): string {
     `camera.tiltDeg=${toDegrees(camera.tiltOffset).toFixed(2)}`,
     `camera.lookYawDeg=${toDegrees(camera.lookYawOffset).toFixed(2)}`,
   ].join("\n");
+}
+
+function formatLevelRange(stats: TileLevelStats | undefined): string {
+  if (!stats || stats.min === undefined || stats.max === undefined || stats.average === undefined) {
+    return "-";
+  }
+
+  return `${stats.min}-${stats.max}, avg ${stats.average.toFixed(2)}`;
+}
+
+function formatLevelHistogram(stats: TileLevelStats | undefined): string {
+  if (!stats) {
+    return "-";
+  }
+
+  const entries = Object.entries(stats.histogram)
+    .map(([level, count]) => [Number(level), count] as const)
+    .filter(([level, count]) => Number.isFinite(level) && count > 0)
+    .sort(([levelA], [levelB]) => levelA - levelB);
+
+  return entries.length > 0 ? entries.map(([level, count]) => `${level}:${count}`).join(",") : "-";
 }
 
 function formatCameraStatus(): string {

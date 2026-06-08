@@ -25,6 +25,7 @@ import { selectTilesetTile } from "./loaders/tiles3d/tile-selector";
 import { loadTilesetJson, tileBoundingVolumeCenter, type TilesetJson } from "./loaders/tiles3d/tileset";
 import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
+import { type TileLevelStats } from "./globe/imagery/imagery-layer";
 import { createQuadtreeTile, type QuadtreeTile } from "./globe/imagery/quadtree-tile";
 import { selectLevel } from "./globe/imagery/tile-selector";
 import { createSurfaceTileSet, type SurfaceTile } from "./globe/surface/surface-tile";
@@ -57,6 +58,21 @@ export type GeoViewerOptions = {
     renderTiles: number;
     exactRenderTiles: number;
     fallbackRenderTiles: number;
+    requestLevels: TileLevelStats;
+    renderLevels: TileLevelStats;
+    exactRenderLevels: TileLevelStats;
+    fallbackRenderLevels: TileLevelStats;
+    compositeRenderTiles: number;
+    compositeDescendants: number;
+    compositeMaxLevel?: number;
+    compositeCacheSize: number;
+    vtFeedbackPages: number;
+    vtResidentPages: number;
+    vtMissingPages: number;
+    vtFallbackPages: number;
+    vtCompositePages: number;
+    vtCompositeChildren: number;
+    vtCompositeMaxLevel?: number;
     cacheSize: number;
   }) => void;
   onFrameStats?: (stats: GeoViewerFrameStats) => void;
@@ -74,6 +90,7 @@ export type GeoViewerFrameStats = {
   coverageBudget: number;
   coverageSamples: number;
   coverageStrategy: string;
+  coverageLevels: TileLevelStats;
   effectiveRequestBudget: number;
   imageryTargetLevel?: number;
   terrainTargetLevel?: number;
@@ -611,6 +628,7 @@ export class GeoViewer {
         imageryTargetLevel,
         coveragePositions,
       );
+      const coverageLevels = summarizeTileLevels(coverageTiles ?? []);
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const stats = this.imagery.update(
         imageryCenter ? [imageryCenter[0], imageryCenter[1], imageryCenter[2] ?? 0] : [0, 0, 0],
@@ -655,6 +673,7 @@ export class GeoViewer {
         coverageBudget,
         coverageSamples: coveragePositions.length,
         coverageStrategy: this.lastCoverageStrategy,
+        coverageLevels,
         effectiveRequestBudget: requestBudget,
         imageryTargetLevel,
         terrainTargetLevel,
@@ -1818,6 +1837,27 @@ function haversineMeters(lonA: number, latA: number, lonB: number, latB: number)
 
 function clampRadians(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
+  const histogram: Record<number, number> = {};
+  let min: number | undefined;
+  let max: number | undefined;
+  let total = 0;
+
+  for (const tile of tiles) {
+    histogram[tile.z] = (histogram[tile.z] ?? 0) + 1;
+    min = min === undefined ? tile.z : Math.min(min, tile.z);
+    max = max === undefined ? tile.z : Math.max(max, tile.z);
+    total += tile.z;
+  }
+
+  return {
+    min,
+    max,
+    average: tiles.length > 0 ? total / tiles.length : undefined,
+    histogram,
+  };
 }
 
 function transformPointWithW(

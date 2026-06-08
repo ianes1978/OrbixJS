@@ -1,4 +1,10 @@
-import { ImageryLayer, type ImageryLayerStats, type ImageryLayerUpdateContext, type ImageryTexture } from "./imagery-layer";
+import {
+  ImageryLayer,
+  type ImageryLayerStats,
+  type ImageryLayerUpdateContext,
+  type ImageryTexture,
+  type RasterTileImage,
+} from "./imagery-layer";
 import { type QuadtreeTile } from "./quadtree-tile";
 import { type RasterTileProvider } from "./tile-provider";
 import { WMTSTileProvider, type WMTSTileProviderOptions } from "./wmts-tile-provider";
@@ -6,7 +12,7 @@ import { XYZTileProvider, type XYZTileProviderOptions } from "./xyz-tile-provide
 
 export type ImageryLayerCollectionOptions = {
   onTextureReady?: (texture: ImageryTexture) => void;
-  onTileReady?: (tile: QuadtreeTile, image: HTMLImageElement) => void;
+  onTileReady?: (tile: QuadtreeTile, image: RasterTileImage) => void;
   onActiveTilesChanged?: (ids: string[]) => void;
   onLayerError?: (error: unknown) => void;
 };
