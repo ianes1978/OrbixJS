@@ -494,6 +494,7 @@ export class WebGPURenderer implements Renderer {
     this.ensureDepthTexture();
 
     const aspect = this.canvas.width / this.canvas.height;
+    const surfaceTilesActive = this.hasDrawableSurfaceTiles();
     const viewProjection = webGpuViewProjection(frame, aspect);
     const uniforms = createGlobeUniforms(viewProjection, this.imageryReady, this.tileDebugOverlayVisible);
     this.device.queue.writeBuffer(this.globeUniformBuffer, 0, uniforms);
@@ -521,7 +522,7 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    if (this.imageryReady || this.surfaceFallbackVisible || !this.hasDrawableSurfaceTiles()) {
+    if (this.imageryReady || this.surfaceFallbackVisible || !surfaceTilesActive) {
       pass.setPipeline(this.globePipeline);
       pass.setBindGroup(0, this.globeBindGroup);
       pass.setVertexBuffer(0, this.globeVertexBuffer);
@@ -746,7 +747,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "back",
+        cullMode: "none",
       },
       depthStencil: {
         format: webGpuDepthFormat,
@@ -1087,8 +1088,14 @@ export class WebGPURenderer implements Renderer {
       }
     }
 
+    return this.hasDrawableTerrainSurfaceTiles();
+  }
+
+  private hasDrawableTerrainSurfaceTiles(): boolean {
     for (const id of this.activeTerrainIds) {
-      if (this.terrainEntries.has(id) && this.tileEntries.get(id)?.ready) {
+      const terrain = this.terrainEntries.get(id);
+
+      if (terrain && resolveTerrainImageryFallback(terrain.tile, (imageryId) => this.tileEntries.get(imageryId)?.ready === true)) {
         return true;
       }
     }

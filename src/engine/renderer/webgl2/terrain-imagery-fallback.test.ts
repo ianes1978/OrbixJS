@@ -60,8 +60,8 @@ describe("terrain imagery replacement", () => {
     expect(terrainTileCanReplaceImageryTile({ level: 4, x: 8, y: 5 }, { level: 6, x: 34, y: 22 })).toBe(false);
   });
 
-  it("allows same-level or finer terrain to replace imagery", () => {
+  it("allows only same-level terrain to replace imagery", () => {
     expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 6, x: 34, y: 22 })).toBe(true);
-    expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 4, x: 8, y: 5 })).toBe(true);
+    expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 4, x: 8, y: 5 })).toBe(false);
   });
 });

@@ -80,18 +80,26 @@ export class OrbitCamera {
   }
 
   orbit(deltaX: number, deltaY: number): void {
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+      return;
+    }
+
     this.yaw += deltaX;
     this.pitch = clamp(this.pitch + deltaY, this.minPitch, this.maxPitch);
     this.keepAboveSurface();
   }
 
   rotateSurfacePointTo(from: Vec3, to: Vec3, maxAngle = Number.POSITIVE_INFINITY): void {
+    if (!isFiniteVec3(from) || !isFiniteVec3(to) || Number.isNaN(maxAngle)) {
+      return;
+    }
+
     const source = normalize(from);
     const target = normalize(to);
     const axis = cross(source, target);
     const axisLength = length(axis);
 
-    if (axisLength < 1e-8) {
+    if (!Number.isFinite(axisLength) || axisLength < 1e-8) {
       return;
     }
 
@@ -101,20 +109,38 @@ export class OrbitCamera {
     const nextTarget = rotateAroundAxis(this.target, rotationAxis, angle);
     const nextPosition = rotateAroundAxis(currentPosition, rotationAxis, angle);
     const nextDirection = normalize(subtract(nextPosition, nextTarget));
+    const nextDistance = length(subtract(nextPosition, nextTarget));
+    const nextYaw = Math.atan2(nextDirection[0], nextDirection[2]);
+    const nextPitch = Math.asin(nextDirection[1]);
+
+    if (
+      !isFiniteVec3(nextTarget) ||
+      !isFiniteVec3(nextPosition) ||
+      !isFiniteVec3(nextDirection) ||
+      !Number.isFinite(nextDistance) ||
+      !Number.isFinite(nextYaw) ||
+      !Number.isFinite(nextPitch)
+    ) {
+      return;
+    }
 
     this.target[0] = nextTarget[0];
     this.target[1] = nextTarget[1];
     this.target[2] = nextTarget[2];
     this.distance = clamp(
-      length(subtract(nextPosition, nextTarget)),
+      nextDistance,
       surfaceExitDistance(nextTarget, nextDirection, this.minDistance),
       this.maxDistance,
     );
-    this.yaw = Math.atan2(nextDirection[0], nextDirection[2]);
-    this.pitch = clamp(Math.asin(nextDirection[1]), this.minPitch, this.maxPitch);
+    this.yaw = nextYaw;
+    this.pitch = clamp(nextPitch, this.minPitch, this.maxPitch);
   }
 
   moveGrabbedPointToRay(point: Vec3, ray: Ray, options: GrabbedPointMoveOptions = {}): boolean {
+    if (!isFiniteVec3(point) || !isFiniteVec3(ray.origin) || !isFiniteVec3(ray.direction) || length(ray.direction) < 1e-12) {
+      return false;
+    }
+
     const rayDistance = dot(subtract(point, ray.origin), ray.direction);
 
     if (!Number.isFinite(rayDistance) || rayDistance <= 0) {
@@ -125,7 +151,7 @@ export class OrbitCamera {
     const correction = this.limitTargetOffset(subtract(point, closestPoint));
     const correctionLength = length(correction);
 
-    if (!Number.isFinite(correctionLength)) {
+    if (!isFiniteVec3(correction) || !Number.isFinite(correctionLength)) {
       return false;
     }
 
@@ -140,6 +166,18 @@ export class OrbitCamera {
     const nextTarget = add(this.target, offset);
     const nextPosition = add(this.position, offset);
     const nextPositionLength = length(nextPosition);
+
+    if (
+      !Number.isFinite(strength) ||
+      Number.isNaN(maxStep) ||
+      !Number.isFinite(stepLength) ||
+      !isFiniteVec3(offset) ||
+      !isFiniteVec3(nextTarget) ||
+      !isFiniteVec3(nextPosition) ||
+      !Number.isFinite(nextPositionLength)
+    ) {
+      return false;
+    }
 
     this.target[0] = nextTarget[0];
     this.target[1] = nextTarget[1];
@@ -158,6 +196,10 @@ export class OrbitCamera {
   }
 
   zoom(delta: number, surfaceHeightMeters = 0, surfaceDistanceOverride?: number): void {
+    if (!Number.isFinite(delta) || !Number.isFinite(surfaceHeightMeters)) {
+      return;
+    }
+
     const direction = this.orbitDirection();
     const surfaceRadius = 1 + Math.max(0, surfaceHeightMeters) / 6_378_137;
     const surfaceDistance =
@@ -171,15 +213,27 @@ export class OrbitCamera {
   }
 
   tilt(delta: number): void {
+    if (!Number.isFinite(delta)) {
+      return;
+    }
+
     this.tiltOffset = clamp(this.tiltOffset + delta, this.minTilt, this.maxTilt);
   }
 
   look(deltaYaw: number, deltaTilt: number): void {
+    if (!Number.isFinite(deltaYaw) || !Number.isFinite(deltaTilt)) {
+      return;
+    }
+
     this.lookYawOffset = normalizeAngle(this.lookYawOffset + deltaYaw);
     this.tilt(deltaTilt);
   }
 
   pan(deltaX: number, deltaY: number): void {
+    if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
+      return;
+    }
+
     const forward = normalize(subtract(this.target, this.position));
     const right = safeNormalize(cross(forward, [0, 1, 0]), [1, 0, 0]);
     const up = safeNormalize(cross(right, forward), [0, 1, 0]);
@@ -200,6 +254,10 @@ export class OrbitCamera {
   }
 
   flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(height)) {
+      return;
+    }
+
     const lonRadians = lon * (Math.PI / 180);
     const latRadians = lat * (Math.PI / 180);
     const position = Ellipsoid.WGS84.cartographicToCartesian({ lon: lonRadians, lat: latRadians, height });
@@ -219,6 +277,27 @@ export class OrbitCamera {
     this.target[1] = 0;
     this.target[2] = 0;
     this.distance = clamp(distance, this.minDistance, this.maxDistance);
+  }
+
+  isValid(): boolean {
+    return (
+      isFiniteVec3(this.target) &&
+      isFiniteVec3(this.position) &&
+      Number.isFinite(this.distance) &&
+      Number.isFinite(this.minDistance) &&
+      Number.isFinite(this.maxDistance) &&
+      Number.isFinite(this.minPitch) &&
+      Number.isFinite(this.maxPitch) &&
+      Number.isFinite(this.minTilt) &&
+      Number.isFinite(this.maxTilt) &&
+      Number.isFinite(this.yaw) &&
+      Number.isFinite(this.pitch) &&
+      Number.isFinite(this.tiltOffset) &&
+      Number.isFinite(this.lookYawOffset) &&
+      Number.isFinite(this.fov) &&
+      Number.isFinite(this.near) &&
+      Number.isFinite(this.far)
+    );
   }
 
   snapshot(): CameraSnapshot {
@@ -243,6 +322,10 @@ export class OrbitCamera {
   }
 
   restoreSnapshot(snapshot: CameraSnapshot): void {
+    if (!isFiniteCameraSnapshot(snapshot)) {
+      return;
+    }
+
     this.target[0] = snapshot.target[0];
     this.target[1] = snapshot.target[1];
     this.target[2] = snapshot.target[2];
@@ -369,6 +452,10 @@ export class OrbitCamera {
   }
 
   private keepAboveSurface(): void {
+    if (!isFiniteVec3(this.target) || !Number.isFinite(this.distance) || !Number.isFinite(this.yaw) || !Number.isFinite(this.pitch)) {
+      return;
+    }
+
     this.distance = clamp(this.distance, surfaceExitDistance(this.target, this.orbitDirection(), this.minDistance), this.maxDistance);
   }
 
@@ -402,6 +489,31 @@ function normalizeAngle(value: number): number {
 
 function finiteOr(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
+}
+
+function isFiniteVec3(value: Vec3): boolean {
+  return value.every(Number.isFinite);
+}
+
+function isFiniteCameraSnapshot(snapshot: CameraSnapshot): boolean {
+  return (
+    isFiniteVec3(snapshot.target) &&
+    isFiniteVec3(snapshot.position) &&
+    Number.isFinite(snapshot.distance) &&
+    Number.isFinite(snapshot.minDistance) &&
+    Number.isFinite(snapshot.maxDistance) &&
+    Number.isFinite(snapshot.minPitch) &&
+    Number.isFinite(snapshot.maxPitch) &&
+    Number.isFinite(snapshot.minTilt) &&
+    Number.isFinite(snapshot.maxTilt) &&
+    Number.isFinite(snapshot.yaw) &&
+    Number.isFinite(snapshot.pitch) &&
+    Number.isFinite(snapshot.tiltOffset) &&
+    Number.isFinite(snapshot.lookYawOffset) &&
+    Number.isFinite(snapshot.fov) &&
+    Number.isFinite(snapshot.near) &&
+    Number.isFinite(snapshot.far)
+  );
 }
 
 function interactionAltitudeScale(normalizedAltitude: number, min: number, max: number): number {

@@ -381,6 +381,7 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+
     this.renderGlobeBase(plan.projection, plan.view, plan.nodes, plan.passes.includes("imagery"));
 
     if (plan.passes.includes("imagery")) {
@@ -460,6 +461,8 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.gl.useProgram(this.tileProgram.program);
+    this.gl.disable(this.gl.CULL_FACE);
+    this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.depthMask(true);
     this.gl.depthFunc(this.gl.LEQUAL);
     this.gl.enable(this.gl.POLYGON_OFFSET_FILL);
@@ -490,6 +493,8 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.gl.disable(this.gl.POLYGON_OFFSET_FILL);
+    this.gl.enable(this.gl.DEPTH_TEST);
+    this.gl.enable(this.gl.CULL_FACE);
     this.gl.depthFunc(this.gl.LESS);
   }
 
@@ -557,6 +562,10 @@ export class WebGL2Renderer implements Renderer {
       }
     }
 
+    return this.hasDrawableTerrainSurfaceTiles();
+  }
+
+  private hasDrawableTerrainSurfaceTiles(): boolean {
     for (const id of this.activeTerrainIds) {
       const terrain = this.terrainEntries.get(id);
 

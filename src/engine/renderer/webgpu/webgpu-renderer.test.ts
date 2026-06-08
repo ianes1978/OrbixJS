@@ -43,7 +43,7 @@ describe("WebGPURenderer", () => {
     expect(device.createRenderPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         label: "OrbixJS WebGPU imagery tile pipeline",
-        primitive: expect.objectContaining({ cullMode: "back" }),
+        primitive: expect.objectContaining({ cullMode: "none" }),
       }),
     );
     expect(device.createBindGroup).toHaveBeenCalled();

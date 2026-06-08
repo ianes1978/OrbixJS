@@ -18,6 +18,7 @@ declare global {
     __orbixDebug?: {
       viewer: GeoViewer;
       flyTo: (options: { lon: number; lat: number; height: number }) => void;
+      renderFrame: () => void;
       setDtmTerrain: (enabled: boolean) => Promise<void>;
       stats: () => {
         frame: GeoViewerFrameStats | undefined;
@@ -796,6 +797,7 @@ window.__orbixDebug = {
     stopCameraPath("interrotto");
     viewer.flyTo(options);
   },
+  renderFrame: () => viewer.renderFrameForDebug(),
   setDtmTerrain: async (enabled) => {
     if (dtmTerrainVisible === enabled) {
       return;

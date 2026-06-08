@@ -62,6 +62,21 @@ describe("OrbitCamera", () => {
     expect(camera.distance).toBeCloseTo(3.2);
   });
 
+  it("rejects invalid surface drag rays without corrupting the camera", () => {
+    const camera = new OrbitCamera({ target: [0.1, 0, 0], distance: 3.2, yaw: 0, pitch: 0 });
+    const before = camera.snapshot();
+
+    const moved = camera.moveGrabbedPointToRay([0, 0, 0], {
+      origin: [Number.NaN, 0, 3.1],
+      direction: [0, 0, -1],
+    });
+
+    expect(moved).toBe(false);
+    expect(camera.target).toEqual(before.target);
+    expect(camera.distance).toBe(before.distance);
+    expect(camera.isValid()).toBe(true);
+  });
+
   it("can damp grabbed point corrections for smoother drag", () => {
     const camera = new OrbitCamera({ target: [0, 0, 0], distance: 3.2, yaw: 0, pitch: 0 });
 
@@ -187,6 +202,21 @@ describe("OrbitCamera", () => {
     expect(camera.lookYawOffset).toBeCloseTo(0.2);
   });
 
+  it("ignores invalid camera snapshots", () => {
+    const camera = new OrbitCamera({ target: [0.1, 0.2, 0.3], distance: 2.4, yaw: 0.7, pitch: -0.2 });
+    const before = camera.snapshot();
+
+    camera.restoreSnapshot({
+      ...before,
+      distance: Number.NaN,
+    });
+
+    expect(camera.target).toEqual(before.target);
+    expect(camera.distance).toBe(before.distance);
+    expect(camera.yaw).toBe(before.yaw);
+    expect(camera.isValid()).toBe(true);
+  });
+
   it("pans the camera target in the view plane", () => {
     const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
 
@@ -225,6 +255,21 @@ describe("OrbitCamera", () => {
     expect(camera.tiltOffset).toBeCloseTo(0.4);
     expect(camera.target).toEqual([0, 0, 0]);
     expect(camera.viewMatrix()).not.toEqual(before);
+  });
+
+  it("ignores invalid orbit, tilt, and look deltas", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0.1, pitch: 0.2 });
+    const before = camera.snapshot();
+
+    camera.orbit(Number.NaN, 0.1);
+    camera.tilt(Number.NaN);
+    camera.look(0.1, Number.NaN);
+
+    expect(camera.yaw).toBe(before.yaw);
+    expect(camera.pitch).toBe(before.pitch);
+    expect(camera.tiltOffset).toBe(before.tiltOffset);
+    expect(camera.lookYawOffset).toBe(before.lookYawOffset);
+    expect(camera.isValid()).toBe(true);
   });
 
   it("looks left and right without moving the orbit camera", () => {

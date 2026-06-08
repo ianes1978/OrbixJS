@@ -256,6 +256,7 @@ export class GeoViewer {
   private currentLodContext: LodContext | undefined;
   private stableImageryTargetLevel: number | undefined;
   private stableTerrainTargetLevel: number | undefined;
+  private lastValidCameraSnapshot: CameraSnapshot | undefined;
   private currentViewportSampleCount = viewportSampleCount;
   private terrainHeightSampleToken = 0;
   private terrainHeightBelowCameraCache:
@@ -300,6 +301,7 @@ export class GeoViewer {
       ...cameraHeightLimitsToCameraLimits(this.cameraHeightLimits),
     });
     this.applyCameraHeightConstraints();
+    this.lastValidCameraSnapshot = this.camera.snapshot();
     this.renderer = options.renderer === "webgpu" ? new WebGPURenderer(this.canvas) : new WebGL2Renderer(this.canvas);
     if (this.renderer instanceof WebGPURenderer) {
       void this.renderer
@@ -512,15 +514,18 @@ export class GeoViewer {
   flyTo(options: CameraFlyToOptions): void {
     this.camera.flyTo(options);
     this.applyCameraHeightConstraints();
+    this.captureValidCameraSnapshot();
   }
 
   setCameraLimits(limits: CameraLimits): void {
     this.camera.setLimits(limits);
+    this.captureValidCameraSnapshot();
   }
 
   setCameraHeightLimits(limits: CameraHeightLimits): void {
     this.cameraHeightLimits = limits;
     this.applyCameraHeightConstraints();
+    this.captureValidCameraSnapshot();
   }
 
   setLod(options: LodOptions): void {
@@ -544,6 +549,27 @@ export class GeoViewer {
 
   cameraSnapshot(): CameraSnapshot {
     return this.camera.snapshot();
+  }
+
+  private recoverInvalidCameraState(): void {
+    if (this.camera.isValid()) {
+      this.captureValidCameraSnapshot();
+      return;
+    }
+
+    if (this.lastValidCameraSnapshot) {
+      this.camera.restoreSnapshot(this.lastValidCameraSnapshot);
+      return;
+    }
+
+    this.camera.flyTo({ lon: 12.5, lat: 42.5, height: 1_000_000 });
+    this.captureValidCameraSnapshot();
+  }
+
+  private captureValidCameraSnapshot(): void {
+    if (this.camera.isValid()) {
+      this.lastValidCameraSnapshot = this.camera.snapshot();
+    }
   }
 
   cameraSurfaceStatus(): CameraSurfaceStatus {
@@ -649,16 +675,32 @@ export class GeoViewer {
     this.renderer.setVectorLines(this.vectorLines);
   }
 
+  renderFrameForDebug(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.renderFrame(performance.now());
+  }
+
   private start(): void {
     const render = () => {
       if (this.disposed) {
         return;
       }
 
-      const frameStart = performance.now();
+      this.renderFrame(performance.now());
+      this.frame = requestAnimationFrame(render);
+    };
+
+    this.frame = requestAnimationFrame(render);
+  }
+
+  private renderFrame(frameStart: number): void {
       this.terrainHeightSampleToken += 1;
       const frameDelta = this.lastFrameTimestamp > 0 ? frameStart - this.lastFrameTimestamp : this.smoothedFrameMs;
       this.lastFrameTimestamp = frameStart;
+      this.recoverInvalidCameraState();
       this.applyCameraHeightConstraints();
       const lodContext = this.createCurrentLodContext();
       this.currentLodContext = lodContext;
@@ -720,6 +762,7 @@ export class GeoViewer {
       const afterDebugTileset = performance.now();
       const beforeRender = performance.now();
       this.renderer.render({ scene: this.scene, camera: this.camera });
+      this.captureValidCameraSnapshot();
       const frameEnd = performance.now();
       const rawFrameMs = frameDelta;
       const rawCpuMs = frameEnd - frameStart;
@@ -772,10 +815,6 @@ export class GeoViewer {
         lod: lodContext,
       });
       this.adaptiveLodState = updateAdaptiveLodState(this.adaptiveLodState, frameMs, this.lodOptions);
-      this.frame = requestAnimationFrame(render);
-    };
-
-    this.frame = requestAnimationFrame(render);
   }
 
   private fallbackToWebGL2(reason: unknown): void {
@@ -873,9 +912,14 @@ export class GeoViewer {
 
   private effectiveCoverageTileBudget(lodContext: LodContext): number {
     const elasticBudget = this.effectiveTileBudget(lodContext);
+    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
 
-    if (this.cameraAltitudeAboveSurfaceMeters() < 80_000) {
-      return Math.min(elasticBudget, Math.max(256, lodContext.tileBudget));
+    if (altitudeMeters <= 2_500) {
+      return Math.min(elasticBudget, 256);
+    }
+
+    if (altitudeMeters < 80_000) {
+      return Math.min(elasticBudget, 256);
     }
 
     return elasticBudget;
@@ -1179,7 +1223,7 @@ export class GeoViewer {
     samples: readonly (readonly [number, number, number?])[],
   ): readonly (readonly [number, number, number?])[] {
     const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-    const shouldAnchor = altitudeMeters <= 2_500 || (Math.abs(this.camera.tiltOffset) > 0.35 && altitudeMeters <= 20_000);
+    const shouldAnchor = altitudeMeters <= 2_500 || (Math.abs(this.camera.tiltOffset) > 0.35 && altitudeMeters <= 80_000);
 
     if (!shouldAnchor) {
       return samples;
@@ -1251,49 +1295,15 @@ export class GeoViewer {
         viewportHeight: this.lodViewportHeight(),
         fov: this.camera.fov,
       });
-    const useScreenSpaceCoverage = this.cameraAltitudeAboveSurfaceMeters() < 80_000;
-    const sampleCoverage = useScreenSpaceCoverage
-      ? this.coverageTilesFromVisibleSamples(coveragePositions, targetLevel, maxTiles)
-      : undefined;
-
     const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-    const radentView = Math.abs(this.camera.tiltOffset) > 0.35;
-    if (
-      sampleCoverage &&
-      (this.isNearGroundSampleCoverage(sampleCoverage, targetLevel) ||
-        altitudeMeters <= 2_500 ||
-        (radentView && altitudeMeters <= 20_000) ||
-        altitudeMeters > 20_000 ||
-        this.smoothedCpuMs > 18)
-    ) {
-      this.lastCoverageStrategy = altitudeMeters <= 2_500 ? "sample-footprint-budget-near" : "sample-footprint-budget";
-      return sampleCoverage;
+    const clodCoverage = this.clodCoverageTiles(maxTiles, targetLevel, width, height);
+
+    if (clodCoverage) {
+      this.lastCoverageStrategy = altitudeMeters <= 80_000 ? "cdlod-clipmap-near" : "cdlod-quadtree";
+      return clodCoverage;
     }
 
-    const sampleNeighborhoodCoverage =
-      useScreenSpaceCoverage && (altitudeMeters <= 2_500 || (radentView && altitudeMeters <= 20_000) || this.smoothedCpuMs > 18)
-        ? this.coverageTilesFromSampleNeighborhoods(coveragePositions, targetLevel, maxTiles)
-        : undefined;
-
-    if (sampleNeighborhoodCoverage) {
-      this.lastCoverageStrategy = "sample-neighborhood-budget";
-      return sampleNeighborhoodCoverage;
-    }
-
-    const distanceCoverageBudget = this.distanceCoverageTileBudget(maxTiles);
-    const distanceCoverage = useScreenSpaceCoverage
-      ? this.distanceDependentCoverageTiles(distanceCoverageBudget, targetLevel, width, height)
-      : undefined;
-
-    if (distanceCoverage && altitudeMeters <= 20_000) {
-      this.lastCoverageStrategy = "cdlod-near";
-      return distanceCoverage;
-    }
-
-    if (distanceCoverage) {
-      this.lastCoverageStrategy = "cdlod-near";
-      return distanceCoverage;
-    }
+    const useScreenSpaceCoverage = altitudeMeters < 80_000;
 
     const rayCoverage = useScreenSpaceCoverage
       ? undefined
@@ -1356,6 +1366,108 @@ export class GeoViewer {
 
     this.lastCoverageStrategy = expanded.length > 0 ? (useScreenSpaceCoverage ? "screen-quadtree-near" : "screen-quadtree") : "none";
     return expanded.length > 0 ? expanded : undefined;
+  }
+
+  private clodCoverageTiles(
+    maxTiles: number,
+    targetLevel: number,
+    width: number,
+    height: number,
+  ): QuadtreeTile[] | undefined {
+    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
+    const tiles = new Map<string, QuadtreeTile>();
+    const addTile = (tile: QuadtreeTile): boolean => {
+      if (!tiles.has(tile.id)) {
+        tiles.set(tile.id, tile);
+      }
+
+      return tiles.size < maxTiles;
+    };
+
+    for (const tile of this.cameraClipmapRingTiles(targetLevel, maxTiles)) {
+      if (!addTile(tile)) {
+        return [...tiles.values()];
+      }
+    }
+
+    if (altitudeMeters <= 2_500 && tiles.size > 0) {
+      return [...tiles.values()];
+    }
+
+    const distanceBudget = Math.max(0, maxTiles - tiles.size);
+    const distanceCoverage =
+      distanceBudget > 0
+        ? this.distanceDependentCoverageTiles(distanceBudget, targetLevel, width, height)
+        : undefined;
+
+    if (distanceCoverage) {
+      const distanceTiles = altitudeMeters <= 80_000
+        ? distanceCoverage
+        : this.expandCoverageTiles(distanceCoverage, distanceBudget);
+
+      for (const tile of distanceTiles) {
+        if (!addTile(tile)) {
+          return [...tiles.values()];
+        }
+      }
+    }
+
+    return tiles.size > 0 ? [...tiles.values()] : undefined;
+  }
+
+  private cameraClipmapRingTiles(targetLevel: number, maxTiles: number): QuadtreeTile[] {
+    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
+
+    if (altitudeMeters > 120_000) {
+      return [];
+    }
+
+    const camera = this.cameraSurfaceStatus();
+
+    if (!Number.isFinite(camera.lon) || !Number.isFinite(camera.lat)) {
+      return [];
+    }
+
+    const roundedTargetLevel = Math.max(2, Math.round(targetLevel));
+    const rings =
+      altitudeMeters <= 2_500
+        ? [
+            { level: roundedTargetLevel, padding: 2 },
+            { level: roundedTargetLevel - 3, padding: 3 },
+            { level: roundedTargetLevel - 5, padding: 4 },
+          ]
+        : Math.abs(this.camera.tiltOffset) > 0.35
+          ? [
+              { level: roundedTargetLevel, padding: 1 },
+              { level: roundedTargetLevel - 2, padding: 2 },
+              { level: roundedTargetLevel - 4, padding: 3 },
+              { level: roundedTargetLevel - 6, padding: 4 },
+            ]
+          : [
+              { level: roundedTargetLevel, padding: 1 },
+              { level: roundedTargetLevel - 3, padding: 2 },
+              { level: roundedTargetLevel - 5, padding: 3 },
+            ];
+    const tiles = new Map<string, QuadtreeTile>();
+
+    for (const ring of rings) {
+      const level = Math.max(2, ring.level);
+      const count = this.imageryTiling.tileCount(level);
+      const center = this.imageryTiling.positionToTileXY(camera.lon, camera.lat, level);
+
+      for (let y = Math.max(0, center.y - ring.padding); y <= Math.min(count - 1, center.y + ring.padding); y += 1) {
+        for (let x = center.x - ring.padding; x <= center.x + ring.padding; x += 1) {
+          const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
+          tiles.set(tile.id, tile);
+
+          if (tiles.size >= maxTiles) {
+            return [...tiles.values()];
+          }
+        }
+      }
+    }
+
+    return [...tiles.values()];
   }
 
   private distanceDependentCoverageTiles(
@@ -1603,7 +1715,7 @@ export class GeoViewer {
         altitudeMeters <= 2_500
           ? Math.abs(this.camera.tiltOffset) > 0.35
             ? 1
-            : 0
+            : 2
           : Math.min(1, this.coveragePaddingForLevel(level));
       const tiles = new Map<string, QuadtreeTile>();
       let overflow = false;
@@ -1649,7 +1761,7 @@ export class GeoViewer {
     targetLevel: number,
     maxTiles: number,
   ): QuadtreeTile[] | undefined {
-    if (this.cameraAltitudeAboveSurfaceMeters() > 20_000 || Math.abs(this.camera.tiltOffset) <= 0.35) {
+    if (this.cameraAltitudeAboveSurfaceMeters() > 80_000 || Math.abs(this.camera.tiltOffset) <= 0.35) {
       return undefined;
     }
 

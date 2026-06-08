@@ -162,10 +162,16 @@ export class PointerController {
   };
 
   private pickSurfaceDragPoint(event: PointerEvent): Vec3 | undefined {
-    return this.options.pickSurfacePoint?.(event.clientX, event.clientY);
+    const point = this.options.pickSurfacePoint?.(event.clientX, event.clientY);
+
+    return point && isFiniteVec3(point) ? point : undefined;
   }
 
   private smoothSurfacePoint(point: Vec3): Vec3 {
+    if (!isFiniteVec3(point)) {
+      return this.smoothedSurfacePoint ?? [0, 0, 0];
+    }
+
     const previous = this.smoothedSurfacePoint;
 
     if (!previous || dot(previous, point) < 0.985) {
@@ -175,8 +181,8 @@ export class PointerController {
 
     const smoothed = normalize(add(scale(previous, 0.58), scale(point, 0.42)));
 
-    this.smoothedSurfacePoint = smoothed;
-    return smoothed;
+    this.smoothedSurfacePoint = isFiniteVec3(smoothed) ? smoothed : point;
+    return this.smoothedSurfacePoint;
   }
 
   private shouldUseLocalSurfaceDrag(): boolean {
@@ -225,4 +231,8 @@ export class PointerController {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isFiniteVec3(value: Vec3): boolean {
+  return value.every(Number.isFinite);
 }
