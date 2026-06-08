@@ -52,7 +52,6 @@ export class ImageryLayer {
   update(lon: number, lat: number, cameraDistance: number, context: ImageryLayerUpdateContext = {}): ImageryLayerStats {
     this.currentRequestBudget = context.requestBudget;
     const selection = this.surfaceTiles.select(lon, lat, cameraDistance, this.loaded, context);
-    this.active.clear();
     this.prioritizeTileLoads(selection.requestTiles);
 
     for (const tile of selection.requestTiles) {
@@ -66,8 +65,12 @@ export class ImageryLayer {
 
     this.pumpTileLoadQueue();
 
-    for (const tile of selection.renderTiles) {
-      this.active.add(tile.id);
+    if (selection.renderTiles.length > 0) {
+      this.active.clear();
+
+      for (const tile of selection.renderTiles) {
+        this.active.add(tile.id);
+      }
     }
 
     return {
@@ -144,7 +147,8 @@ export class ImageryLayer {
       return;
     }
 
-    const queued = new Map(this.loadQueue.map((tile) => [tile.id, tile]));
+    const requestedIds = new Set(selectionIds(requestTiles));
+    const queued = new Map(this.loadQueue.filter((tile) => requestedIds.has(tile.id)).map((tile) => [tile.id, tile]));
     const prioritized: QuadtreeTile[] = [];
 
     for (const tile of requestTiles) {
@@ -159,11 +163,15 @@ export class ImageryLayer {
     }
 
     this.loadQueue.length = 0;
-    this.loadQueue.push(...prioritized, ...queued.values());
+    this.loadQueue.push(...prioritized);
   }
 
   private pumpTileLoadQueue(): void {
-    const maxConcurrent = this.currentRequestBudget ?? this.options.maxConcurrentTileLoads ?? 16;
+    const configuredMaxConcurrent = this.options.maxConcurrentTileLoads ?? 16;
+    const maxConcurrent =
+      this.currentRequestBudget === undefined
+        ? configuredMaxConcurrent
+        : Math.max(1, Math.min(configuredMaxConcurrent, this.currentRequestBudget));
 
     while (this.activeLoads < maxConcurrent && this.loadQueue.length > 0) {
       const tile = this.loadQueue.shift();
@@ -198,4 +206,8 @@ export class ImageryLayer {
 
 function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): CameraTileSelectorOptions {
   return { minLevel, maxLevel };
+}
+
+function selectionIds(tiles: readonly QuadtreeTile[]): string[] {
+  return tiles.map((tile) => tile.id);
 }

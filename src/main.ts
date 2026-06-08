@@ -364,9 +364,8 @@ const viewer = new GeoViewer({
   },
   lod: {
     terrain: {
-      maxLevel: 10,
-      maxTiles: 128,
-      lodBias: -1,
+      maxLevel: 15,
+      maxTiles: 512,
     },
   },
   date: new Date(sceneDateInput.value),

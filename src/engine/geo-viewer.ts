@@ -935,19 +935,19 @@ export class GeoViewer {
   }
 
   private visibleCartographicSamples(): [number, number][] {
-    const samples: [number, number][] = [];
+    const samples: { lon: number; lat: number; distance: number }[] = [];
 
     for (const y of viewportSampleSteps) {
       for (const x of viewportSampleSteps) {
         const cartographic = this.pickNormalizedDeviceCoordinate(x, y);
 
         if (cartographic) {
-          samples.push([cartographic.lon, cartographic.lat]);
+          samples.push({ lon: cartographic.lon, lat: cartographic.lat, distance: x * x + y * y });
         }
       }
     }
 
-    return samples;
+    return samples.sort((a, b) => a.distance - b.distance).map((sample) => [sample.lon, sample.lat]);
   }
 
   private nearestVisibleCartographicSample(): [number, number, number] | undefined {
@@ -1065,9 +1065,10 @@ export class GeoViewer {
 
     const minLevel = 2;
     const startLevel = Math.max(minLevel, Math.round(targetLevel));
+    const minimumScreenSpaceLevel = Math.max(minLevel, startLevel - 3);
     const sampleCompleteness = samples.length / viewportSampleCount;
 
-    for (let level = startLevel; level >= minLevel; level -= 1) {
+    for (let level = startLevel; level >= minimumScreenSpaceLevel; level -= 1) {
       const count = this.imageryTiling.tileCount(level);
       const anchor = this.imageryTiling.positionToTileXY(samples[0][0], samples[0][1], level);
       const padding = this.coveragePaddingForLevel(level, sampleCompleteness);
@@ -1103,12 +1104,12 @@ export class GeoViewer {
         }
       }
 
-      if (tiles.size > 0 && (tiles.size <= maxTiles || level === minLevel)) {
+      if (tiles.size > 0 && tiles.size <= maxTiles) {
         return [...tiles.values()].slice(0, maxTiles);
       }
     }
 
-    return undefined;
+    return this.sampleNeighborhoodCoverageTiles(samples, startLevel, maxTiles, sampleCompleteness);
   }
 
   private coveragePaddingForLevel(level: number, sampleCompleteness = 1): number {
@@ -1123,6 +1124,41 @@ export class GeoViewer {
     }
 
     return 1 + incompleteViewPadding;
+  }
+
+  private sampleNeighborhoodCoverageTiles(
+    samples: readonly (readonly [number, number, number?])[],
+    level: number,
+    maxTiles: number,
+    sampleCompleteness = 1,
+  ): QuadtreeTile[] | undefined {
+    const count = this.imageryTiling.tileCount(level);
+    const padding = this.coveragePaddingForLevel(level, sampleCompleteness);
+    const tiles = new Map<string, QuadtreeTile>();
+
+    for (const [lon, lat] of samples) {
+      const center = this.imageryTiling.positionToTileXY(lon, lat, level);
+
+      for (let y = center.y - padding; y <= center.y + padding; y += 1) {
+        if (y < 0 || y >= count) {
+          continue;
+        }
+
+        for (let x = center.x - padding; x <= center.x + padding; x += 1) {
+          const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
+
+          if (!tiles.has(tile.id)) {
+            tiles.set(tile.id, tile);
+          }
+
+          if (tiles.size >= maxTiles) {
+            return [...tiles.values()];
+          }
+        }
+      }
+    }
+
+    return tiles.size > 0 ? [...tiles.values()] : undefined;
   }
 
   private expandCoverageTiles(tiles: readonly QuadtreeTile[], maxTiles: number): QuadtreeTile[] {
@@ -1457,7 +1493,7 @@ export class GeoViewer {
   }
 
   private pickTerrainSurfaceWithRay(ray: Ray): { point: Vec3; lon: number; lat: number; height: number } | undefined {
-    const ellipsoidHit = intersectUnitSphere(ray);
+    const ellipsoidHit = intersectUnitSphere(ray) ?? intersectNormalizedWgs84Surface(ray, this.terrainEnvelopeHeightMeters());
 
     if (!ellipsoidHit?.every(Number.isFinite)) {
       return undefined;
@@ -1491,6 +1527,17 @@ export class GeoViewer {
       lat: cartographic.lat,
       height,
     };
+  }
+
+  private terrainEnvelopeHeightMeters(): number {
+    if (this.lastTerrainMeshes.length === 0) {
+      return this.terrain ? 12_000 : 0;
+    }
+
+    return Math.max(
+      0,
+      ...this.lastTerrainMeshes.map((entry) => Math.max(0, entry.mesh.maxHeight * this.defaultTerrainExaggeration)),
+    );
   }
 
   private applyCameraHeightConstraints(): void {
