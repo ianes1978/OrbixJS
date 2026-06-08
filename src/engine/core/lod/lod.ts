@@ -143,7 +143,7 @@ export function normalizeLodOptions(options: LodOptions | undefined): Normalized
     imagery: normalizeLayerOptions(objectOptions.imagery),
     terrain: {
       ...normalizeLayerOptions(objectOptions.terrain),
-      maxTiles: objectOptions.terrain?.maxTiles ?? Math.max(64, Math.round(maxVisibleTiles * 0.75)),
+      maxTiles: objectOptions.terrain?.maxTiles ?? Math.max(64, Math.round(maxVisibleTiles * 0.25)),
     },
     tiles3d: {
       maxScreenSpaceError: objectOptions.tiles3d?.maxScreenSpaceError ?? tiles3dErrorForProfile(profile),
@@ -187,6 +187,7 @@ export function createLodContext(options: NormalizedLodOptions, input: LodContex
   const visibleMeters = 2 * Math.max(0.5, input.altitudeMeters) * Math.tan(input.fov / 2);
   const metersPerPixel = visibleMeters / (viewportHeight * dpr);
   const reductionFactor = 1 + reduction * 0.5;
+  const adaptiveQualityBias = reduction * 0.35;
 
   return {
     profile: options.profile,
@@ -203,7 +204,7 @@ export function createLodContext(options: NormalizedLodOptions, input: LodContex
     tileBudget: Math.max(16, Math.round(options.maxVisibleTiles / reductionFactor)),
     requestBudget: Math.max(4, Math.round(options.maxNetworkRequests / (1 + reduction))),
     gpuMemoryBudgetMb: options.maxGpuMemoryMb,
-    qualityBias: options.qualityBias - reduction,
+    qualityBias: options.qualityBias - adaptiveQualityBias,
     tiles3dMaxScreenSpaceError: options.tiles3d.maxScreenSpaceError * reductionFactor,
   };
 }
@@ -218,6 +219,34 @@ export function applyLodBiasToLevel(
   }
 
   return clamp(Math.round(level + context.qualityBias + layer.lodBias), layer.minLevel, layer.maxLevel);
+}
+
+export function stabilizeLodLevel(
+  previousLevel: number | undefined,
+  nextLevel: number | undefined,
+  { maxRise = 1, maxDrop = 1 }: { maxRise?: number; maxDrop?: number } = {},
+): number | undefined {
+  if (nextLevel === undefined || !Number.isFinite(nextLevel)) {
+    return previousLevel;
+  }
+
+  const next = Math.round(nextLevel);
+
+  if (previousLevel === undefined || !Number.isFinite(previousLevel)) {
+    return next;
+  }
+
+  const previous = Math.round(previousLevel);
+
+  if (next > previous) {
+    return Math.min(next, previous + Math.max(1, maxRise));
+  }
+
+  if (next < previous) {
+    return Math.max(next, previous - Math.max(1, maxDrop));
+  }
+
+  return next;
 }
 
 export function estimateAltitudeMeters(cameraDistance: number): number {

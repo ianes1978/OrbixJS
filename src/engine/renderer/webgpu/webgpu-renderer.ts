@@ -295,6 +295,7 @@ export class WebGPURenderer implements Renderer {
   private readonly terrainEntries = new Map<string, WebGpuTerrainEntry>();
   private activeTileIds: readonly string[] = [];
   private activeTerrainIds: readonly string[] = [];
+  private surfaceFallbackVisible = false;
   private globeIndexCount = 0;
 
   constructor(
@@ -345,6 +346,10 @@ export class WebGPURenderer implements Renderer {
 
   setTileDebugOverlayVisible(visible: boolean): void {
     this.tileDebugOverlayVisible = visible;
+  }
+
+  setSurfaceFallbackVisible(visible: boolean): void {
+    this.surfaceFallbackVisible = visible;
   }
 
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
@@ -484,7 +489,7 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    if (!this.hasDrawableSurfaceTiles()) {
+    if (this.surfaceFallbackVisible || !this.hasDrawableSurfaceTiles()) {
       pass.setPipeline(this.globePipeline);
       pass.setBindGroup(0, this.globeBindGroup);
       pass.setVertexBuffer(0, this.globeVertexBuffer);

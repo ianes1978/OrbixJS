@@ -140,35 +140,50 @@ export class TerrainTileSelector {
     coverageTiles: readonly TerrainCoverageTile[],
     maxTiles: number,
   ): TerrainTileSelection {
+    const minLevel = this.options.minLevel ?? 0;
+    const maxCoverageLevel = coverageTiles.reduce(
+      (level, tile) => (Number.isFinite(tile.z) ? Math.max(level, clampTerrainLevel(tile.z, this.options)) : level),
+      minLevel,
+    );
+
+    for (let level = maxCoverageLevel; level >= minLevel; level -= 1) {
+      const tiles = this.normalizeCoverageTilesAtLevel(coverageTiles, level);
+
+      if (tiles.length <= maxTiles || level === minLevel) {
+        return { level, tiles: tiles.slice(0, maxTiles) };
+      }
+    }
+
+    return { level: minLevel, tiles: [] };
+  }
+
+  private normalizeCoverageTilesAtLevel(
+    coverageTiles: readonly TerrainCoverageTile[],
+    targetLevel: number,
+  ): TerrainQuadtreeTile[] {
     const tiles: TerrainQuadtreeTile[] = [];
     const visited = new Set<string>();
-    let level = this.options.minLevel ?? 0;
 
     for (const tile of coverageTiles) {
-      for (const normalized of this.normalizeCoverageTile(tile)) {
+      for (const normalized of this.normalizeCoverageTile(tile, targetLevel)) {
         if (visited.has(normalized.id)) {
           continue;
         }
 
         visited.add(normalized.id);
         tiles.push(normalized);
-        level = Math.max(level, normalized.level);
-
-        if (tiles.length >= maxTiles) {
-          return { level, tiles };
-        }
       }
     }
 
-    return { level, tiles };
+    return tiles;
   }
 
-  private normalizeCoverageTile(tile: TerrainCoverageTile): TerrainQuadtreeTile[] {
+  private normalizeCoverageTile(tile: TerrainCoverageTile, targetLevel: number): TerrainQuadtreeTile[] {
     if (![tile.x, tile.y, tile.z].every(Number.isFinite)) {
       return [];
     }
 
-    const level = clampTerrainLevel(tile.z, this.options);
+    const level = clampTerrainLevel(targetLevel, this.options);
 
     if (level === tile.z) {
       return [createTerrainQuadtreeTile(tile.x, tile.y, level)];

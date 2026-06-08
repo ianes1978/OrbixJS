@@ -57,6 +57,17 @@ describe("civis-quantized-mesh-terrain-provider", () => {
     expect(provider.isTileAvailable?.({ level: 2, x: 2, y: 2 })).toBe(true);
   });
 
+  it("rejects runtime tiles without available source terrain samples", async () => {
+    const layer = parseCivisQuantizedMeshLayer({ ...layerJson(), available: [[]] });
+    const provider = createCivisQuantizedMeshTerrainProvider(layer, {
+      fetch: vi.fn<typeof fetch>(async () => new Response(quantizedMeshTile())),
+      heightmapSize: 3,
+    });
+
+    expect(provider.isTileAvailable?.({ level: 0, x: 0, y: 0 })).toBe(false);
+    await expect(provider.getTile({ level: 0, x: 0, y: 0 })).rejects.toThrow("No available CIVIS terrain source samples");
+  });
+
   it("rejects unsupported terrain formats", () => {
     expect(() => parseCivisQuantizedMeshLayer({ ...layerJson(), format: "png" })).toThrow("Unsupported CIVIS terrain format");
   });

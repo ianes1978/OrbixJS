@@ -78,6 +78,23 @@ describe("TerrainTileSelector", () => {
     expect(selection.tiles.map((tile) => tile.id)).toEqual(["8/120/90", "8/170/125"]);
   });
 
+  it("backs explicit coverage tiles off instead of truncating terrain coverage", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 12 });
+    const coverageTiles = Array.from({ length: 16 }, (_, index) => ({
+      z: 10,
+      x: 640 + index,
+      y: 380,
+    }));
+    const selection = selector.select(0, 0, 1.01, {
+      coverageTiles,
+      maxTiles: 4,
+    });
+
+    expect(selection.level).toBeLessThan(10);
+    expect(selection.tiles.length).toBeLessThanOrEqual(4);
+    expect(selection.tiles.every((tile) => tile.level === selection.level)).toBe(true);
+  });
+
   it("normalizes explicit coverage tiles to terrain level limits", () => {
     const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 6 });
     const selection = selector.select(0, 0, 1.01, {

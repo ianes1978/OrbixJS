@@ -93,7 +93,7 @@ export const roadmap: RoadmapPhase[] = [
       { label: "Mesh terrain render", done: true },
       { label: "CIVIS DTM adapter", done: true },
       { label: "Drape imagery terrain", done: true },
-      { label: "Bounds/NoData terrain", done: false },
+      { label: "Bounds/NoData terrain", done: true },
       { label: "Skirt e morphing", done: false },
       { label: "Picking terrain", done: false },
       { label: "Collisione camera-terrain", done: false },

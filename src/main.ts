@@ -362,6 +362,13 @@ const viewer = new GeoViewer({
     enabled: true,
     clearance: 1,
   },
+  lod: {
+    terrain: {
+      maxLevel: 10,
+      maxTiles: 128,
+      lodBias: -1,
+    },
+  },
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     lastImageryStats = stats;

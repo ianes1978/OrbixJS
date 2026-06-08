@@ -215,6 +215,27 @@ describe("WebGPURenderer", () => {
     );
   });
 
+  it("draws the globe parent fallback behind active WebGPU surface tiles", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+
+    await renderer.initialize();
+    renderer.setImageryTile({ id: "3/4/2", x: 4, y: 2, z: 3 }, { width: 256, height: 256 } as TexImageSource);
+    renderer.setActiveImageryTiles(["3/4/2"]);
+    renderer.setSurfaceFallbackVisible(true);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the monolithic globe visible until terrain surface tiles have imagery", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();

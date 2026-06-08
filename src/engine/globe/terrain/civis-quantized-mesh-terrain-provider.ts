@@ -1,6 +1,6 @@
 import { WebMercatorTilingScheme, type RectangleRadians } from "../tiling/web-mercator-tiling";
 import { tileSampleToCartographic } from "./terrain-mesh";
-import { type TerrainHeightmapTile, type TerrainProvider, type TerrainTileKey } from "./terrain-provider";
+import { createTerrainTileId, type TerrainHeightmapTile, type TerrainProvider, type TerrainTileKey } from "./terrain-provider";
 
 export type CivisQuantizedMeshLayer = {
   format: "quantized-mesh-1.0";
@@ -125,7 +125,9 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
   }
 
   isTileAvailable(key: TerrainTileKey): boolean {
-    return rectangleIntersectsLayerBounds(this.tiling.tileXYToRectangle({ z: key.level, x: key.x, y: key.y }), this.layer.bounds);
+    const rectangle = this.tiling.tileXYToRectangle({ z: key.level, x: key.x, y: key.y });
+
+    return rectangleIntersectsLayerBounds(rectangle, this.layer.bounds) && this.tileHasAvailableSamples(key, rectangle);
   }
 
   async getTile(key: TerrainTileKey, signal?: AbortSignal): Promise<TerrainHeightmapTile> {
@@ -133,6 +135,10 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
     let minHeight = Number.POSITIVE_INFINITY;
     let maxHeight = Number.NEGATIVE_INFINITY;
     const samples = await this.collectSamples(key, signal);
+
+    if (samples.length === 0) {
+      throw new Error(`No available CIVIS terrain source samples for tile ${createTerrainTileId(key)}`);
+    }
 
     for (let row = 0; row < this.heightmapSize; row += 1) {
       const v = this.heightmapSize === 1 ? 0 : row / (this.heightmapSize - 1);
@@ -161,6 +167,23 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
       minHeight,
       maxHeight,
     };
+  }
+
+  private tileHasAvailableSamples(key: TerrainTileKey, rectangle: RectangleRadians): boolean {
+    const sourceLevel = clamp(key.level + this.sourceLevelOffset, 0, this.layer.available.length - 1);
+    const samples: [number, number][] = [
+      [rectangle.west, rectangle.south],
+      [(rectangle.west + rectangle.east) * 0.5, rectangle.south],
+      [rectangle.east, rectangle.south],
+      [rectangle.west, (rectangle.south + rectangle.north) * 0.5],
+      [(rectangle.west + rectangle.east) * 0.5, (rectangle.south + rectangle.north) * 0.5],
+      [rectangle.east, (rectangle.south + rectangle.north) * 0.5],
+      [rectangle.west, rectangle.north],
+      [(rectangle.west + rectangle.east) * 0.5, rectangle.north],
+      [rectangle.east, rectangle.north],
+    ];
+
+    return samples.some(([lon, lat]) => this.availableSourceTileFor(lon, lat, sourceLevel) !== undefined);
   }
 
   sampleHeight(lon: number, lat: number): number | undefined {

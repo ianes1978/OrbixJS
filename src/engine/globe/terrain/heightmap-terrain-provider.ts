@@ -130,6 +130,15 @@ class HeightmapTerrainProvider implements TerrainProvider {
     return request;
   }
 
+  isTileAvailable(key: TerrainTileKey): boolean {
+    try {
+      this.validateKey(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   sampleHeight(lon: number, lat: number): number | undefined {
     const sortedTiles = [...this.tileCache.values()].sort((a, b) => b.level - a.level);
 

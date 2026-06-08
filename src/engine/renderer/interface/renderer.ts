@@ -27,5 +27,6 @@ export interface Renderer {
   resize(): void;
   render(frame: RendererFrame): void;
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void;
+  setSurfaceFallbackVisible(visible: boolean): void;
   destroy(): void;
 }

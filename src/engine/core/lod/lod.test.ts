@@ -4,6 +4,7 @@ import {
   createAdaptiveLodState,
   createLodContext,
   normalizeLodOptions,
+  stabilizeLodLevel,
   updateAdaptiveLodState,
 } from "./lod";
 
@@ -15,6 +16,7 @@ describe("LOD policy", () => {
     expect(lod.adaptive).toBe(true);
     expect(lod.maxVisibleTiles).toBeGreaterThan(300);
     expect(lod.terrain.maxTiles).toBeGreaterThan(100);
+    expect(lod.terrain.maxTiles).toBeLessThan(lod.maxVisibleTiles / 2);
   });
 
   it("orders profile budgets from performance to ultra", () => {
@@ -71,6 +73,7 @@ describe("LOD policy", () => {
     expect(degraded.pixelErrorBudget).toBeGreaterThan(base.pixelErrorBudget);
     expect(degraded.tileBudget).toBeLessThan(base.tileBudget);
     expect(degraded.requestBudget).toBeLessThan(base.requestBudget);
+    expect(degraded.qualityBias).toBeGreaterThan(base.qualityBias - 1);
   });
 
   it("applies quality bias while respecting layer limits", () => {
@@ -88,5 +91,13 @@ describe("LOD policy", () => {
 
     expect(applyLodBiasToLevel(7, options.imagery, context)).toBe(9);
     expect(applyLodBiasToLevel(12, options.imagery, context)).toBe(10);
+  });
+
+  it("stabilizes target LOD changes across frames", () => {
+    expect(stabilizeLodLevel(undefined, 7)).toBe(7);
+    expect(stabilizeLodLevel(7, 2)).toBe(6);
+    expect(stabilizeLodLevel(2, 7)).toBe(3);
+    expect(stabilizeLodLevel(7, undefined)).toBe(7);
+    expect(stabilizeLodLevel(7, 2, { maxDrop: 2 })).toBe(5);
   });
 });

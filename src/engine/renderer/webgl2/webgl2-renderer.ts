@@ -139,6 +139,7 @@ export class WebGL2Renderer implements Renderer {
   private readonly activeTileIds = new Set<string>();
   private readonly terrainMeshes = new Map<string, GpuMesh>();
   private readonly activeTerrainIds = new Set<string>();
+  private surfaceFallbackVisible = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
@@ -210,6 +211,10 @@ export class WebGL2Renderer implements Renderer {
 
   setTileDebugOverlayVisible(visible: boolean): void {
     this.tileDebugOverlayVisible = visible;
+  }
+
+  setSurfaceFallbackVisible(visible: boolean): void {
+    this.surfaceFallbackVisible = visible;
   }
 
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
@@ -341,7 +346,7 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-    if (!plan.passes.includes("imagery")) {
+    if (this.surfaceFallbackVisible || !plan.passes.includes("imagery")) {
       this.gl.useProgram(this.program.program);
       this.gl.uniformMatrix4fv(this.program.uProjection, false, plan.projection);
       this.gl.uniformMatrix4fv(this.program.uView, false, plan.view);
