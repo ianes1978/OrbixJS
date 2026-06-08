@@ -8,10 +8,14 @@ describe("surface-tile", () => {
   it("uses terrain mesh as the active surface when terrain is ready", () => {
     const tile = createQuadtreeTile(2, 1, 3);
     const terrainTile = { level: tile.z, x: tile.x, y: tile.y };
+    const heightmap = createFlatTerrainTile(terrainTile, { size: 2, height: 120 });
     const terrainMesh = {
       id: tile.id,
       tile: terrainTile,
-      mesh: createTerrainMesh(createFlatTerrainTile(terrainTile, { size: 2, height: 120 })),
+      heightmap,
+      exaggeration: 1,
+      skirtDepth: 0,
+      mesh: createTerrainMesh(heightmap),
     };
     const surfaceTiles = createSurfaceTileSet({
       imageryTiles: [tile],
@@ -63,10 +67,14 @@ describe("surface-tile", () => {
   it("uses terrain mesh positions for ready surface bounding volumes", () => {
     const tile = createQuadtreeTile(1, 1, 2);
     const terrainTile = { level: tile.z, x: tile.x, y: tile.y };
+    const heightmap = createFlatTerrainTile(terrainTile, { size: 3, height: 2500 });
     const terrainMesh = {
       id: tile.id,
       tile: terrainTile,
-      mesh: createTerrainMesh(createFlatTerrainTile(terrainTile, { size: 3, height: 2500 }), { skirtDepth: 25 }),
+      heightmap,
+      exaggeration: 1,
+      skirtDepth: 25,
+      mesh: createTerrainMesh(heightmap, { skirtDepth: 25 }),
     };
     const [surfaceTile] = createSurfaceTileSet({
       imageryTiles: [tile],
@@ -81,5 +89,26 @@ describe("surface-tile", () => {
     expect(surfaceTile.boundingSphere.center[0]).toBeGreaterThanOrEqual(minX);
     expect(surfaceTile.boundingSphere.center[0]).toBeLessThanOrEqual(maxX);
     expect(surfaceTile.boundingSphere.radius).toBeGreaterThan(0);
+  });
+
+  it("marks GPU-displaced terrain as skirted when the runtime provides skirt depth", () => {
+    const tile = createQuadtreeTile(1, 1, 2);
+    const terrainTile = { level: tile.z, x: tile.x, y: tile.y };
+    const heightmap = createFlatTerrainTile(terrainTile, { size: 3, height: 2500 });
+    const [surfaceTile] = createSurfaceTileSet({
+      imageryTiles: [tile],
+      terrainMeshes: [
+        {
+          id: tile.id,
+          tile: terrainTile,
+          heightmap,
+          exaggeration: 1,
+          skirtDepth: 40,
+        },
+      ],
+    });
+
+    expect(surfaceTile.activeMesh).toBe("terrain");
+    expect(surfaceTile.hasSkirt).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Ellipsoid } from "../geodesy/ellipsoid";
 import { OrbitCamera } from "./orbit-camera";
 
 describe("OrbitCamera", () => {
@@ -120,9 +121,34 @@ describe("OrbitCamera", () => {
 
     camera.flyTo({ lon: 0, lat: 45, height: 1_000_000 });
 
+    const expectedPosition = Ellipsoid.WGS84.cartographicToCartesian({
+      lon: 0,
+      lat: Math.PI / 4,
+      height: 1_000_000,
+    });
+    const expectedDistance =
+      Math.hypot(...expectedPosition) / Ellipsoid.WGS84.maximumRadius;
+
     expect(camera.yaw).toBeCloseTo(Math.PI / 2);
     expect(camera.pitch).toBeCloseTo(Math.PI / 4);
-    expect(camera.distance).toBeCloseTo(1 + 1_000_000 / 6_378_137);
+    expect(camera.distance).toBeCloseTo(expectedDistance);
+  });
+
+  it("keeps low-altitude flyTo close to the local WGS84 ellipsoid instead of the maximum radius sphere", () => {
+    const camera = new OrbitCamera();
+    const lon = 11.35 * (Math.PI / 180);
+    const lat = 46.5 * (Math.PI / 180);
+    const height = 150;
+
+    camera.flyTo({ lon: 11.35, lat: 46.5, height });
+
+    const expectedPosition = Ellipsoid.WGS84.cartographicToCartesian({ lon, lat, height });
+    const expectedDistance =
+      Math.hypot(...expectedPosition) / Ellipsoid.WGS84.maximumRadius;
+    const oldSphericalDistance = 1 + height / Ellipsoid.WGS84.maximumRadius;
+
+    expect(camera.distance).toBeCloseTo(expectedDistance);
+    expect(Math.abs(camera.distance - oldSphericalDistance)).toBeGreaterThan(0.000001);
   });
 
   it("exports an independent camera snapshot", () => {

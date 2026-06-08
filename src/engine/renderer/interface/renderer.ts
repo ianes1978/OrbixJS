@@ -12,6 +12,7 @@ export type RendererCapabilities = {
   maxTextureSize: number;
   supportsInstancing: boolean;
   supportsFloatTextures: boolean;
+  supportsTerrainHeightmapDisplacement: boolean;
 };
 
 export type RendererFrame = {

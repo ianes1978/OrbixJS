@@ -1,3 +1,4 @@
+import { Ellipsoid } from "../geodesy/ellipsoid";
 import { lookAt, perspective, type Mat4 } from "../math/mat4";
 import { type Ray } from "../math/ray";
 import { add, cross, dot, length, normalize, scale, subtract, type MutableVec3, type Vec3 } from "../math/vec3";
@@ -201,12 +202,14 @@ export class OrbitCamera {
   flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
     const lonRadians = lon * (Math.PI / 180);
     const latRadians = lat * (Math.PI / 180);
-    const cosLat = Math.cos(latRadians);
-    const direction = [
-      cosLat * Math.cos(lonRadians),
-      Math.sin(latRadians),
-      -cosLat * Math.sin(lonRadians),
+    const position = Ellipsoid.WGS84.cartographicToCartesian({ lon: lonRadians, lat: latRadians, height });
+    const normalizedPosition = [
+      position[0] / Ellipsoid.WGS84.maximumRadius,
+      position[1] / Ellipsoid.WGS84.maximumRadius,
+      position[2] / Ellipsoid.WGS84.maximumRadius,
     ] as const;
+    const distance = length(normalizedPosition);
+    const direction = scale(normalizedPosition, 1 / distance);
 
     this.yaw = Math.atan2(direction[0], direction[2]);
     this.pitch = clamp(Math.asin(direction[1]), this.minPitch, this.maxPitch);
@@ -215,7 +218,7 @@ export class OrbitCamera {
     this.target[0] = 0;
     this.target[1] = 0;
     this.target[2] = 0;
-    this.distance = clamp(1 + height / 6_378_137, this.minDistance, this.maxDistance);
+    this.distance = clamp(distance, this.minDistance, this.maxDistance);
   }
 
   snapshot(): CameraSnapshot {

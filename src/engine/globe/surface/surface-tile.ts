@@ -66,9 +66,11 @@ export function createSurfaceTileSet({
       level: tile.z,
       terrainState,
       activeMesh: terrainState === "ready" ? "terrain" : "ellipsoid",
-      boundingSphere: terrainMesh ? boundingSphereFromPositions(terrainMesh.mesh.positions) : boundingSphereFromBounds(bounds, ellipsoid),
+      boundingSphere: terrainMesh?.mesh
+        ? boundingSphereFromPositions(terrainMesh.mesh.positions)
+        : boundingSphereFromBounds(bounds, ellipsoid, terrainMesh?.heightmap.maxHeight, terrainMesh?.exaggeration),
       terrainMesh,
-      hasSkirt: terrainMesh?.mesh.hasSkirt ?? false,
+      hasSkirt: terrainMesh ? (terrainMesh.mesh?.hasSkirt ?? terrainMesh.skirtDepth > 0) : false,
     };
   });
 }
@@ -111,19 +113,25 @@ function boundingSphereFromPositions(positions: Float32Array): SurfaceBoundingSp
   };
 }
 
-function boundingSphereFromBounds(bounds: RectangleRadians, ellipsoid: Ellipsoid): SurfaceBoundingSphere {
+function boundingSphereFromBounds(
+  bounds: RectangleRadians,
+  ellipsoid: Ellipsoid,
+  maxHeight = 0,
+  exaggeration = 1,
+): SurfaceBoundingSphere {
   const centerLon = (bounds.west + bounds.east) * 0.5;
   const centerLat = (bounds.south + bounds.north) * 0.5;
-  const center = normalizedCartographic(ellipsoid, centerLon, centerLat);
+  const height = Math.max(0, maxHeight * exaggeration);
+  const center = normalizedCartographic(ellipsoid, centerLon, centerLat, height);
   const samples = [
-    normalizedCartographic(ellipsoid, bounds.west, bounds.south),
-    normalizedCartographic(ellipsoid, bounds.east, bounds.south),
-    normalizedCartographic(ellipsoid, bounds.west, bounds.north),
-    normalizedCartographic(ellipsoid, bounds.east, bounds.north),
-    normalizedCartographic(ellipsoid, centerLon, bounds.south),
-    normalizedCartographic(ellipsoid, centerLon, bounds.north),
-    normalizedCartographic(ellipsoid, bounds.west, centerLat),
-    normalizedCartographic(ellipsoid, bounds.east, centerLat),
+    normalizedCartographic(ellipsoid, bounds.west, bounds.south, height),
+    normalizedCartographic(ellipsoid, bounds.east, bounds.south, height),
+    normalizedCartographic(ellipsoid, bounds.west, bounds.north, height),
+    normalizedCartographic(ellipsoid, bounds.east, bounds.north, height),
+    normalizedCartographic(ellipsoid, centerLon, bounds.south, height),
+    normalizedCartographic(ellipsoid, centerLon, bounds.north, height),
+    normalizedCartographic(ellipsoid, bounds.west, centerLat, height),
+    normalizedCartographic(ellipsoid, bounds.east, centerLat, height),
   ];
 
   return {
@@ -132,8 +140,8 @@ function boundingSphereFromBounds(bounds: RectangleRadians, ellipsoid: Ellipsoid
   };
 }
 
-function normalizedCartographic(ellipsoid: Ellipsoid, lon: number, lat: number): MutableVec3 {
-  const position = ellipsoid.cartographicToCartesian({ lon, lat });
+function normalizedCartographic(ellipsoid: Ellipsoid, lon: number, lat: number, height = 0): MutableVec3 {
+  const position = ellipsoid.cartographicToCartesian({ lon, lat, height });
 
   return [
     position[0] / ellipsoid.maximumRadius,

@@ -1,11 +1,15 @@
 import { OrbitCamera } from "../camera/orbit-camera";
+import { type Ray } from "../math/ray";
 import { add, dot, normalize, scale, type Vec3 } from "../math/vec3";
 
 export type PointerControllerOptions = {
   pickSurfacePoint?: (clientX: number, clientY: number) => Vec3 | undefined;
+  pickRay?: (clientX: number, clientY: number) => Ray | undefined;
   surfaceHeightMeters?: () => number;
   surfaceDistance?: () => number;
 };
+
+const earthRadiusMeters = 6_378_137;
 
 export class PointerController {
   private dragging = false;
@@ -98,12 +102,25 @@ export class PointerController {
     }
 
     if (this.surfaceDragPoint) {
+      const dragRay = this.options.pickRay?.(event.clientX, event.clientY);
+
+      if (dragRay && this.shouldUseLocalSurfaceDrag()) {
+        const moved = this.camera.moveGrabbedPointToRay(this.surfaceDragPoint, dragRay, {
+          strength: 0.85,
+          maxStep: this.localSurfaceDragMaxStep(),
+        });
+
+        if (moved) {
+          return;
+        }
+      }
+
       const currentSurfacePoint = this.pickSurfaceDragPoint(event);
 
       if (currentSurfacePoint) {
         const smoothedSurfacePoint = this.smoothSurfacePoint(currentSurfacePoint);
 
-        this.camera.rotateSurfacePointTo(smoothedSurfacePoint, this.surfaceDragPoint, 0.018 + dragScale * 0.055);
+        this.camera.rotateSurfacePointTo(smoothedSurfacePoint, this.surfaceDragPoint, this.surfaceDragMaxAngle(dragScale));
         return;
       }
 
@@ -162,6 +179,37 @@ export class PointerController {
     return smoothed;
   }
 
+  private shouldUseLocalSurfaceDrag(): boolean {
+    return this.surfaceAltitudeMeters() < 80_000;
+  }
+
+  private localSurfaceDragMaxStep(): number {
+    const altitude = this.surfaceAltitudeNormalized();
+
+    return clamp(altitude * 0.4, 0.25 / earthRadiusMeters, 25_000 / earthRadiusMeters);
+  }
+
+  private surfaceDragMaxAngle(dragScale: number): number {
+    const altitude = this.surfaceAltitudeNormalized();
+    const altitudeLimitedAngle = clamp(altitude * 0.35, 0.5 / earthRadiusMeters, 0.018);
+
+    return Math.min(altitudeLimitedAngle, 0.018 + dragScale * 0.055);
+  }
+
+  private surfaceAltitudeMeters(): number {
+    return this.surfaceAltitudeNormalized() * earthRadiusMeters;
+  }
+
+  private surfaceAltitudeNormalized(): number {
+    const surfaceDistance = this.options.surfaceDistance?.();
+
+    if (surfaceDistance !== undefined && Number.isFinite(surfaceDistance)) {
+      return Math.max(0, this.camera.distance - surfaceDistance);
+    }
+
+    return Math.max(0, this.camera.distance - 1);
+  }
+
   private pinchDistance(): number | undefined {
     const pointers = [...this.pointers.values()];
     const first = pointers[0];
@@ -173,4 +221,8 @@ export class PointerController {
 
     return Math.hypot(second.x - first.x, second.y - first.y);
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

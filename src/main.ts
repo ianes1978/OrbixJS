@@ -13,6 +13,24 @@ import { createProceduralTerrainProvider } from "./engine/globe/terrain/procedur
 import { findPreprocessJob, loadPreprocessManifest } from "./engine/preprocess/preprocess-manifest";
 import { roadmap } from "./roadmap";
 
+declare global {
+  interface Window {
+    __orbixDebug?: {
+      viewer: GeoViewer;
+      flyTo: (options: { lon: number; lat: number; height: number }) => void;
+      setDtmTerrain: (enabled: boolean) => Promise<void>;
+      stats: () => {
+        frame: GeoViewerFrameStats | undefined;
+        imagery: unknown;
+        camera: ReturnType<GeoViewer["cameraSnapshot"]>;
+        surface: ReturnType<GeoViewer["cameraSurfaceStatus"]>;
+        frameStatus: string;
+        lodDebug: string;
+      };
+    };
+  }
+}
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -772,6 +790,29 @@ function syncDtmTerrainToggle(): void {
   dtmTerrainToggleElement.textContent = dtmTerrainVisible ? "DTM Alto Adige ON" : "DTM Alto Adige";
 }
 
+window.__orbixDebug = {
+  viewer,
+  flyTo: (options) => {
+    stopCameraPath("interrotto");
+    viewer.flyTo(options);
+  },
+  setDtmTerrain: async (enabled) => {
+    if (dtmTerrainVisible === enabled) {
+      return;
+    }
+
+    await toggleDtmTerrain();
+  },
+  stats: () => ({
+    frame: lastFrameStats,
+    imagery: lastImageryStats,
+    camera: viewer.cameraSnapshot(),
+    surface: viewer.cameraSurfaceStatus(),
+    frameStatus: frameStatusElement.textContent ?? "",
+    lodDebug: lodDebugOutputElement.value,
+  }),
+};
+
 function renderCameraPathControls(paths: readonly CameraPath[]): void {
   cameraPathControlsElement.replaceChildren();
   cameraPathStatusElement.textContent = paths.length > 0 ? "pronto" : "nessun path";
@@ -1041,13 +1082,46 @@ function formatLodDebugStatus(): string {
     `terrain.lod=${terrain?.level ?? "-"}`,
     `terrain.tiles=${terrain ? `${terrain.loadedTiles}/${terrain.activeTiles}` : "-"}`,
     `terrain.pending=${terrain?.pendingTiles ?? "-"}`,
+    `terrain.render=${terrain?.renderTiles ?? "-"}`,
+    `terrain.renderExact=${terrain?.exactRenderTiles ?? "-"}`,
+    `terrain.renderFallback=${terrain?.fallbackRenderTiles ?? "-"}`,
+    `terrain.requestLevelRange=${formatLevelRange(terrain?.requestLevels)}`,
+    `terrain.requestLevels=${formatLevelHistogram(terrain?.requestLevels)}`,
+    `terrain.renderLevelRange=${formatLevelRange(terrain?.renderLevels)}`,
+    `terrain.renderLevels=${formatLevelHistogram(terrain?.renderLevels)}`,
+    `terrain.exactRenderLevels=${formatLevelHistogram(terrain?.exactRenderLevels)}`,
+    `terrain.fallbackRenderLevels=${formatLevelHistogram(terrain?.fallbackRenderLevels)}`,
     `terrain.meshCache=${terrain?.meshCacheSize ?? "-"}`,
+    `terrain.cpuMeshes=${terrain?.cpuMeshes ?? "-"}`,
+    `terrain.gpuDisplacement=${terrain?.gpuDisplacement ?? "-"}`,
+    `terrain.gpuSkirts=${terrain?.gpuSkirts ?? "-"}`,
+    `frame.statsAgeMs=${lastFrameStats ? Math.round(performance.now() - lastFrameStats.timestampMs) : "-"}`,
+    `frame.rawFrameMs=${lastFrameStats ? lastFrameStats.rawFrameMs.toFixed(1) : "-"}`,
+    `frame.rawCpuMs=${lastFrameStats ? lastFrameStats.rawCpuMs.toFixed(1) : "-"}`,
+    `frame.rawUpdateMs=${lastFrameStats ? lastFrameStats.rawUpdateMs.toFixed(1) : "-"}`,
+    `frame.rawRenderMs=${lastFrameStats ? lastFrameStats.rawRenderMs.toFixed(1) : "-"}`,
+    `frame.long=${lastFrameStats ? (lastFrameStats.rawFrameMs > 250 || lastFrameStats.rawCpuMs > 80 ? "yes" : "no") : "-"}`,
+    `update.cameraLodMs=${lastFrameStats ? lastFrameStats.updateBreakdown.cameraAndLodMs.toFixed(2) : "-"}`,
+    `update.sampleMs=${lastFrameStats ? lastFrameStats.updateBreakdown.sampleMs.toFixed(2) : "-"}`,
+    `update.coverageMs=${lastFrameStats ? lastFrameStats.updateBreakdown.coverageMs.toFixed(2) : "-"}`,
+    `update.imageryMs=${lastFrameStats ? lastFrameStats.updateBreakdown.imageryMs.toFixed(2) : "-"}`,
+    `update.terrainMs=${lastFrameStats ? lastFrameStats.updateBreakdown.terrainMs.toFixed(2) : "-"}`,
+    `update.debugTilesetMs=${lastFrameStats ? lastFrameStats.updateBreakdown.debugTilesetMs.toFixed(2) : "-"}`,
     `coverage.tiles=${lastFrameStats?.coverageTiles ?? "-"}`,
     `coverage.budget=${lastFrameStats?.coverageBudget ?? "-"}`,
     `coverage.samples=${lastFrameStats?.coverageSamples ?? "-"}`,
     `coverage.strategy=${lastFrameStats?.coverageStrategy ?? "-"}`,
     `coverage.levelRange=${formatLevelRange(lastFrameStats?.coverageLevels)}`,
     `coverage.levels=${formatLevelHistogram(lastFrameStats?.coverageLevels)}`,
+    `lod.altitudeMeters=${lod ? Math.round(lod.altitudeMeters) : "-"}`,
+    `lod.cameraDistance=${lod ? lod.cameraDistance.toFixed(6) : "-"}`,
+    `lod.projectedLevel=${lastFrameStats?.lodDebug.projectedImageryLevel ?? "-"}`,
+    `lod.metricInputLevel=${lastFrameStats?.lodDebug.metricImageryLevel ?? "-"}`,
+    `lod.combinedLevel=${lastFrameStats?.lodDebug.imageryLevel ?? "-"}`,
+    `lod.requestedImageryLevel=${lastFrameStats?.lodDebug.requestedImageryTargetLevel ?? "-"}`,
+    `lod.requestedTerrainLevel=${lastFrameStats?.lodDebug.requestedTerrainTargetLevel ?? "-"}`,
+    `lod.stableImageryLevel=${lastFrameStats?.lodDebug.stableImageryTargetLevel ?? "-"}`,
+    `lod.stableTerrainLevel=${lastFrameStats?.lodDebug.stableTerrainTargetLevel ?? "-"}`,
     `lod.effectiveRequestBudget=${lastFrameStats?.effectiveRequestBudget ?? "-"}`,
     `lod.profile=${lod?.profile ?? "-"}`,
     `lod.adaptiveReduction=${lod ? lod.adaptiveQualityReduction.toFixed(2) : "-"}`,

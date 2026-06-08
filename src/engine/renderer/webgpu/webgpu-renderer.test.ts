@@ -31,6 +31,7 @@ describe("WebGPURenderer", () => {
     expect(renderer.supported).toBe(true);
     expect(renderer.ready).toBe(true);
     expect(renderer.capabilities.maxTextureSize).toBe(8192);
+    expect(renderer.capabilities.supportsTerrainHeightmapDisplacement).toBe(false);
     expect(canvas.width).toBe(640);
     expect(canvas.height).toBe(360);
     expect(device.createRenderPipeline).toHaveBeenCalled();
@@ -248,13 +249,17 @@ describe("WebGPURenderer", () => {
     };
     const renderer = new WebGPURenderer(canvas, { gpu });
     const tile = { level: 3, x: 4, y: 2 };
+    const heightmap = createFlatTerrainTile(tile, { size: 2, height: 120 });
 
     await renderer.initialize();
     renderer.setTerrainMeshes([
       {
         id: "3/4/2",
         tile,
-        mesh: createTerrainMesh(createFlatTerrainTile(tile, { size: 2, height: 120 })),
+        heightmap,
+        exaggeration: 1,
+        skirtDepth: 0,
+        mesh: createTerrainMesh(heightmap),
       },
     ]);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
@@ -275,6 +280,7 @@ describe("WebGPURenderer", () => {
     };
     const renderer = new WebGPURenderer(canvas, { gpu });
     const tile = { level: 3, x: 4, y: 2 };
+    const heightmap = createFlatTerrainTile(tile, { size: 2, height: 120 });
 
     await renderer.initialize();
     renderer.setImageryTile({ id: "3/4/2", x: tile.x, y: tile.y, z: tile.level }, { width: 256, height: 256 } as TexImageSource);
@@ -282,7 +288,10 @@ describe("WebGPURenderer", () => {
       {
         id: "3/4/2",
         tile,
-        mesh: createTerrainMesh(createFlatTerrainTile(tile, { size: 2, height: 120 })),
+        heightmap,
+        exaggeration: 1,
+        skirtDepth: 0,
+        mesh: createTerrainMesh(heightmap),
       },
     ]);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });

@@ -118,23 +118,73 @@ void main() {
 
 export const terrainVertexShader = `#version 300 es
 in vec3 position;
-in vec3 normal;
 in vec2 uv;
 
 uniform mat4 uProjection;
 uniform mat4 uView;
-uniform mat4 uModel;
+uniform vec3 uTileKey;
+uniform sampler2D uHeightmap;
+uniform float uExaggeration;
+uniform float uSkirtDepth;
+uniform vec2 uImageryUvScale;
+uniform vec2 uImageryUvOffset;
 
 out vec3 vNormal;
 out vec3 vPosition;
 out vec2 vUv;
+out vec2 vImageryUv;
+
+const float PI = 3.141592653589793;
+const float WGS84_A = 6378137.0;
+const float WGS84_B = 6356752.314245179;
+
+float webMercatorYToLatitude(float y) {
+  float n = PI * (1.0 - 2.0 * y);
+  return atan(0.5 * (exp(n) - exp(-n)));
+}
+
+vec3 ellipsoidNormalAt(float lon, float lat) {
+  float cosLat = cos(lat);
+  return normalize(vec3(cosLat * cos(lon), sin(lat), -cosLat * sin(lon)));
+}
+
+vec3 terrainWorldAt(vec2 sampleUv) {
+  float tileCount = exp2(uTileKey.x);
+  float globalX = (uTileKey.y + sampleUv.x) / tileCount;
+  float globalY = (uTileKey.z + sampleUv.y) / tileCount;
+  float lon = globalX * PI * 2.0 - PI;
+  float lat = webMercatorYToLatitude(globalY);
+  float height = texture(uHeightmap, clamp(sampleUv, vec2(0.0), vec2(1.0))).r * uExaggeration;
+  vec3 normal = ellipsoidNormalAt(lon, lat);
+  return normal * vec3(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+}
 
 void main() {
-  vec4 worldPosition = uModel * vec4(position, 1.0);
-  vPosition = worldPosition.xyz;
-  vNormal = mat3(uModel) * normal;
+  float tileCount = exp2(uTileKey.x);
+  float globalX = (uTileKey.y + uv.x) / tileCount;
+  float globalY = (uTileKey.z + uv.y) / tileCount;
+  float lon = globalX * PI * 2.0 - PI;
+  float lat = webMercatorYToLatitude(globalY);
+  float height = texture(uHeightmap, uv).r * uExaggeration - position.z * uSkirtDepth;
+  vec3 ellipsoidNormal = ellipsoidNormalAt(lon, lat);
+  vec3 world = ellipsoidNormal * vec3(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+  vec2 heightmapSize = vec2(textureSize(uHeightmap, 0));
+  vec2 texel = 1.0 / max(heightmapSize - vec2(1.0), vec2(1.0));
+  vec3 west = terrainWorldAt(uv - vec2(texel.x, 0.0));
+  vec3 east = terrainWorldAt(uv + vec2(texel.x, 0.0));
+  vec3 north = terrainWorldAt(uv - vec2(0.0, texel.y));
+  vec3 south = terrainWorldAt(uv + vec2(0.0, texel.y));
+  vec3 terrainNormal = normalize(cross(east - west, north - south));
+
+  if (dot(terrainNormal, ellipsoidNormal) < 0.0) {
+    terrainNormal = -terrainNormal;
+  }
+
+  vPosition = world;
+  vNormal = position.z > 0.5 ? ellipsoidNormal : terrainNormal;
   vUv = uv;
-  gl_Position = uProjection * uView * worldPosition;
+  vImageryUv = uv * uImageryUvScale + uImageryUvOffset;
+  gl_Position = uProjection * uView * vec4(world, 1.0);
 }
 `;
 
@@ -144,8 +194,11 @@ precision highp float;
 in vec3 vNormal;
 in vec3 vPosition;
 in vec2 vUv;
+in vec2 vImageryUv;
 
 uniform vec3 uSunDirection;
+uniform sampler2D uImagery;
+uniform bool uDebugOverlay;
 
 out vec4 outColor;
 
@@ -153,17 +206,13 @@ void main() {
   vec3 normal = normalize(vNormal);
   vec3 light = normalize(uSunDirection);
   float diffuse = max(dot(normal, light), 0.0);
-  float slope = 1.0 - abs(dot(normal, normalize(vPosition)));
-  float latitudeTint = smoothstep(-0.2, 0.8, normalize(vPosition).y);
-  vec3 low = vec3(0.20, 0.42, 0.25);
-  vec3 high = vec3(0.62, 0.54, 0.38);
-  vec3 snow = vec3(0.86, 0.90, 0.86);
-  vec3 land = mix(low, high, clamp(slope * 2.8 + latitudeTint * 0.12, 0.0, 1.0));
-  vec3 color = mix(land, snow, smoothstep(0.68, 0.96, slope + latitudeTint * 0.12));
+  float rim = pow(1.0 - max(dot(normal, normalize(-vPosition)), 0.0), 3.2);
+  vec3 imagery = texture(uImagery, vImageryUv).rgb;
+  vec3 color = imagery * (0.42 + diffuse * 0.72) + rim * vec3(0.035, 0.09, 0.11);
   float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
   float edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
-  color = mix(color, vec3(0.24, 0.88, 0.82), edgeLine * 0.16);
-  outColor = vec4(color * (0.38 + diffuse * 0.78), 1.0);
+  color = mix(color, vec3(0.24, 0.88, 0.82), uDebugOverlay ? edgeLine * 0.22 : 0.0);
+  outColor = vec4(color, 1.0);
 }
 `;
 

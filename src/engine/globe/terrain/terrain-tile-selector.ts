@@ -141,31 +141,21 @@ export class TerrainTileSelector {
     maxTiles: number,
   ): TerrainTileSelection {
     const minLevel = this.options.minLevel ?? 0;
-    const maxCoverageLevel = coverageTiles.reduce(
-      (level, tile) => (Number.isFinite(tile.z) ? Math.max(level, clampTerrainLevel(tile.z, this.options)) : level),
-      minLevel,
-    );
+    const normalized = this.normalizeCoverageTilesToLimits(coverageTiles);
+    const tiles = coalesceTilesToBudget(normalized, maxTiles, minLevel);
 
-    for (let level = maxCoverageLevel; level >= minLevel; level -= 1) {
-      const tiles = this.normalizeCoverageTilesAtLevel(coverageTiles, level);
-
-      if (tiles.length <= maxTiles || level === minLevel) {
-        return { level, tiles: tiles.slice(0, maxTiles) };
-      }
-    }
-
-    return { level: minLevel, tiles: [] };
+    return {
+      level: maxTerrainTileLevel(tiles, minLevel),
+      tiles,
+    };
   }
 
-  private normalizeCoverageTilesAtLevel(
-    coverageTiles: readonly TerrainCoverageTile[],
-    targetLevel: number,
-  ): TerrainQuadtreeTile[] {
+  private normalizeCoverageTilesToLimits(coverageTiles: readonly TerrainCoverageTile[]): TerrainQuadtreeTile[] {
     const tiles: TerrainQuadtreeTile[] = [];
     const visited = new Set<string>();
 
     for (const tile of coverageTiles) {
-      for (const normalized of this.normalizeCoverageTile(tile, targetLevel)) {
+      for (const normalized of this.normalizeCoverageTileToLimits(tile)) {
         if (visited.has(normalized.id)) {
           continue;
         }
@@ -178,12 +168,12 @@ export class TerrainTileSelector {
     return tiles;
   }
 
-  private normalizeCoverageTile(tile: TerrainCoverageTile, targetLevel: number): TerrainQuadtreeTile[] {
+  private normalizeCoverageTileToLimits(tile: TerrainCoverageTile): TerrainQuadtreeTile[] {
     if (![tile.x, tile.y, tile.z].every(Number.isFinite)) {
       return [];
     }
 
-    const level = clampTerrainLevel(targetLevel, this.options);
+    const level = clampTerrainLevel(tile.z, this.options);
 
     if (level === tile.z) {
       return [createTerrainQuadtreeTile(tile.x, tile.y, level)];
@@ -267,6 +257,67 @@ export function terrainCoveragePadding(level: number): number {
   }
 
   return 2;
+}
+
+function coalesceTilesToBudget(
+  inputTiles: readonly TerrainQuadtreeTile[],
+  maxTiles: number,
+  minLevel: number,
+): TerrainQuadtreeTile[] {
+  const tiles = new Map(inputTiles.map((tile) => [tile.id, tile]));
+
+  while (tiles.size > maxTiles) {
+    const candidate = highestLevelTile(tiles.values());
+
+    if (!candidate || candidate.level <= minLevel) {
+      break;
+    }
+
+    const parent = createTerrainQuadtreeTile(Math.floor(candidate.x / 2), Math.floor(candidate.y / 2), candidate.level - 1);
+    removeTerrainDescendants(tiles, parent);
+    tiles.set(parent.id, parent);
+  }
+
+  return [...tiles.values()]
+    .sort((a, b) => a.level - b.level || a.y - b.y || a.x - b.x)
+    .slice(0, maxTiles);
+}
+
+function removeTerrainDescendants(tiles: Map<string, TerrainQuadtreeTile>, parent: TerrainQuadtreeTile): void {
+  for (const [id, tile] of tiles) {
+    if (isTerrainDescendantOf(tile, parent)) {
+      tiles.delete(id);
+    }
+  }
+}
+
+function isTerrainDescendantOf(tile: TerrainQuadtreeTile, parent: TerrainQuadtreeTile): boolean {
+  if (tile.level <= parent.level) {
+    return false;
+  }
+
+  const factor = 2 ** (tile.level - parent.level);
+  return Math.floor(tile.x / factor) === parent.x && Math.floor(tile.y / factor) === parent.y;
+}
+
+function highestLevelTile(tiles: Iterable<TerrainQuadtreeTile>): TerrainQuadtreeTile | undefined {
+  let best: TerrainQuadtreeTile | undefined;
+
+  for (const tile of tiles) {
+    if (
+      !best ||
+      tile.level > best.level ||
+      (tile.level === best.level && (tile.y > best.y || (tile.y === best.y && tile.x > best.x)))
+    ) {
+      best = tile;
+    }
+  }
+
+  return best;
+}
+
+function maxTerrainTileLevel(tiles: readonly TerrainQuadtreeTile[], fallbackLevel: number): number {
+  return tiles.reduce((level, tile) => Math.max(level, tile.level), tiles.length > 0 ? 0 : fallbackLevel);
 }
 
 function unwrapTileX(x: number, anchor: number, count: number): number {

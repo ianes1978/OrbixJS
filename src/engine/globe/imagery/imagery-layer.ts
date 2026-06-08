@@ -179,7 +179,7 @@ export class ImageryLayer {
 
     canvas.width = count * size;
     canvas.height = count * size;
-    context.fillStyle = "#16303a";
+    context.fillStyle = "#ff1818";
     context.fillRect(0, 0, canvas.width, canvas.height);
 
     const tiles: QuadtreeTile[] = [];
@@ -201,6 +201,9 @@ export class ImageryLayer {
         return tile;
       }),
     );
+
+    context.fillStyle = "rgba(255, 24, 24, 0.72)";
+    context.fillRect(0, 0, canvas.width, canvas.height);
 
     return {
       image: canvas,

@@ -51,7 +51,7 @@ export class GlobeSurfaceTileProvider {
     return {
       level: effectiveSelectionLevel(requestTiles, selection.level),
       requestTiles,
-      renderTiles: pruneDescendants([...resolved.values()]),
+      renderTiles: orderRenderTiles([...resolved.values()]),
     };
   }
 
@@ -112,26 +112,8 @@ function effectiveSelectionLevel(tiles: readonly QuadtreeTile[], fallbackLevel: 
   return tiles.reduce((level, tile) => Math.max(level, tile.z), tiles.length > 0 ? 0 : fallbackLevel);
 }
 
-function pruneDescendants(tiles: GlobeSurfaceTile[]): GlobeSurfaceTile[] {
-  const ids = new Set(tiles.map((tile) => tile.id));
-
-  return tiles
-    .filter((tile) => !hasAncestorInSet(tile, ids))
-    .sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
-}
-
-function hasAncestorInSet(tile: QuadtreeTile, ids: ReadonlySet<string>): boolean {
-  let current = tile;
-
-  while (current.z > 0) {
-    current = parentTile(current);
-
-    if (ids.has(current.id)) {
-      return true;
-    }
-  }
-
-  return false;
+function orderRenderTiles(tiles: GlobeSurfaceTile[]): GlobeSurfaceTile[] {
+  return tiles.sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
 }
 
 function parentTile(tile: QuadtreeTile): QuadtreeTile {

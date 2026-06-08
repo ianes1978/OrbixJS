@@ -5,6 +5,7 @@ import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { type TerrainMesh } from "../../globe/terrain/terrain-mesh";
+import { type TerrainHeightmapTile } from "../../globe/terrain/terrain-provider";
 import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { createRendererFramePlan } from "../interface/render-frame-plan";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
@@ -21,6 +22,7 @@ import {
   vectorLineFragmentShader,
   vectorLineVertexShader,
 } from "./glsl-shaders";
+import { resolveTerrainImageryFallback } from "./terrain-imagery-fallback";
 
 type GlobeProgram = {
   program: WebGLProgram;
@@ -49,8 +51,15 @@ type TerrainProgram = {
   resource: RendererResourceHandle;
   uProjection: WebGLUniformLocation;
   uView: WebGLUniformLocation;
-  uModel: WebGLUniformLocation;
+  uTileKey: WebGLUniformLocation;
+  uHeightmap: WebGLUniformLocation;
+  uImagery: WebGLUniformLocation;
+  uExaggeration: WebGLUniformLocation;
+  uSkirtDepth: WebGLUniformLocation;
+  uImageryUvScale: WebGLUniformLocation;
+  uImageryUvOffset: WebGLUniformLocation;
   uSunDirection: WebGLUniformLocation;
+  uDebugOverlay: WebGLUniformLocation;
 };
 
 type VectorProgram = {
@@ -100,12 +109,22 @@ type TileEntry = {
   mesh: GpuMesh;
   texture: WebGLTexture;
   textureResource: RendererResourceHandle;
+  level: number;
   ready: boolean;
 };
 
 type GpuTexture = {
   texture: WebGLTexture;
   resource: RendererResourceHandle;
+};
+
+type TerrainGpuEntry = {
+  tile: TerrainHeightmapTile;
+  exaggeration: number;
+  skirtDepth: number;
+  heightmapTexture: WebGLTexture;
+  heightmapTextureResource: RendererResourceHandle;
+  ready: boolean;
 };
 
 type TrackedShader = {
@@ -137,7 +156,8 @@ export class WebGL2Renderer implements Renderer {
   private sunDirection: Vec3 = normalize([-0.25, 0.52, 0.82]);
   private readonly tileEntries = new Map<string, TileEntry>();
   private readonly activeTileIds = new Set<string>();
-  private readonly terrainMeshes = new Map<string, GpuMesh>();
+  private readonly terrainEntries = new Map<string, TerrainGpuEntry>();
+  private readonly terrainPatchMeshes = new Map<string, GpuMesh>();
   private readonly activeTerrainIds = new Set<string>();
   private surfaceFallbackVisible = false;
 
@@ -150,12 +170,14 @@ export class WebGL2Renderer implements Renderer {
           maxTextureSize: this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number,
           supportsInstancing: true,
           supportsFloatTextures: this.gl.getExtension("EXT_color_buffer_float") !== null,
+          supportsTerrainHeightmapDisplacement: true,
         }
       : {
           backend: this.backend,
           maxTextureSize: 0,
           supportsInstancing: false,
           supportsFloatTextures: false,
+          supportsTerrainHeightmapDisplacement: false,
         };
 
     if (!this.gl) {
@@ -168,7 +190,7 @@ export class WebGL2Renderer implements Renderer {
     this.vectorProgram = createVectorProgram(this.gl, this.resourceManager);
     this.modelProgram = createModelProgram(this.gl, this.resourceManager);
     this.globe = uploadMesh(this.gl, createEllipsoidMesh(), this.resourceManager);
-    const imageryTexture = createPlaceholderTexture(this.gl, this.resourceManager);
+    const imageryTexture = createBaseMapTexture(this.gl, this.resourceManager);
     this.imageryTexture = imageryTexture.texture;
     this.imageryTextureResource = imageryTexture.resource;
     this.gl.enable(this.gl.DEPTH_TEST);
@@ -223,12 +245,21 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.activeTerrainIds.clear();
+    const nextTerrainIds = new Set<string>();
 
     for (const entry of meshes) {
       this.activeTerrainIds.add(entry.id);
+      nextTerrainIds.add(entry.id);
 
-      if (!this.terrainMeshes.has(entry.id)) {
-        this.terrainMeshes.set(entry.id, uploadTerrainMesh(this.gl, entry.mesh, this.resourceManager));
+      if (!this.terrainEntries.has(entry.id)) {
+        this.terrainEntries.set(entry.id, this.uploadTerrainHeightmapEntry(entry));
+      }
+    }
+
+    for (const [id, entry] of this.terrainEntries) {
+      if (!nextTerrainIds.has(id)) {
+        this.deleteTerrainEntry(entry);
+        this.terrainEntries.delete(id);
       }
     }
   }
@@ -408,9 +439,15 @@ export class WebGL2Renderer implements Renderer {
       this.resourceManager.release(entry.textureResource);
     }
 
-    for (const mesh of this.terrainMeshes.values()) {
+    for (const entry of this.terrainEntries.values()) {
+      this.deleteTerrainEntry(entry);
+    }
+    this.terrainEntries.clear();
+
+    for (const mesh of this.terrainPatchMeshes.values()) {
       deleteMesh(this.gl, mesh, this.resourceManager);
     }
+    this.terrainPatchMeshes.clear();
   }
 
   private renderImageryTiles(projection: Float32Array, view: Float32Array): void {
@@ -420,6 +457,8 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.useProgram(this.tileProgram.program);
     this.gl.depthMask(true);
+    this.gl.depthFunc(this.gl.LEQUAL);
+    this.gl.enable(this.gl.POLYGON_OFFSET_FILL);
     this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
@@ -437,6 +476,8 @@ export class WebGL2Renderer implements Renderer {
         continue;
       }
 
+      const depthBias = -Math.min(entry.level, 24) * 0.125;
+      this.gl.polygonOffset(depthBias, depthBias);
       this.gl.activeTexture(this.gl.TEXTURE0);
       this.gl.bindTexture(this.gl.TEXTURE_2D, entry.texture);
       this.gl.uniform1i(this.tileProgram.uImagery, 0);
@@ -444,6 +485,8 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
+    this.gl.disable(this.gl.POLYGON_OFFSET_FILL);
+    this.gl.depthFunc(this.gl.LESS);
   }
 
   private renderGlobeBase(
@@ -486,7 +529,7 @@ export class WebGL2Renderer implements Renderer {
   }
 
   private hasReadyTerrainSurface(id: string): boolean {
-    return this.activeTerrainIds.has(id) && this.terrainMeshes.has(id);
+    return this.activeTerrainIds.has(id) && this.terrainEntries.has(id);
   }
 
   private hasDrawableSurfaceTiles(): boolean {
@@ -497,7 +540,9 @@ export class WebGL2Renderer implements Renderer {
     }
 
     for (const id of this.activeTerrainIds) {
-      if (this.terrainMeshes.has(id) && this.tileEntries.get(id)?.ready) {
+      const terrain = this.terrainEntries.get(id);
+
+      if (terrain && resolveTerrainImageryFallback(terrain.tile, (imageryId) => this.tileEntries.get(imageryId)?.ready === true)) {
         return true;
       }
     }
@@ -506,32 +551,51 @@ export class WebGL2Renderer implements Renderer {
   }
 
   private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
-    if (!this.gl || !this.tileProgram || this.activeTerrainIds.size === 0) {
+    if (!this.gl || !this.terrainProgram || this.activeTerrainIds.size === 0) {
       return;
     }
 
-    this.gl.useProgram(this.tileProgram.program);
+    this.gl.useProgram(this.terrainProgram.program);
     this.gl.depthMask(true);
-    this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
-    this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
-    this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, identityMatrix());
-    this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
-    this.gl.uniform1i(this.tileProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
+    this.gl.depthFunc(this.gl.LEQUAL);
+    this.gl.uniformMatrix4fv(this.terrainProgram.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.terrainProgram.uView, false, view);
+    this.gl.uniform3fv(this.terrainProgram.uSunDirection, this.sunDirection);
+    this.gl.uniform1i(this.terrainProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
 
     for (const id of this.activeTerrainIds) {
-      const mesh = this.terrainMeshes.get(id);
-      const imagery = this.tileEntries.get(id);
+      const terrain = this.terrainEntries.get(id);
+      const imageryFallback = terrain
+        ? resolveTerrainImageryFallback(terrain.tile, (imageryId) => this.tileEntries.get(imageryId)?.ready === true)
+        : undefined;
+      const imagery = imageryFallback ? this.tileEntries.get(imageryFallback.imageryId) : undefined;
 
-      if (!mesh || !imagery?.ready) {
+      if (!terrain?.ready || !imagery?.ready || !imageryFallback) {
+        continue;
+      }
+
+      const patch = this.ensureTerrainPatchMesh(terrain.tile.width, terrain.tile.height);
+
+      if (!patch) {
         continue;
       }
 
       this.gl.activeTexture(this.gl.TEXTURE0);
       this.gl.bindTexture(this.gl.TEXTURE_2D, imagery.texture);
-      this.gl.uniform1i(this.tileProgram.uImagery, 0);
-      this.gl.bindVertexArray(mesh.vao);
-      this.gl.drawElements(this.gl.TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+      this.gl.uniform1i(this.terrainProgram.uImagery, 0);
+      this.gl.activeTexture(this.gl.TEXTURE1);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, terrain.heightmapTexture);
+      this.gl.uniform1i(this.terrainProgram.uHeightmap, 1);
+      this.gl.uniform1f(this.terrainProgram.uExaggeration, terrain.exaggeration);
+      this.gl.uniform1f(this.terrainProgram.uSkirtDepth, terrain.skirtDepth);
+      this.gl.uniform2f(this.terrainProgram.uImageryUvScale, imageryFallback.uvScale[0], imageryFallback.uvScale[1]);
+      this.gl.uniform2f(this.terrainProgram.uImageryUvOffset, imageryFallback.uvOffset[0], imageryFallback.uvOffset[1]);
+      this.gl.uniform3f(this.terrainProgram.uTileKey, terrain.tile.level, terrain.tile.x, terrain.tile.y);
+      this.gl.bindVertexArray(patch.vao);
+      this.gl.drawElements(this.gl.TRIANGLES, patch.indexCount, patch.indexType, 0);
     }
+
+    this.gl.depthFunc(this.gl.LESS);
   }
 
   private renderVectorLines(projection: Float32Array, view: Float32Array, cameraPosition: readonly [number, number, number]): void {
@@ -590,10 +654,54 @@ export class WebGL2Renderer implements Renderer {
       mesh: uploadTileMesh(this.gl, createEllipsoidTileMesh(tile), this.resourceManager),
       texture: texture.texture,
       textureResource: texture.resource,
+      level: tile.z,
       ready: false,
     };
     this.tileEntries.set(tile.id, entry);
     return entry;
+  }
+
+  private uploadTerrainHeightmapEntry(entry: TerrainSurfaceMeshEntry): TerrainGpuEntry {
+    if (!this.gl) {
+      throw new Error("WebGL2 is not available");
+    }
+
+    const texture = createHeightmapTexture(this.gl, entry.heightmap, this.resourceManager);
+
+    return {
+      tile: entry.heightmap,
+      exaggeration: entry.exaggeration,
+      skirtDepth: entry.skirtDepth,
+      heightmapTexture: texture.texture,
+      heightmapTextureResource: texture.resource,
+      ready: true,
+    };
+  }
+
+  private deleteTerrainEntry(entry: TerrainGpuEntry): void {
+    if (!this.gl) {
+      return;
+    }
+
+    this.gl.deleteTexture(entry.heightmapTexture);
+    this.resourceManager.release(entry.heightmapTextureResource);
+  }
+
+  private ensureTerrainPatchMesh(width: number, height: number): GpuMesh | undefined {
+    if (!this.gl) {
+      return undefined;
+    }
+
+    const key = `${width}x${height}`;
+    const existing = this.terrainPatchMeshes.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const patch = uploadTileMesh(this.gl, createTerrainPatchMesh(width, height), this.resourceManager);
+    this.terrainPatchMeshes.set(key, patch);
+    return patch;
   }
 }
 
@@ -703,14 +811,47 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
 
   const uProjection = gl.getUniformLocation(program, "uProjection");
   const uView = gl.getUniformLocation(program, "uView");
-  const uModel = gl.getUniformLocation(program, "uModel");
+  const uTileKey = gl.getUniformLocation(program, "uTileKey");
+  const uHeightmap = gl.getUniformLocation(program, "uHeightmap");
+  const uImagery = gl.getUniformLocation(program, "uImagery");
+  const uExaggeration = gl.getUniformLocation(program, "uExaggeration");
+  const uSkirtDepth = gl.getUniformLocation(program, "uSkirtDepth");
+  const uImageryUvScale = gl.getUniformLocation(program, "uImageryUvScale");
+  const uImageryUvOffset = gl.getUniformLocation(program, "uImageryUvOffset");
   const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
+  const uDebugOverlay = gl.getUniformLocation(program, "uDebugOverlay");
 
-  if (!uProjection || !uView || !uModel || !uSunDirection) {
+  if (
+    !uProjection ||
+    !uView ||
+    !uTileKey ||
+    !uHeightmap ||
+    !uImagery ||
+    !uExaggeration ||
+    !uSkirtDepth ||
+    !uImageryUvScale ||
+    !uImageryUvOffset ||
+    !uSunDirection ||
+    !uDebugOverlay
+  ) {
     throw new Error("Missing WebGL2 terrain uniform");
   }
 
-  return { program, resource, uProjection, uView, uModel, uSunDirection };
+  return {
+    program,
+    resource,
+    uProjection,
+    uView,
+    uTileKey,
+    uHeightmap,
+    uImagery,
+    uExaggeration,
+    uSkirtDepth,
+    uImageryUvScale,
+    uImageryUvOffset,
+    uSunDirection,
+    uDebugOverlay,
+  };
 }
 
 function createVectorProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): VectorProgram {
@@ -916,6 +1057,137 @@ function uploadTerrainMesh(gl: WebGL2RenderingContext, mesh: TerrainMesh, resour
   return uploadTileMesh(gl, packTerrainMesh(mesh), resources);
 }
 
+function createTerrainPatchMesh(width: number, height: number): {
+  vertices: Float32Array;
+  indices: Uint16Array | Uint32Array;
+  vertexStride: number;
+} {
+  const columns = Math.max(2, width);
+  const rows = Math.max(2, height);
+  const baseVertexCount = columns * rows;
+  const skirtVertexCount = columns * 2 + Math.max(0, rows - 2) * 2;
+  const vertexCount = baseVertexCount + skirtVertexCount;
+  const gridIndexCount = (columns - 1) * (rows - 1) * 6;
+  const skirtIndexCount = ((columns - 1) * 2 + (rows - 1) * 2) * 6;
+  const vertices = new Float32Array(vertexCount * 8);
+  const IndexArray = vertexCount > 65_535 ? Uint32Array : Uint16Array;
+  const indices = new IndexArray(gridIndexCount + skirtIndexCount);
+
+  for (let row = 0; row < rows; row += 1) {
+    const v = rows === 1 ? 0 : row / (rows - 1);
+
+    for (let column = 0; column < columns; column += 1) {
+      const u = columns === 1 ? 0 : column / (columns - 1);
+      const offset = (row * columns + column) * 8;
+
+      vertices[offset] = u;
+      vertices[offset + 1] = v;
+      vertices[offset + 2] = 0;
+      vertices[offset + 3] = 0;
+      vertices[offset + 4] = 1;
+      vertices[offset + 5] = 0;
+      vertices[offset + 6] = u;
+      vertices[offset + 7] = v;
+    }
+  }
+
+  const skirtByBaseVertex = new Map<number, number>();
+  let nextSkirtIndex = baseVertexCount;
+
+  for (const baseIndex of boundaryPatchVertices(columns, rows)) {
+    const offset = baseIndex * 8;
+    const skirtOffset = nextSkirtIndex * 8;
+
+    vertices.set(vertices.subarray(offset, offset + 8), skirtOffset);
+    vertices[skirtOffset + 2] = 1;
+    skirtByBaseVertex.set(baseIndex, nextSkirtIndex);
+    nextSkirtIndex += 1;
+  }
+
+  let offset = 0;
+
+  for (let row = 0; row < rows - 1; row += 1) {
+    for (let column = 0; column < columns - 1; column += 1) {
+      const topLeft = row * columns + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = topLeft + columns;
+      const bottomRight = bottomLeft + 1;
+
+      indices[offset] = topLeft;
+      indices[offset + 1] = bottomLeft;
+      indices[offset + 2] = topRight;
+      indices[offset + 3] = topRight;
+      indices[offset + 4] = bottomLeft;
+      indices[offset + 5] = bottomRight;
+      offset += 6;
+    }
+  }
+
+  offset = writePatchSkirt(indices, offset, topPatchEdge(columns), skirtByBaseVertex);
+  offset = writePatchSkirt(indices, offset, rightPatchEdge(columns, rows), skirtByBaseVertex);
+  offset = writePatchSkirt(indices, offset, bottomPatchEdge(columns, rows), skirtByBaseVertex);
+  writePatchSkirt(indices, offset, leftPatchEdge(columns, rows), skirtByBaseVertex);
+
+  return {
+    vertices,
+    indices,
+    vertexStride: 8,
+  };
+}
+
+function boundaryPatchVertices(columns: number, rows: number): number[] {
+  return [
+    ...topPatchEdge(columns),
+    ...rightPatchEdge(columns, rows).slice(1, -1),
+    ...bottomPatchEdge(columns, rows),
+    ...leftPatchEdge(columns, rows).slice(1, -1),
+  ];
+}
+
+function topPatchEdge(columns: number): number[] {
+  return Array.from({ length: columns }, (_, column) => column);
+}
+
+function rightPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: rows }, (_, row) => row * columns + columns - 1);
+}
+
+function bottomPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: columns }, (_, column) => (rows - 1) * columns + (columns - 1 - column));
+}
+
+function leftPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: rows }, (_, row) => (rows - 1 - row) * columns);
+}
+
+function writePatchSkirt<T extends Uint16Array | Uint32Array>(
+  indices: T,
+  offset: number,
+  edge: readonly number[],
+  skirtByBaseVertex: ReadonlyMap<number, number>,
+): number {
+  for (let index = 0; index < edge.length - 1; index += 1) {
+    const a = edge[index];
+    const b = edge[index + 1];
+    const skirtA = skirtByBaseVertex.get(a);
+    const skirtB = skirtByBaseVertex.get(b);
+
+    if (skirtA === undefined || skirtB === undefined) {
+      continue;
+    }
+
+    indices[offset] = a;
+    indices[offset + 1] = b;
+    indices[offset + 2] = skirtA;
+    indices[offset + 3] = skirtA;
+    indices[offset + 4] = b;
+    indices[offset + 5] = skirtB;
+    offset += 6;
+  }
+
+  return offset;
+}
+
 function packTerrainMesh(mesh: TerrainMesh): {
   vertices: Float32Array;
   indices: Uint16Array | Uint32Array;
@@ -1103,7 +1375,15 @@ function identityMatrix(): Float32Array {
   return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }
 
-function createPlaceholderTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {
+function createBaseMapTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {
+  return createPlaceholderTexture(gl, resources, new Uint8Array([255, 24, 24, 255]));
+}
+
+function createPlaceholderTexture(
+  gl: WebGL2RenderingContext,
+  resources: RendererResourceManager,
+  color = new Uint8Array([18, 42, 50, 255]),
+): GpuTexture {
   const texture = gl.createTexture();
 
   if (!texture) {
@@ -1125,7 +1405,7 @@ function createPlaceholderTexture(gl: WebGL2RenderingContext, resources: Rendere
     0,
     gl.RGBA,
     gl.UNSIGNED_BYTE,
-    new Uint8Array([18, 42, 50, 255]),
+    color,
   );
   gl.generateMipmap(gl.TEXTURE_2D);
   return { texture, resource };
@@ -1139,6 +1419,28 @@ function createTileTexture(gl: WebGL2RenderingContext, resources: RendererResour
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return texture;
+}
+
+function createHeightmapTexture(
+  gl: WebGL2RenderingContext,
+  tile: TerrainHeightmapTile,
+  resources: RendererResourceManager,
+): GpuTexture {
+  const texture = gl.createTexture();
+
+  if (!texture) {
+    throw new Error("Unable to allocate terrain heightmap texture");
+  }
+
+  const resource = resources.track("texture");
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, tile.width, tile.height, 0, gl.RED, gl.FLOAT, tile.heights);
+  return { texture, resource };
 }
 
 function createDebugTileTexture(gl: WebGL2RenderingContext, resources: RendererResourceManager): GpuTexture {

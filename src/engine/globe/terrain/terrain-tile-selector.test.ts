@@ -78,6 +78,55 @@ describe("TerrainTileSelector", () => {
     expect(selection.tiles.map((tile) => tile.id)).toEqual(["8/120/90", "8/170/125"]);
   });
 
+  it("preserves mixed coverage LODs instead of normalizing every terrain tile to one level", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 14 });
+    const selection = selector.select(0, 0, 1.01, {
+      coverageTiles: [
+        { z: 8, x: 120, y: 90 },
+        { z: 12, x: 1930, y: 1440 },
+        { z: 12, x: 1931, y: 1440 },
+      ],
+      maxTiles: 8,
+    });
+
+    expect(selection.level).toBe(12);
+    expect(selection.tiles.some((tile) => tile.id === "8/120/90")).toBe(true);
+    expect(selection.tiles.some((tile) => tile.level === 12)).toBe(true);
+  });
+
+  it("coalesces high-detail coverage tiles toward parents without flattening lower LOD coverage", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 14 });
+    const selection = selector.select(0, 0, 1.01, {
+      coverageTiles: [
+        { z: 8, x: 120, y: 90 },
+        { z: 12, x: 1930, y: 1440 },
+        { z: 12, x: 1931, y: 1440 },
+        { z: 12, x: 1932, y: 1440 },
+        { z: 12, x: 1933, y: 1440 },
+      ],
+      maxTiles: 3,
+    });
+
+    expect(selection.tiles.length).toBeLessThanOrEqual(3);
+    expect(selection.tiles.some((tile) => tile.id === "8/120/90")).toBe(true);
+    expect(new Set(selection.tiles.map((tile) => tile.level)).size).toBeGreaterThan(1);
+  });
+
+  it("removes child terrain tiles once their parent is selected for budget coalescing", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 6 });
+    const selection = selector.select(0, 0, 1.01, {
+      coverageTiles: [
+        { z: 6, x: 20, y: 20 },
+        { z: 6, x: 21, y: 20 },
+        { z: 6, x: 20, y: 21 },
+        { z: 6, x: 21, y: 21 },
+      ],
+      maxTiles: 3,
+    });
+
+    expect(selection.tiles.map((tile) => tile.id)).toEqual(["5/10/10"]);
+  });
+
   it("backs explicit coverage tiles off instead of truncating terrain coverage", () => {
     const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 12 });
     const coverageTiles = Array.from({ length: 16 }, (_, index) => ({

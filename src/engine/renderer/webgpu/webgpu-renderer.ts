@@ -311,6 +311,7 @@ export class WebGPURenderer implements Renderer {
       maxTextureSize: 0,
       supportsInstancing: this.supported,
       supportsFloatTextures: this.supported,
+      supportsTerrainHeightmapDisplacement: false,
     };
   }
 
@@ -361,7 +362,7 @@ export class WebGPURenderer implements Renderer {
     }
 
     for (const entry of meshes) {
-      if (!this.terrainEntries.has(entry.id)) {
+      if (entry.mesh && !this.terrainEntries.has(entry.id)) {
         this.uploadTerrainMesh(entry);
       }
     }
@@ -716,7 +717,7 @@ export class WebGPURenderer implements Renderer {
       depthStencil: {
         format: webGpuDepthFormat,
         depthWriteEnabled: true,
-        depthCompare: "less",
+        depthCompare: "less-equal",
       },
     });
   }
@@ -1285,6 +1286,10 @@ export class WebGPURenderer implements Renderer {
 
   private uploadTerrainMesh(entry: TerrainSurfaceMeshEntry): void {
     if (!this.device) {
+      return;
+    }
+
+    if (!entry.mesh) {
       return;
     }
 

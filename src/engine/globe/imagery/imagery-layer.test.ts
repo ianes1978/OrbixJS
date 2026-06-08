@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageryLayer } from "./imagery-layer";
 import { type RasterTileProvider } from "./tile-provider";
 
 describe("ImageryLayer", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("limits concurrent dynamic tile loads", () => {
     const loadTile = vi.fn(() => new Promise<HTMLImageElement>(() => undefined));
     const provider: RasterTileProvider = {
@@ -156,5 +160,36 @@ describe("ImageryLayer", () => {
     });
 
     expect(layer.activeTileIds).toEqual(["6/30/30"]);
+  });
+
+  it("marks the monolithic base map texture red so fallback is obvious in visual tests", async () => {
+    const fillRect = vi.fn();
+    const drawImage = vi.fn();
+    const context = {
+      fillStyle: "",
+      fillRect,
+      drawImage,
+    };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+    };
+    vi.stubGlobal("document", {
+      createElement: vi.fn(() => canvas),
+    });
+    const provider: RasterTileProvider = {
+      tileSize: 2,
+      cacheSize: 0,
+      loadTile: vi.fn(async () => ({ width: 2, height: 2 }) as HTMLImageElement),
+    };
+    const layer = new ImageryLayer(provider, 0);
+
+    await layer.createTexture();
+
+    expect(fillRect).toHaveBeenNthCalledWith(1, 0, 0, 2, 2);
+    expect(drawImage).toHaveBeenCalled();
+    expect(context.fillStyle).toBe("rgba(255, 24, 24, 0.72)");
+    expect(fillRect).toHaveBeenLastCalledWith(0, 0, 2, 2);
   });
 });
