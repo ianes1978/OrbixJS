@@ -66,7 +66,7 @@ export class OrbitCamera {
   tiltOffset = 0;
   lookYawOffset = 0;
   fov = (45 * Math.PI) / 180;
-  near = 0.000005;
+  near = 0.0000001;
   far = 20;
 
   constructor(options: OrbitCameraOptions = {}) {
@@ -351,14 +351,15 @@ export class OrbitCamera {
       return { target: this.target, up };
     }
 
-    const yawForward = this.lookYawOffset === 0 ? forward : normalize(rotateAroundAxis(forward, up, this.lookYawOffset));
-    const yawRight = this.lookYawOffset === 0 ? right : safeNormalize(cross(yawForward, up), right);
-    const tiltedForward = this.tiltOffset === 0 ? yawForward : normalize(rotateAroundAxis(yawForward, yawRight, this.tiltOffset));
-    const tiltedUp = this.tiltOffset === 0 ? up : normalize(rotateAroundAxis(up, yawRight, this.tiltOffset));
+    const tiltedForward = this.tiltOffset === 0 ? forward : normalize(rotateAroundAxis(forward, right, this.tiltOffset));
+    const tiltedUp = this.tiltOffset === 0 ? up : normalize(rotateAroundAxis(up, right, this.tiltOffset));
+    const yawForward =
+      this.lookYawOffset === 0 ? tiltedForward : normalize(rotateAroundAxis(tiltedForward, tiltedUp, this.lookYawOffset));
+    const yawUp = tiltedUp;
 
     return {
-      target: add(position, scale(tiltedForward, this.distance)),
-      up: tiltedUp,
+      target: add(position, scale(yawForward, this.distance)),
+      up: yawUp,
     };
   }
 

@@ -720,7 +720,7 @@ function syncRuntimeMetrics(): void {
   const terrain = lastFrameStats?.terrain
     ? `terrain ${lastFrameStats.terrain.loadedTiles}/${lastFrameStats.terrain.activeTiles}, pending ${lastFrameStats.terrain.pendingTiles}, mesh ${lastFrameStats.terrain.meshCacheSize}`
     : "terrain off";
-  tileStatusElement.textContent = `${lastImageryStats.loadedTiles}/${lastImageryStats.activeTiles} img, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
+  tileStatusElement.textContent = `${lastImageryStats.renderTiles} img render, req ${lastImageryStats.loadedTiles}/${lastImageryStats.activeTiles}, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
   lodDebugOutputElement.value = formatLodDebugStatus();
 }
 
@@ -1053,7 +1053,8 @@ function formatLodDebugStatus(): string {
     `imagery.lod=${imagery?.level ?? "-"}`,
     `imagery.layerMinLevel=${imagery?.layerMinLevel ?? "-"}`,
     `imagery.layerMaxLevel=${imagery?.layerMaxLevel ?? "-"}`,
-    `imagery.tiles=${imagery ? `${imagery.loadedTiles}/${imagery.activeTiles}` : "-"}`,
+    `imagery.tiles=${imagery?.renderTiles ?? "-"}`,
+    `imagery.requests=${imagery ? `${imagery.loadedTiles}/${imagery.activeTiles}` : "-"}`,
     `imagery.pending=${imagery?.pendingTiles ?? "-"}`,
     `imagery.errors=${imagery?.errorTiles ?? "-"}`,
     `imagery.render=${imagery?.renderTiles ?? "-"}`,

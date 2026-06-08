@@ -4,11 +4,16 @@ import { type Vec3 } from "../../core/math/vec3";
 import { createEllipsoidMesh } from "../../globe/ellipsoid/create-ellipsoid-mesh";
 import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-tile-mesh";
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
-import { type TerrainMesh } from "../../globe/terrain/terrain-mesh";
+import { type TerrainHeightmapTile } from "../../globe/terrain/terrain-provider";
 import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { multiply } from "../../core/math/mat4";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
 import { emptyRendererResourceStats } from "../interface/resource-manager";
+import {
+  parseTerrainImageryTileId,
+  resolveTerrainImageryFallback,
+  terrainTileCanReplaceImageryTile,
+} from "../terrain-imagery-fallback";
 import {
   webGpuGlobeProgram,
   webGpuImageryTileProgram,
@@ -32,6 +37,7 @@ const webGpuTextureUsage = {
 
 const webGpuDepthFormat = "depth24plus";
 const webGpuImageryFormat = "rgba8unorm";
+const webGpuHeightmapFormat = "r32float";
 
 const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
 
@@ -62,7 +68,7 @@ type WebGpuDeviceLike = {
   createTexture(options: {
     label?: string;
     size: [number, number];
-    format: typeof webGpuDepthFormat | typeof webGpuImageryFormat;
+    format: typeof webGpuDepthFormat | typeof webGpuImageryFormat | typeof webGpuHeightmapFormat;
     usage: number;
   }): WebGpuTextureLike;
   createSampler(options: {
@@ -108,6 +114,12 @@ type WebGpuQueueLike = {
     source: { source: TexImageSource },
     destination: { texture: WebGpuTextureLike },
     copySize: [number, number],
+  ): void;
+  writeTexture(
+    destination: { texture: WebGpuTextureLike },
+    data: ArrayBuffer | ArrayBufferView,
+    dataLayout: { bytesPerRow: number; rowsPerImage?: number },
+    size: [number, number],
   ): void;
   submit(commandBuffers: readonly unknown[]): void;
 };
@@ -222,6 +234,17 @@ type WebGpuModelEntry = {
 };
 
 type WebGpuTerrainEntry = {
+  tile: TerrainHeightmapTile;
+  heightmapTexture: WebGpuTextureLike;
+  uniformBuffer: WebGpuBufferLike;
+  bindGroup?: WebGpuBindGroupLike;
+  bindGroupTexture?: WebGpuTextureLike;
+  bindGroupKey?: string;
+  exaggeration: number;
+  skirtDepth: number;
+};
+
+type WebGpuTerrainPatchEntry = {
   vertexBuffer: WebGpuBufferLike;
   indexBuffer: WebGpuBufferLike;
   indexCount: number;
@@ -266,7 +289,6 @@ export class WebGPURenderer implements Renderer {
   private vectorPipeline: WebGpuRenderPipelineLike | undefined;
   private modelPipeline: WebGpuRenderPipelineLike | undefined;
   private globeBindGroup: WebGpuBindGroupLike | undefined;
-  private terrainBindGroup: WebGpuBindGroupLike | undefined;
   private vectorBindGroup: WebGpuBindGroupLike | undefined;
   private modelBindGroup: WebGpuBindGroupLike | undefined;
   private globeVertexBuffer: WebGpuBufferLike | undefined;
@@ -293,6 +315,7 @@ export class WebGPURenderer implements Renderer {
   private readonly pendingTileImages = new Map<string, { tile: QuadtreeTile; image: TexImageSource }>();
   private readonly tileEntries = new Map<string, WebGpuTileEntry>();
   private readonly terrainEntries = new Map<string, WebGpuTerrainEntry>();
+  private readonly terrainPatchMeshes = new Map<string, WebGpuTerrainPatchEntry>();
   private activeTileIds: readonly string[] = [];
   private activeTerrainIds: readonly string[] = [];
   private surfaceFallbackVisible = false;
@@ -311,7 +334,7 @@ export class WebGPURenderer implements Renderer {
       maxTextureSize: 0,
       supportsInstancing: this.supported,
       supportsFloatTextures: this.supported,
-      supportsTerrainHeightmapDisplacement: false,
+      supportsTerrainHeightmapDisplacement: this.supported,
     };
   }
 
@@ -355,6 +378,7 @@ export class WebGPURenderer implements Renderer {
 
   setTerrainMeshes(meshes: readonly TerrainSurfaceMeshEntry[]): void {
     this.activeTerrainIds = meshes.map((entry) => entry.id);
+    const nextTerrainIds = new Set(this.activeTerrainIds);
 
     if (!this.device || !this.terrainPipeline || !this.globeUniformBuffer) {
       this.pendingTerrainMeshes = meshes;
@@ -362,8 +386,15 @@ export class WebGPURenderer implements Renderer {
     }
 
     for (const entry of meshes) {
-      if (entry.mesh && !this.terrainEntries.has(entry.id)) {
-        this.uploadTerrainMesh(entry);
+      if (!this.terrainEntries.has(entry.id)) {
+        this.uploadTerrainHeightmapEntry(entry);
+      }
+    }
+
+    for (const [id, entry] of this.terrainEntries) {
+      if (!nextTerrainIds.has(id)) {
+        destroyTerrainEntry(entry);
+        this.terrainEntries.delete(id);
       }
     }
 
@@ -490,7 +521,7 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    if (this.surfaceFallbackVisible || !this.hasDrawableSurfaceTiles()) {
+    if (this.imageryReady || this.surfaceFallbackVisible || !this.hasDrawableSurfaceTiles()) {
       pass.setPipeline(this.globePipeline);
       pass.setBindGroup(0, this.globeBindGroup);
       pass.setVertexBuffer(0, this.globeVertexBuffer);
@@ -517,7 +548,10 @@ export class WebGPURenderer implements Renderer {
       destroyModelEntry(this.debugModel);
     }
     for (const entry of this.terrainEntries.values()) {
-      destroyModelEntry(entry);
+      destroyTerrainEntry(entry);
+    }
+    for (const patch of this.terrainPatchMeshes.values()) {
+      destroyModelEntry(patch);
     }
     this.depthTexture?.destroy?.();
     this.imageryTexture?.destroy?.();
@@ -535,7 +569,6 @@ export class WebGPURenderer implements Renderer {
     this.modelPipeline = undefined;
     this.terrainPipeline = undefined;
     this.globeBindGroup = undefined;
-    this.terrainBindGroup = undefined;
     this.vectorBindGroup = undefined;
     this.modelBindGroup = undefined;
     this.globeVertexBuffer = undefined;
@@ -562,6 +595,7 @@ export class WebGPURenderer implements Renderer {
     this.pendingTileImages.clear();
     this.tileEntries.clear();
     this.terrainEntries.clear();
+    this.terrainPatchMeshes.clear();
     this.activeTileIds = [];
     this.activeTerrainIds = [];
     this.globeIndexCount = 0;
@@ -768,7 +802,6 @@ export class WebGPURenderer implements Renderer {
         depthCompare: "less",
       },
     });
-    this.createTerrainBindGroup();
   }
 
   private createVectorPipeline(): void {
@@ -1014,7 +1047,7 @@ export class WebGPURenderer implements Renderer {
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
 
-      if (this.hasReadyTerrainSurface(id)) {
+      if (this.hasReadyTerrainSurfaceForImageryTile(id)) {
         continue;
       }
 
@@ -1029,13 +1062,27 @@ export class WebGPURenderer implements Renderer {
     }
   }
 
-  private hasReadyTerrainSurface(id: string): boolean {
-    return this.activeTerrainIds.includes(id) && this.terrainEntries.has(id);
+  private hasReadyTerrainSurfaceForImageryTile(id: string): boolean {
+    const imageryTile = parseTerrainImageryTileId(id);
+
+    if (!imageryTile) {
+      return false;
+    }
+
+    for (const terrainId of this.activeTerrainIds) {
+      const terrain = this.terrainEntries.get(terrainId);
+
+      if (terrain && terrainTileCanReplaceImageryTile(terrain.tile, imageryTile)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private hasDrawableSurfaceTiles(): boolean {
     for (const id of this.activeTileIds) {
-      if (!this.hasReadyTerrainSurface(id) && this.tileEntries.get(id)?.ready) {
+      if (!this.hasReadyTerrainSurfaceForImageryTile(id) && this.tileEntries.get(id)?.ready) {
         return true;
       }
     }
@@ -1050,24 +1097,81 @@ export class WebGPURenderer implements Renderer {
   }
 
   private renderTerrainMeshes(pass: WebGpuRenderPassEncoderLike): void {
-    if (!this.tilePipeline || this.activeTerrainIds.length === 0) {
+    if (!this.device || !this.terrainPipeline || !this.globeUniformBuffer || !this.imagerySampler || this.activeTerrainIds.length === 0) {
       return;
     }
 
-    pass.setPipeline(this.tilePipeline);
+    pass.setPipeline(this.terrainPipeline);
 
     for (const id of this.activeTerrainIds) {
       const entry = this.terrainEntries.get(id);
-      const imagery = this.tileEntries.get(id);
+      const imageryFallback = entry
+        ? resolveTerrainImageryFallback(entry.tile, (imageryId) => this.tileEntries.get(imageryId)?.ready === true)
+        : undefined;
+      const imagery = imageryFallback ? this.tileEntries.get(imageryFallback.imageryId) : undefined;
 
-      if (!entry || !imagery?.ready) {
+      if (!entry || !imagery?.ready || !imageryFallback) {
         continue;
       }
 
-      pass.setBindGroup(0, imagery.bindGroup);
-      pass.setVertexBuffer(0, entry.vertexBuffer);
-      pass.setIndexBuffer(entry.indexBuffer, entry.indexFormat);
-      pass.drawIndexed(entry.indexCount);
+      const patch = this.ensureTerrainPatchMesh(entry.tile.width, entry.tile.height);
+
+      if (!patch) {
+        continue;
+      }
+
+      const bindGroupKey = [
+        imageryFallback.imageryId,
+        imageryFallback.uvScale[0],
+        imageryFallback.uvScale[1],
+        imageryFallback.uvOffset[0],
+        imageryFallback.uvOffset[1],
+      ].join(":");
+
+      if (entry.bindGroupKey !== bindGroupKey || entry.bindGroupTexture !== imagery.texture || !entry.bindGroup) {
+        this.device.queue.writeBuffer(
+          entry.uniformBuffer,
+          0,
+          createTerrainUniforms(entry.tile, entry.exaggeration, entry.skirtDepth, imageryFallback.uvScale, imageryFallback.uvOffset),
+        );
+        entry.bindGroup = this.device.createBindGroup({
+          label: `OrbixJS WebGPU terrain bind group ${id}`,
+          layout: this.terrainPipeline.getBindGroupLayout(0),
+          entries: [
+            {
+              binding: 0,
+              resource: {
+                buffer: this.globeUniformBuffer,
+              },
+            },
+            {
+              binding: 1,
+              resource: this.imagerySampler,
+            },
+            {
+              binding: 2,
+              resource: imagery.texture.createView(),
+            },
+            {
+              binding: 3,
+              resource: entry.heightmapTexture.createView(),
+            },
+            {
+              binding: 4,
+              resource: {
+                buffer: entry.uniformBuffer,
+              },
+            },
+          ],
+        });
+        entry.bindGroupTexture = imagery.texture;
+        entry.bindGroupKey = bindGroupKey;
+      }
+
+      pass.setBindGroup(0, entry.bindGroup);
+      pass.setVertexBuffer(0, patch.vertexBuffer);
+      pass.setIndexBuffer(patch.indexBuffer, patch.indexFormat);
+      pass.drawIndexed(patch.indexCount);
     }
   }
 
@@ -1261,93 +1365,83 @@ export class WebGPURenderer implements Renderer {
     });
   }
 
-  private createTerrainBindGroup(): void {
-    if (!this.device || !this.terrainPipeline || !this.globeUniformBuffer) {
-      return;
-    }
-
-    if (this.terrainBindGroup) {
-      return;
-    }
-
-    this.terrainBindGroup = this.device.createBindGroup({
-      label: "OrbixJS WebGPU terrain bind group",
-      layout: this.terrainPipeline.getBindGroupLayout(0),
-      entries: [
-        {
-          binding: 0,
-          resource: {
-            buffer: this.globeUniformBuffer,
-          },
-        },
-      ],
-    });
-  }
-
-  private uploadTerrainMesh(entry: TerrainSurfaceMeshEntry): void {
+  private uploadTerrainHeightmapEntry(entry: TerrainSurfaceMeshEntry): void {
     if (!this.device) {
       return;
     }
 
-    if (!entry.mesh) {
-      return;
+    const heightmapTexture = this.device.createTexture({
+      label: `OrbixJS WebGPU terrain heightmap ${entry.id}`,
+      size: [entry.heightmap.width, entry.heightmap.height],
+      format: webGpuHeightmapFormat,
+      usage: webGpuTextureUsage.textureBinding | webGpuTextureUsage.copyDst,
+    });
+    const uniformBuffer = this.device.createBuffer({
+      label: `OrbixJS WebGPU terrain uniforms ${entry.id}`,
+      size: Float32Array.BYTES_PER_ELEMENT * 12,
+      usage: webGpuBufferUsage.uniform | webGpuBufferUsage.copyDst,
+    });
+    const previous = this.terrainEntries.get(entry.id);
+
+    this.device.queue.writeTexture(
+      { texture: heightmapTexture },
+      entry.heightmap.heights,
+      {
+        bytesPerRow: entry.heightmap.width * Float32Array.BYTES_PER_ELEMENT,
+        rowsPerImage: entry.heightmap.height,
+      },
+      [entry.heightmap.width, entry.heightmap.height],
+    );
+
+    if (previous) {
+      destroyTerrainEntry(previous);
     }
 
-    const mesh = packTerrainMesh(entry.mesh);
+    this.terrainEntries.set(entry.id, {
+      tile: entry.heightmap,
+      heightmapTexture,
+      uniformBuffer,
+      exaggeration: entry.exaggeration,
+      skirtDepth: entry.skirtDepth,
+    });
+  }
+
+  private ensureTerrainPatchMesh(width: number, height: number): WebGpuTerrainPatchEntry | undefined {
+    if (!this.device) {
+      return undefined;
+    }
+
+    const key = `${width}x${height}`;
+    const existing = this.terrainPatchMeshes.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const mesh = createTerrainPatchMesh(width, height);
     const vertexBuffer = this.device.createBuffer({
-      label: `OrbixJS WebGPU terrain vertices ${entry.id}`,
+      label: `OrbixJS WebGPU terrain patch vertices ${key}`,
       size: mesh.vertices.byteLength,
       usage: webGpuBufferUsage.vertex | webGpuBufferUsage.copyDst,
     });
     const indexBuffer = this.device.createBuffer({
-      label: `OrbixJS WebGPU terrain indices ${entry.id}`,
+      label: `OrbixJS WebGPU terrain patch indices ${key}`,
       size: mesh.indices.byteLength,
       usage: webGpuBufferUsage.index | webGpuBufferUsage.copyDst,
     });
-    const previous = this.terrainEntries.get(entry.id);
 
     this.device.queue.writeBuffer(vertexBuffer, 0, mesh.vertices);
     this.device.queue.writeBuffer(indexBuffer, 0, mesh.indices);
 
-    if (previous) {
-      destroyModelEntry(previous);
-    }
-
-    this.terrainEntries.set(entry.id, {
+    const patch: WebGpuTerrainPatchEntry = {
       vertexBuffer,
       indexBuffer,
       indexCount: mesh.indices.length,
       indexFormat: mesh.indices instanceof Uint32Array ? "uint32" : "uint16",
-    });
+    };
+    this.terrainPatchMeshes.set(key, patch);
+    return patch;
   }
-}
-
-function packTerrainMesh(mesh: TerrainMesh): {
-  vertices: Float32Array;
-  indices: Uint16Array | Uint32Array;
-} {
-  const vertexCount = mesh.positions.length / 3;
-  const vertices = new Float32Array(vertexCount * 8);
-
-  for (let index = 0; index < vertexCount; index += 1) {
-    const positionOffset = index * 3;
-    const texcoordOffset = index * 2;
-    const vertexOffset = index * 8;
-
-    vertices[vertexOffset] = mesh.positions[positionOffset];
-    vertices[vertexOffset + 1] = mesh.positions[positionOffset + 1];
-    vertices[vertexOffset + 2] = mesh.positions[positionOffset + 2];
-    vertices[vertexOffset + 3] = mesh.normals[positionOffset];
-    vertices[vertexOffset + 4] = mesh.normals[positionOffset + 1];
-    vertices[vertexOffset + 5] = mesh.normals[positionOffset + 2];
-    vertices[vertexOffset + 6] = mesh.texcoords[texcoordOffset];
-    vertices[vertexOffset + 7] = mesh.texcoords[texcoordOffset + 1];
-  }
-
-  return {
-    vertices,
-    indices: mesh.indices,
-  };
 }
 
 function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {
@@ -1360,6 +1454,155 @@ function createGlobeUniforms(viewProjection: Float32Array, imageryReady: boolean
   uniforms[16] = imageryReady ? 1 : 0;
   uniforms[17] = tileDebugOverlayVisible ? 1 : 0;
   return uniforms;
+}
+
+function createTerrainUniforms(
+  tile: TerrainHeightmapTile,
+  exaggeration: number,
+  skirtDepth: number,
+  imageryUvScale: readonly [number, number],
+  imageryUvOffset: readonly [number, number],
+): Float32Array {
+  return new Float32Array([
+    tile.level,
+    tile.x,
+    tile.y,
+    exaggeration,
+    skirtDepth,
+    0,
+    0,
+    0,
+    imageryUvScale[0],
+    imageryUvScale[1],
+    imageryUvOffset[0],
+    imageryUvOffset[1],
+  ]);
+}
+
+function createTerrainPatchMesh(width: number, height: number): {
+  vertices: Float32Array;
+  indices: Uint16Array | Uint32Array;
+} {
+  const columns = Math.max(2, width);
+  const rows = Math.max(2, height);
+  const baseVertexCount = columns * rows;
+  const skirtVertexCount = columns * 2 + Math.max(0, rows - 2) * 2;
+  const vertexCount = baseVertexCount + skirtVertexCount;
+  const gridIndexCount = (columns - 1) * (rows - 1) * 6;
+  const skirtIndexCount = ((columns - 1) * 2 + (rows - 1) * 2) * 6;
+  const vertices = new Float32Array(vertexCount * 8);
+  const IndexArray = vertexCount > 65_535 ? Uint32Array : Uint16Array;
+  const indices = new IndexArray(gridIndexCount + skirtIndexCount);
+
+  for (let row = 0; row < rows; row += 1) {
+    const v = rows === 1 ? 0 : row / (rows - 1);
+
+    for (let column = 0; column < columns; column += 1) {
+      const u = columns === 1 ? 0 : column / (columns - 1);
+      const offset = (row * columns + column) * 8;
+
+      vertices[offset] = u;
+      vertices[offset + 1] = v;
+      vertices[offset + 2] = 0;
+      vertices[offset + 3] = 0;
+      vertices[offset + 4] = 1;
+      vertices[offset + 5] = 0;
+      vertices[offset + 6] = u;
+      vertices[offset + 7] = v;
+    }
+  }
+
+  const skirtByBaseVertex = new Map<number, number>();
+  let nextSkirtIndex = baseVertexCount;
+
+  for (const baseIndex of boundaryPatchVertices(columns, rows)) {
+    const offset = baseIndex * 8;
+    const skirtOffset = nextSkirtIndex * 8;
+
+    vertices.set(vertices.subarray(offset, offset + 8), skirtOffset);
+    vertices[skirtOffset + 2] = 1;
+    skirtByBaseVertex.set(baseIndex, nextSkirtIndex);
+    nextSkirtIndex += 1;
+  }
+
+  let offset = 0;
+
+  for (let row = 0; row < rows - 1; row += 1) {
+    for (let column = 0; column < columns - 1; column += 1) {
+      const topLeft = row * columns + column;
+      const topRight = topLeft + 1;
+      const bottomLeft = topLeft + columns;
+      const bottomRight = bottomLeft + 1;
+
+      indices[offset] = topLeft;
+      indices[offset + 1] = bottomLeft;
+      indices[offset + 2] = topRight;
+      indices[offset + 3] = topRight;
+      indices[offset + 4] = bottomLeft;
+      indices[offset + 5] = bottomRight;
+      offset += 6;
+    }
+  }
+
+  offset = writePatchSkirt(indices, offset, topPatchEdge(columns), skirtByBaseVertex);
+  offset = writePatchSkirt(indices, offset, rightPatchEdge(columns, rows), skirtByBaseVertex);
+  offset = writePatchSkirt(indices, offset, bottomPatchEdge(columns, rows), skirtByBaseVertex);
+  writePatchSkirt(indices, offset, leftPatchEdge(columns, rows), skirtByBaseVertex);
+
+  return { vertices, indices };
+}
+
+function boundaryPatchVertices(columns: number, rows: number): number[] {
+  return [
+    ...topPatchEdge(columns),
+    ...rightPatchEdge(columns, rows).slice(1, -1),
+    ...bottomPatchEdge(columns, rows),
+    ...leftPatchEdge(columns, rows).slice(1, -1),
+  ];
+}
+
+function topPatchEdge(columns: number): number[] {
+  return Array.from({ length: columns }, (_, column) => column);
+}
+
+function rightPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: rows }, (_, row) => row * columns + columns - 1);
+}
+
+function bottomPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: columns }, (_, column) => (rows - 1) * columns + (columns - 1 - column));
+}
+
+function leftPatchEdge(columns: number, rows: number): number[] {
+  return Array.from({ length: rows }, (_, row) => (rows - 1 - row) * columns);
+}
+
+function writePatchSkirt<T extends Uint16Array | Uint32Array>(
+  indices: T,
+  offset: number,
+  edge: readonly number[],
+  skirtByBaseVertex: ReadonlyMap<number, number>,
+): number {
+  for (let index = 0; index < edge.length - 1; index += 1) {
+    const a = edge[index];
+    const b = edge[index + 1];
+    const skirtA = skirtByBaseVertex.get(a);
+    const skirtB = skirtByBaseVertex.get(b);
+
+    if (skirtA === undefined || skirtB === undefined) {
+      continue;
+    }
+
+    indices[offset] = a;
+    indices[offset + 1] = b;
+    indices[offset + 2] = skirtA;
+    indices[offset + 3] = skirtA;
+    indices[offset + 4] = b;
+    indices[offset + 5] = skirtB;
+    offset += 6;
+  }
+
+  return offset;
 }
 
 function imageSize(image: TexImageSource): [number, number] {
@@ -1458,6 +1701,11 @@ function destroyTileEntry(entry: WebGpuTileEntry): void {
   entry.vertexBuffer.destroy?.();
   entry.indexBuffer.destroy?.();
   entry.texture.destroy?.();
+}
+
+function destroyTerrainEntry(entry: WebGpuTerrainEntry): void {
+  entry.heightmapTexture.destroy?.();
+  entry.uniformBuffer.destroy?.();
 }
 
 function destroyModelEntry(entry: WebGpuModelEntry): void {

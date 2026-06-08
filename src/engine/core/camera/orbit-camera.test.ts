@@ -240,6 +240,24 @@ describe("OrbitCamera", () => {
     expect(camera.viewMatrix()).not.toEqual(beforeView);
   });
 
+  it("applies horizontal look around the tilted local up axis", () => {
+    const camera = new OrbitCamera({ distance: 3.2, yaw: 0, pitch: 0 });
+
+    camera.tilt(0.8);
+    const beforeLook = camera.viewMatrix();
+    camera.look(0.4, 0);
+    const afterLook = camera.viewMatrix();
+
+    expect([afterLook[1], afterLook[5], afterLook[9]]).toEqual([
+      expect.closeTo(beforeLook[1]),
+      expect.closeTo(beforeLook[5]),
+      expect.closeTo(beforeLook[9]),
+    ]);
+    expect([afterLook[2], afterLook[6], afterLook[10]]).not.toEqual([beforeLook[2], beforeLook[6], beforeLook[10]]);
+    expect(camera.position).toEqual([0, 0, 3.2]);
+    expect(camera.target).toEqual([0, 0, 0]);
+  });
+
   it("keeps a valid view matrix when tilting toward the sky", () => {
     const camera = new OrbitCamera({ distance: 1.05, yaw: 0, pitch: 0 });
 

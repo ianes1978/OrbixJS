@@ -8,6 +8,8 @@ export type TileMeshData = {
   vertexStride: number;
 };
 
+const imageryTileSurfaceOffsetMeters = 1;
+
 export function createEllipsoidTileMesh(
   tile: TileCoordinate,
   segments = 12,
@@ -28,7 +30,7 @@ export function createEllipsoidTileMesh(
       const u = column / segments;
       const lon = rectangle.west + (rectangle.east - rectangle.west) * u;
       const normal = ellipsoid.geodeticSurfaceNormal(lon, lat);
-      const position = ellipsoid.cartographicToCartesian({ lon, lat, height: 1500 });
+      const position = ellipsoid.cartographicToCartesian({ lon, lat, height: imageryTileSurfaceOffsetMeters });
       const scaledPosition = [
         position[0] / maxRadius,
         position[1] / maxRadius,

@@ -22,7 +22,11 @@ import {
   vectorLineFragmentShader,
   vectorLineVertexShader,
 } from "./glsl-shaders";
-import { resolveTerrainImageryFallback } from "./terrain-imagery-fallback";
+import {
+  parseTerrainImageryTileId,
+  resolveTerrainImageryFallback,
+  terrainTileCanReplaceImageryTile,
+} from "../terrain-imagery-fallback";
 
 type GlobeProgram = {
   program: WebGLProgram;
@@ -468,7 +472,7 @@ export class WebGL2Renderer implements Renderer {
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
 
-      if (this.hasReadyTerrainSurface(id)) {
+      if (this.hasReadyTerrainSurfaceForImageryTile(id)) {
         continue;
       }
 
@@ -528,13 +532,27 @@ export class WebGL2Renderer implements Renderer {
     }
   }
 
-  private hasReadyTerrainSurface(id: string): boolean {
-    return this.activeTerrainIds.has(id) && this.terrainEntries.has(id);
+  private hasReadyTerrainSurfaceForImageryTile(id: string): boolean {
+    const imageryTile = parseTerrainImageryTileId(id);
+
+    if (!imageryTile) {
+      return false;
+    }
+
+    for (const terrainId of this.activeTerrainIds) {
+      const terrain = this.terrainEntries.get(terrainId);
+
+      if (terrain && terrainTileCanReplaceImageryTile(terrain.tile, imageryTile)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private hasDrawableSurfaceTiles(): boolean {
     for (const id of this.activeTileIds) {
-      if (!this.hasReadyTerrainSurface(id) && this.tileEntries.get(id)?.ready) {
+      if (!this.hasReadyTerrainSurfaceForImageryTile(id) && this.tileEntries.get(id)?.ready) {
         return true;
       }
     }

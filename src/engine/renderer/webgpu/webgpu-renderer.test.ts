@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OrbitCamera } from "../../core/camera/orbit-camera";
 import { Scene } from "../../core/scene/scene";
-import { createTerrainMesh } from "../../globe/terrain/terrain-mesh";
 import { createFlatTerrainTile } from "../../globe/terrain/terrain-provider";
 import { WebGPURenderer } from "./webgpu-renderer";
 
@@ -31,7 +30,7 @@ describe("WebGPURenderer", () => {
     expect(renderer.supported).toBe(true);
     expect(renderer.ready).toBe(true);
     expect(renderer.capabilities.maxTextureSize).toBe(8192);
-    expect(renderer.capabilities.supportsTerrainHeightmapDisplacement).toBe(false);
+    expect(renderer.capabilities.supportsTerrainHeightmapDisplacement).toBe(true);
     expect(canvas.width).toBe(640);
     expect(canvas.height).toBe(360);
     expect(device.createRenderPipeline).toHaveBeenCalled();
@@ -259,11 +258,23 @@ describe("WebGPURenderer", () => {
         heightmap,
         exaggeration: 1,
         skirtDepth: 0,
-        mesh: createTerrainMesh(heightmap),
       },
     ]);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
 
+    expect(device.queue.writeTexture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        texture: expect.objectContaining({
+          options: expect.objectContaining({
+            label: "OrbixJS WebGPU terrain heightmap 3/4/2",
+            format: "r32float",
+          }),
+        }),
+      }),
+      heightmap.heights,
+      expect.objectContaining({ bytesPerRow: 8, rowsPerImage: 2 }),
+      [2, 2],
+    );
     expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
     expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(expect.anything(), "uint16");
   });
@@ -291,7 +302,6 @@ describe("WebGPURenderer", () => {
         heightmap,
         exaggeration: 1,
         skirtDepth: 0,
-        mesh: createTerrainMesh(heightmap),
       },
     ]);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
@@ -300,7 +310,47 @@ describe("WebGPURenderer", () => {
     expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({
-          label: "OrbixJS WebGPU terrain indices 3/4/2",
+          label: "OrbixJS WebGPU terrain patch indices 2x2",
+        }),
+      }),
+      "uint16",
+    );
+  });
+
+  it("keeps descendant imagery tiles under a coarser WebGPU terrain parent", async () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const device = createDeviceMock();
+    const canvas = createCanvasMock();
+    const gpu = {
+      getPreferredCanvasFormat: () => "rgba8unorm",
+      requestAdapter: vi.fn(async () => ({
+        requestDevice: vi.fn(async () => device),
+      })),
+    };
+    const renderer = new WebGPURenderer(canvas, { gpu });
+    const tile = { level: 3, x: 4, y: 2 };
+    const heightmap = createFlatTerrainTile(tile, { size: 2, height: 120 });
+
+    await renderer.initialize();
+    renderer.setImageryTile({ id: "3/4/2", x: 4, y: 2, z: 3 }, { width: 256, height: 256 } as TexImageSource);
+    renderer.setImageryTile({ id: "4/8/4", x: 8, y: 4, z: 4 }, { width: 256, height: 256 } as TexImageSource);
+    renderer.setActiveImageryTiles(["4/8/4"]);
+    renderer.setTerrainMeshes([
+      {
+        id: "3/4/2",
+        tile,
+        heightmap,
+        exaggeration: 1,
+        skirtDepth: 0,
+      },
+    ]);
+    renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
+
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          label: "OrbixJS WebGPU terrain patch indices 2x2",
         }),
       }),
       "uint16",
@@ -462,6 +512,7 @@ function createDeviceMock() {
     queue: {
       writeBuffer: vi.fn(),
       copyExternalImageToTexture: vi.fn(),
+      writeTexture: vi.fn(),
       submit: vi.fn(),
     },
     pass,
