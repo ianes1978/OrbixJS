@@ -54,6 +54,9 @@ export type GeoViewerOptions = {
     activeTiles: number;
     loadedTiles: number;
     pendingTiles: number;
+    renderTiles: number;
+    exactRenderTiles: number;
+    fallbackRenderTiles: number;
     cacheSize: number;
   }) => void;
   onFrameStats?: (stats: GeoViewerFrameStats) => void;
@@ -68,6 +71,13 @@ export type GeoViewerFrameStats = {
   updateMs: number;
   renderMs: number;
   coverageTiles: number;
+  coverageBudget: number;
+  coverageSamples: number;
+  coverageStrategy: string;
+  effectiveRequestBudget: number;
+  imageryTargetLevel?: number;
+  terrainTargetLevel?: number;
+  metricLevel?: number;
   terrain?: TerrainSurfaceStats;
   lod: LodContext;
 };
@@ -140,6 +150,7 @@ const viewportSampleCount = viewportSampleSteps.length * viewportSampleSteps.len
 const lodReferenceViewportHeight = 900;
 const lodReferenceViewportArea = 1280 * 900;
 const maxElasticTileBudget = 4096;
+const webMercatorLevelZeroMetersPerPixel = 156543.03392804097;
 
 export class GeoViewer {
   canvas: HTMLCanvasElement;
@@ -197,6 +208,7 @@ export class GeoViewer {
   private stableTerrainTargetLevel: number | undefined;
   private cameraHeightLimits: CameraHeightLimits;
   private cameraCollision: Required<CameraCollisionOptions>;
+  private lastCoverageStrategy = "none";
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
@@ -579,13 +591,23 @@ export class GeoViewer {
       const lodContext = this.createCurrentLodContext();
       this.currentLodContext = lodContext;
       const projectedImageryLevel = this.projectedImageryLevel(256, lodContext.pixelErrorBudget);
-      const requestedImageryTargetLevel = applyLodBiasToLevel(projectedImageryLevel, this.lodOptions.imagery, lodContext);
-      const requestedTerrainTargetLevel = applyLodBiasToLevel(projectedImageryLevel, this.lodOptions.terrain, lodContext);
+      const metricImageryLevel = this.metricImageryLevel(lodContext);
+      const imageryLevel = maxFiniteLevel(projectedImageryLevel, metricImageryLevel);
+      const requestedImageryTargetLevel = maxFiniteLevel(
+        applyLodBiasToLevel(imageryLevel, this.lodOptions.imagery, lodContext),
+        clampLodLayerLevel(metricImageryLevel, this.lodOptions.imagery),
+      );
+      const requestedTerrainTargetLevel = maxFiniteLevel(
+        applyLodBiasToLevel(imageryLevel, this.lodOptions.terrain, lodContext),
+        clampLodLayerLevel(metricImageryLevel, this.lodOptions.terrain),
+      );
       const imageryTargetLevel = this.stabilizeImageryTargetLevel(requestedImageryTargetLevel);
       const terrainTargetLevel = this.stabilizeTerrainTargetLevel(requestedTerrainTargetLevel);
       const coveragePositions = this.visibleCartographicSamples();
+      const requestBudget = this.effectiveRequestBudget(lodContext);
+      const coverageBudget = this.effectiveCoverageTileBudget(lodContext);
       const coverageTiles = this.screenSpaceCoverageTiles(
-        this.effectiveTileBudget(lodContext),
+        coverageBudget,
         imageryTargetLevel,
         coveragePositions,
       );
@@ -598,7 +620,7 @@ export class GeoViewer {
           fov: this.camera.fov,
           coveragePositions,
           coverageTiles,
-          requestBudget: lodContext.requestBudget,
+          requestBudget,
           targetLevel: imageryTargetLevel,
         },
       );
@@ -607,7 +629,14 @@ export class GeoViewer {
         this.onImageryStats(stats);
       }
 
-      const terrainStats = this.syncTerrainSurface(imageryCenter, coveragePositions, coverageTiles, terrainTargetLevel, lodContext);
+      const terrainStats = this.syncTerrainSurface(
+        imageryCenter,
+        coveragePositions,
+        coverageTiles,
+        terrainTargetLevel,
+        lodContext,
+        requestBudget,
+      );
       void this.syncDebugTilesetContent();
       const beforeRender = performance.now();
       this.renderer.render({ scene: this.scene, camera: this.camera });
@@ -623,6 +652,13 @@ export class GeoViewer {
         updateMs,
         renderMs,
         coverageTiles: coverageTiles?.length ?? 0,
+        coverageBudget,
+        coverageSamples: coveragePositions.length,
+        coverageStrategy: this.lastCoverageStrategy,
+        effectiveRequestBudget: requestBudget,
+        imageryTargetLevel,
+        terrainTargetLevel,
+        metricLevel: metricImageryLevel,
         terrain: terrainStats,
         lod: lodContext,
       });
@@ -724,6 +760,34 @@ export class GeoViewer {
     const areaScale = Math.max(1, (cssWidth * cssHeight) / lodReferenceViewportArea);
 
     return Math.min(maxElasticTileBudget, Math.max(lodContext.tileBudget, Math.round(lodContext.tileBudget * areaScale)));
+  }
+
+  private effectiveCoverageTileBudget(lodContext: LodContext): number {
+    const elasticBudget = this.effectiveTileBudget(lodContext);
+
+    if (this.cameraAltitudeAboveSurfaceMeters() < 80_000) {
+      return Math.min(elasticBudget, Math.max(256, lodContext.tileBudget));
+    }
+
+    return elasticBudget;
+  }
+
+  private effectiveRequestBudget(lodContext: LodContext): number {
+    if (this.cameraAltitudeAboveSurfaceMeters() < 80_000) {
+      return Math.max(lodContext.requestBudget, this.lodOptions.maxNetworkRequests);
+    }
+
+    return lodContext.requestBudget;
+  }
+
+  private metricImageryLevel(lodContext: LodContext): number | undefined {
+    if (!Number.isFinite(lodContext.metersPerPixel) || lodContext.metersPerPixel <= 0) {
+      return undefined;
+    }
+
+    const toleratedMetersPerPixel = lodContext.metersPerPixel * Math.max(0.5, lodContext.pixelErrorBudget);
+
+    return Math.ceil(Math.log2(webMercatorLevelZeroMetersPerPixel / toleratedMetersPerPixel));
   }
 
   private stabilizeImageryTargetLevel(targetLevel: number | undefined): number | undefined {
@@ -867,6 +931,7 @@ export class GeoViewer {
     coverageTiles: readonly QuadtreeTile[] | undefined,
     targetLevel: number | undefined,
     lodContext: LodContext,
+    requestBudget: number,
   ): TerrainSurfaceStats | undefined {
     if (!this.terrainSurface || !center) {
       this.renderer.setSurfaceFallbackVisible(false);
@@ -884,7 +949,7 @@ export class GeoViewer {
       coveragePositions: coveragePositions.map((position) => [position[0], position[1]] as const),
       coverageTiles,
       maxTiles: Math.min(this.lodOptions.terrain.maxTiles, lodContext.tileBudget),
-      requestBudget: lodContext.requestBudget,
+      requestBudget,
       targetLevel,
     });
     this.lastTerrainMeshes = this.terrainSurface.readyMeshes();
@@ -983,6 +1048,7 @@ export class GeoViewer {
     const height = this.canvas.height || this.canvas.clientHeight;
 
     if (width <= 0 || height <= 0) {
+      this.lastCoverageStrategy = "none";
       return undefined;
     }
 
@@ -993,9 +1059,22 @@ export class GeoViewer {
         viewportHeight: this.lodViewportHeight(),
         fov: this.camera.fov,
       });
-    const rayCoverage = this.coverageTilesFromVisibleSamples(coveragePositions, targetLevel, maxTiles);
+    const useScreenSpaceCoverage = this.cameraAltitudeAboveSurfaceMeters() < 80_000;
+    const distanceCoverage = useScreenSpaceCoverage
+      ? this.distanceDependentCoverageTiles(maxTiles, targetLevel, width, height)
+      : undefined;
+
+    if (distanceCoverage) {
+      this.lastCoverageStrategy = "cdlod-near";
+      return distanceCoverage;
+    }
+
+    const rayCoverage = useScreenSpaceCoverage
+      ? undefined
+      : this.coverageTilesFromVisibleSamples(coveragePositions, targetLevel, maxTiles);
 
     if (rayCoverage) {
+      this.lastCoverageStrategy = "sample-bbox";
       return rayCoverage;
     }
 
@@ -1003,7 +1082,7 @@ export class GeoViewer {
     const rootLevel = 2;
     const rootCount = this.imageryTiling.tileCount(rootLevel);
     const stack: QuadtreeTile[] = [];
-    const selected: QuadtreeTile[] = [];
+    const selected: { tile: QuadtreeTile; bounds: ScreenBounds }[] = [];
 
     for (let y = 0; y < rootCount; y += 1) {
       for (let x = 0; x < rootCount; x += 1) {
@@ -1029,7 +1108,7 @@ export class GeoViewer {
       const canSubdivide = shouldSubdivide && selected.length + stack.length + 4 <= maxTiles;
 
       if (!canSubdivide) {
-        selected.push(tile);
+        selected.push({ tile, bounds });
         continue;
       }
 
@@ -1044,9 +1123,100 @@ export class GeoViewer {
       );
     }
 
-    const expanded = this.expandCoverageTiles(selected, maxTiles);
+    const prioritized = selected
+      .sort((a, b) => screenBoundsDistanceToViewportCenter(a.bounds, width, height) - screenBoundsDistanceToViewportCenter(b.bounds, width, height))
+      .map((entry) => entry.tile);
+    const expanded = this.expandCoverageTiles(prioritized, maxTiles);
 
+    this.lastCoverageStrategy = expanded.length > 0 ? (useScreenSpaceCoverage ? "screen-quadtree-near" : "screen-quadtree") : "none";
     return expanded.length > 0 ? expanded : undefined;
+  }
+
+  private distanceDependentCoverageTiles(
+    maxTiles: number,
+    targetLevel: number,
+    width: number,
+    height: number,
+  ): QuadtreeTile[] | undefined {
+    const rootLevel = 2;
+    const rootCount = this.imageryTiling.tileCount(rootLevel);
+    const queue: ScreenTileCandidate[] = [];
+    const selected: QuadtreeTile[] = [];
+
+    for (let y = 0; y < rootCount; y += 1) {
+      for (let x = 0; x < rootCount; x += 1) {
+        const candidate = this.screenTileCandidate(createQuadtreeTile(x, y, rootLevel), targetLevel, width, height);
+
+        if (candidate) {
+          queue.push(candidate);
+        }
+      }
+    }
+
+    while (queue.length > 0) {
+      const index = bestCandidateIndex(queue);
+      const candidate = queue.splice(index, 1)[0];
+      const childrenFitBudget = selected.length + queue.length + 4 <= maxTiles;
+
+      if (candidate.tile.z < candidate.desiredLevel && childrenFitBudget) {
+        const childX = candidate.tile.x * 2;
+        const childY = candidate.tile.y * 2;
+        const childLevel = candidate.tile.z + 1;
+        const children = [
+          createQuadtreeTile(childX, childY, childLevel),
+          createQuadtreeTile(childX + 1, childY, childLevel),
+          createQuadtreeTile(childX, childY + 1, childLevel),
+          createQuadtreeTile(childX + 1, childY + 1, childLevel),
+        ]
+          .map((tile) => this.screenTileCandidate(tile, targetLevel, width, height))
+          .filter((child): child is ScreenTileCandidate => child !== undefined);
+
+        if (children.length > 0) {
+          queue.push(...children);
+          continue;
+        }
+      }
+
+      selected.push(candidate.tile);
+    }
+
+    return selected.length > 0 ? selected.slice(0, maxTiles) : undefined;
+  }
+
+  private screenTileCandidate(
+    tile: QuadtreeTile,
+    targetLevel: number,
+    width: number,
+    height: number,
+  ): ScreenTileCandidate | undefined {
+    const bounds = this.projectTileScreenBounds(tile);
+
+    if (!bounds || !screenBoundsIntersectsViewport(bounds, width, height)) {
+      return undefined;
+    }
+
+    const desiredLevel = this.distanceDesiredTileLevel(tile, targetLevel);
+    const distanceToCenter = screenBoundsDistanceToViewportCenter(bounds, width, height);
+    const viewportScale = Math.max(1, Math.hypot(width, height));
+    const normalizedCenterDistance = Math.sqrt(distanceToCenter) / viewportScale;
+
+    return {
+      tile,
+      bounds,
+      desiredLevel,
+      priority: desiredLevel * 1_000_000 + tile.z * 10_000 - normalizedCenterDistance * 1_000,
+    };
+  }
+
+  private distanceDesiredTileLevel(tile: QuadtreeTile, targetLevel: number): number {
+    const rectangle = this.imageryTiling.tileXYToRectangle(tile);
+    const camera = this.cameraSurfaceStatus();
+    const cameraToTileMeters = distanceFromCartographicToRectangleMeters(camera.lon, camera.lat, rectangle);
+    const referenceMeters = Math.max(250, this.cameraAltitudeAboveSurfaceMeters());
+    const distanceRatio = Math.max(1, cameraToTileMeters / referenceMeters);
+    const levelDrop = Math.floor(Math.log2(distanceRatio));
+
+    return Math.max(2, Math.min(targetLevel, Math.round(targetLevel - levelDrop)));
   }
 
   private coverageTilesFromVisibleSamples(
@@ -1067,6 +1237,10 @@ export class GeoViewer {
     const startLevel = Math.max(minLevel, Math.round(targetLevel));
     const minimumScreenSpaceLevel = Math.max(minLevel, startLevel - 3);
     const sampleCompleteness = samples.length / viewportSampleCount;
+
+    if (sampleCompleteness < 0.35) {
+      return undefined;
+    }
 
     for (let level = startLevel; level >= minimumScreenSpaceLevel; level -= 1) {
       const count = this.imageryTiling.tileCount(level);
@@ -1109,7 +1283,7 @@ export class GeoViewer {
       }
     }
 
-    return this.sampleNeighborhoodCoverageTiles(samples, startLevel, maxTiles, sampleCompleteness);
+    return undefined;
   }
 
   private coveragePaddingForLevel(level: number, sampleCompleteness = 1): number {
@@ -1124,41 +1298,6 @@ export class GeoViewer {
     }
 
     return 1 + incompleteViewPadding;
-  }
-
-  private sampleNeighborhoodCoverageTiles(
-    samples: readonly (readonly [number, number, number?])[],
-    level: number,
-    maxTiles: number,
-    sampleCompleteness = 1,
-  ): QuadtreeTile[] | undefined {
-    const count = this.imageryTiling.tileCount(level);
-    const padding = this.coveragePaddingForLevel(level, sampleCompleteness);
-    const tiles = new Map<string, QuadtreeTile>();
-
-    for (const [lon, lat] of samples) {
-      const center = this.imageryTiling.positionToTileXY(lon, lat, level);
-
-      for (let y = center.y - padding; y <= center.y + padding; y += 1) {
-        if (y < 0 || y >= count) {
-          continue;
-        }
-
-        for (let x = center.x - padding; x <= center.x + padding; x += 1) {
-          const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
-
-          if (!tiles.has(tile.id)) {
-            tiles.set(tile.id, tile);
-          }
-
-          if (tiles.size >= maxTiles) {
-            return [...tiles.values()];
-          }
-        }
-      }
-    }
-
-    return tiles.size > 0 ? [...tiles.values()] : undefined;
   }
 
   private expandCoverageTiles(tiles: readonly QuadtreeTile[], maxTiles: number): QuadtreeTile[] {
@@ -1608,6 +1747,20 @@ type ScreenBounds = {
   maxY: number;
 };
 
+type ScreenTileCandidate = {
+  tile: QuadtreeTile;
+  bounds: ScreenBounds;
+  desiredLevel: number;
+  priority: number;
+};
+
+type RadianRectangle = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
 function screenBoundsIntersectsViewport(bounds: ScreenBounds, width: number, height: number): boolean {
   const padding = Math.max(96, Math.min(width, height) * 0.18);
 
@@ -1621,6 +1774,50 @@ function conservativeViewportBounds(width: number, height: number): ScreenBounds
     minY: -height,
     maxY: height * 2,
   };
+}
+
+function screenBoundsDistanceToViewportCenter(bounds: ScreenBounds, width: number, height: number): number {
+  const centerX = (bounds.minX + bounds.maxX) * 0.5;
+  const centerY = (bounds.minY + bounds.maxY) * 0.5;
+  const dx = centerX - width * 0.5;
+  const dy = centerY - height * 0.5;
+
+  return dx * dx + dy * dy;
+}
+
+function bestCandidateIndex(candidates: readonly ScreenTileCandidate[]): number {
+  let bestIndex = 0;
+  let bestPriority = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (candidates[index].priority > bestPriority) {
+      bestPriority = candidates[index].priority;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function distanceFromCartographicToRectangleMeters(lon: number, lat: number, rectangle: RadianRectangle): number {
+  const closestLon = clampRadians(lon, rectangle.west, rectangle.east);
+  const closestLat = clampRadians(lat, rectangle.south, rectangle.north);
+
+  return haversineMeters(lon, lat, closestLon, closestLat);
+}
+
+function haversineMeters(lonA: number, latA: number, lonB: number, latB: number): number {
+  const dLat = latB - latA;
+  const dLon = lonB - lonA;
+  const sinLat = Math.sin(dLat * 0.5);
+  const sinLon = Math.sin(dLon * 0.5);
+  const a = sinLat * sinLat + Math.cos(latA) * Math.cos(latB) * sinLon * sinLon;
+
+  return 2 * Ellipsoid.WGS84.maximumRadius * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+}
+
+function clampRadians(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function transformPointWithW(
@@ -1709,6 +1906,23 @@ function unwrapTileX(x: number, anchor: number, count: number): number {
 
 function moduloTileX(x: number, count: number): number {
   return ((x % count) + count) % count;
+}
+
+function maxFiniteLevel(...levels: (number | undefined)[]): number | undefined {
+  const finite = levels.filter((level): level is number => level !== undefined && Number.isFinite(level));
+
+  return finite.length > 0 ? Math.max(...finite) : undefined;
+}
+
+function clampLodLayerLevel(
+  level: number | undefined,
+  layer: { minLevel: number; maxLevel: number },
+): number | undefined {
+  if (level === undefined || !Number.isFinite(level)) {
+    return undefined;
+  }
+
+  return Math.min(layer.maxLevel, Math.max(layer.minLevel, Math.round(level)));
 }
 
 function intersectNormalizedWgs84Surface(ray: Ray, heightMeters: number): Vec3 | undefined {

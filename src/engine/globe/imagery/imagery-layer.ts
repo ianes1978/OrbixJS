@@ -24,6 +24,9 @@ export type ImageryLayerStats = {
   activeTiles: number;
   loadedTiles: number;
   pendingTiles: number;
+  renderTiles: number;
+  exactRenderTiles: number;
+  fallbackRenderTiles: number;
   cacheSize: number;
 };
 
@@ -78,6 +81,9 @@ export class ImageryLayer {
       activeTiles: selection.requestTiles.length,
       loadedTiles: selection.requestTiles.filter((tile) => this.loaded.has(tile.id)).length,
       pendingTiles: selection.requestTiles.filter((tile) => this.pending.has(tile.id)).length,
+      renderTiles: selection.renderTiles.length,
+      exactRenderTiles: selection.renderTiles.filter((tile) => tile.state === "exact").length,
+      fallbackRenderTiles: selection.renderTiles.filter((tile) => tile.state === "fallback").length,
       cacheSize: this.provider.cacheSize,
     };
   }

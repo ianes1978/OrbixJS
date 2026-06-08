@@ -171,6 +171,15 @@ app.innerHTML = `
               <span>Camera</span>
               <strong id="camera-status">coord -</strong>
             </div>
+            <label class="metric wide lod-debug-metric">
+              <span>LOD debug</span>
+              <textarea
+                id="lod-debug-output"
+                class="lod-debug-output"
+                aria-label="LOD debug text"
+                readonly
+              >LOD debug -</textarea>
+            </label>
           </div>
           <div class="overall">
             <div class="overall-copy">
@@ -199,6 +208,7 @@ const frameStatus = document.querySelector<HTMLElement>("#frame-status");
 const tiles3dStatus = document.querySelector<HTMLElement>("#tiles3d-status");
 const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
+const lodDebugOutput = document.querySelector<HTMLTextAreaElement>("#lod-debug-output");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
@@ -233,6 +243,7 @@ if (
   !tiles3dStatus ||
   !pickingStatus ||
   !cameraStatus ||
+  !lodDebugOutput ||
   !tileDebugToggle ||
   !coastlineToggle ||
   !modelToggle ||
@@ -332,6 +343,7 @@ const imageryStatusElement = imageryStatus;
 const tileStatusElement = tileStatus;
 const frameStatusElement = frameStatus;
 const cameraStatusElement = cameraStatus;
+const lodDebugOutputElement = lodDebugOutput;
 const urlParams = new URLSearchParams(window.location.search);
 const rendererBackend = urlParams.get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 const terrainDebugEnabled = urlParams.get("debugTerrain") === "1" || urlParams.get("terrain") === "1";
@@ -342,6 +354,9 @@ let lastImageryStats:
       activeTiles: number;
       loadedTiles: number;
       pendingTiles: number;
+      renderTiles: number;
+      exactRenderTiles: number;
+      fallbackRenderTiles: number;
       cacheSize: number;
     }
   | undefined;
@@ -663,6 +678,7 @@ function syncRuntimeMetrics(): void {
     ? `terrain ${lastFrameStats.terrain.loadedTiles}/${lastFrameStats.terrain.activeTiles}, pending ${lastFrameStats.terrain.pendingTiles}, mesh ${lastFrameStats.terrain.meshCacheSize}`
     : "terrain off";
   tileStatusElement.textContent = `${lastImageryStats.loadedTiles}/${lastImageryStats.activeTiles} img, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
+  lodDebugOutputElement.value = formatLodDebugStatus();
 }
 
 async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefined): Promise<void> {
@@ -949,10 +965,61 @@ function formatHeight(value: number): string {
 function startCameraStatusLoop(): void {
   const update = () => {
     cameraStatusElement.textContent = formatCameraStatus();
+    lodDebugOutputElement.value = formatLodDebugStatus();
     requestAnimationFrame(update);
   };
 
   update();
+}
+
+function formatLodDebugStatus(): string {
+  const surface = viewer.cameraSurfaceStatus();
+  const camera = viewer.cameraSnapshot();
+  const lod = lastFrameStats?.lod;
+  const terrain = lastFrameStats?.terrain;
+  const imagery = lastImageryStats;
+  const metricLevelRaw =
+    lod && Number.isFinite(lod.metersPerPixel) && lod.metersPerPixel > 0
+      ? Math.ceil(Math.log2(156543.03392804097 / (lod.metersPerPixel * Math.max(0.5, lod.pixelErrorBudget))))
+      : undefined;
+
+  return [
+    `imagery.lod=${imagery?.level ?? "-"}`,
+    `imagery.tiles=${imagery ? `${imagery.loadedTiles}/${imagery.activeTiles}` : "-"}`,
+    `imagery.pending=${imagery?.pendingTiles ?? "-"}`,
+    `imagery.render=${imagery?.renderTiles ?? "-"}`,
+    `imagery.renderExact=${imagery?.exactRenderTiles ?? "-"}`,
+    `imagery.renderFallback=${imagery?.fallbackRenderTiles ?? "-"}`,
+    `imagery.cache=${imagery?.cacheSize ?? "-"}`,
+    `terrain.lod=${terrain?.level ?? "-"}`,
+    `terrain.tiles=${terrain ? `${terrain.loadedTiles}/${terrain.activeTiles}` : "-"}`,
+    `terrain.pending=${terrain?.pendingTiles ?? "-"}`,
+    `terrain.meshCache=${terrain?.meshCacheSize ?? "-"}`,
+    `coverage.tiles=${lastFrameStats?.coverageTiles ?? "-"}`,
+    `coverage.budget=${lastFrameStats?.coverageBudget ?? "-"}`,
+    `coverage.samples=${lastFrameStats?.coverageSamples ?? "-"}`,
+    `coverage.strategy=${lastFrameStats?.coverageStrategy ?? "-"}`,
+    `lod.effectiveRequestBudget=${lastFrameStats?.effectiveRequestBudget ?? "-"}`,
+    `lod.profile=${lod?.profile ?? "-"}`,
+    `lod.adaptiveReduction=${lod ? lod.adaptiveQualityReduction.toFixed(2) : "-"}`,
+    `lod.tileBudget=${lod?.tileBudget ?? "-"}`,
+    `lod.requestBudget=${lod?.requestBudget ?? "-"}`,
+    `lod.metersPerPixel=${lod ? lod.metersPerPixel.toFixed(2) : "-"}`,
+    `lod.metricLevelRaw=${metricLevelRaw ?? "-"}`,
+    `lod.metricLevel=${lastFrameStats?.metricLevel ?? "-"}`,
+    `lod.imageryTargetLevel=${lastFrameStats?.imageryTargetLevel ?? "-"}`,
+    `lod.terrainTargetLevel=${lastFrameStats?.terrainTargetLevel ?? "-"}`,
+    `lod.pixelErrorBudget=${lod ? lod.pixelErrorBudget.toFixed(2) : "-"}`,
+    `camera.lat=${toDegrees(surface.lat).toFixed(5)}`,
+    `camera.lon=${toDegrees(surface.lon).toFixed(5)}`,
+    `camera.ellipsoidHeight=${Math.round(surface.ellipsoidHeight)}`,
+    `camera.heightAboveTerrain=${Math.round(surface.heightAboveTerrain)}`,
+    `camera.terrainHeight=${surface.terrainHeight === undefined ? "-" : Math.round(surface.terrainHeight)}`,
+    `camera.distance=${camera.distance.toFixed(6)}`,
+    `camera.pitchDeg=${toDegrees(camera.pitch).toFixed(2)}`,
+    `camera.tiltDeg=${toDegrees(camera.tiltOffset).toFixed(2)}`,
+    `camera.lookYawDeg=${toDegrees(camera.lookYawOffset).toFixed(2)}`,
+  ].join("\n");
 }
 
 function formatCameraStatus(): string {

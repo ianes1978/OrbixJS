@@ -346,22 +346,7 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-    if (this.surfaceFallbackVisible || !plan.passes.includes("imagery")) {
-      this.gl.useProgram(this.program.program);
-      this.gl.uniformMatrix4fv(this.program.uProjection, false, plan.projection);
-      this.gl.uniformMatrix4fv(this.program.uView, false, plan.view);
-      this.gl.activeTexture(this.gl.TEXTURE0);
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
-      this.gl.uniform1i(this.program.uImagery, 0);
-      this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
-      this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
-      this.gl.bindVertexArray(this.globe.vao);
-
-      for (const node of plan.nodes) {
-        this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
-        this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
-      }
-    }
+    this.renderGlobeBase(plan.projection, plan.view, plan.nodes, plan.passes.includes("imagery"));
 
     if (plan.passes.includes("imagery")) {
       this.renderImageryTiles(plan.projection, plan.view);
@@ -459,6 +444,45 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
+  }
+
+  private renderGlobeBase(
+    projection: Float32Array,
+    view: Float32Array,
+    nodes: readonly { modelMatrix: Float32Array }[],
+    asUnderlay: boolean,
+  ): void {
+    if (!this.gl || !this.program || !this.globe) {
+      return;
+    }
+
+    if (asUnderlay) {
+      this.gl.disable(this.gl.DEPTH_TEST);
+      this.gl.depthMask(false);
+    } else {
+      this.gl.enable(this.gl.DEPTH_TEST);
+      this.gl.depthMask(true);
+    }
+
+    this.gl.useProgram(this.program.program);
+    this.gl.uniformMatrix4fv(this.program.uProjection, false, projection);
+    this.gl.uniformMatrix4fv(this.program.uView, false, view);
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.imageryTexture);
+    this.gl.uniform1i(this.program.uImagery, 0);
+    this.gl.uniform1i(this.program.uImageryEnabled, this.imageryEnabled ? 1 : 0);
+    this.gl.uniform3fv(this.program.uSunDirection, this.sunDirection);
+    this.gl.bindVertexArray(this.globe.vao);
+
+    for (const node of nodes) {
+      this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
+      this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
+    }
+
+    if (asUnderlay) {
+      this.gl.depthMask(true);
+      this.gl.enable(this.gl.DEPTH_TEST);
+    }
   }
 
   private hasReadyTerrainSurface(id: string): boolean {

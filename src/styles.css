@@ -361,6 +361,24 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.lod-debug-metric {
+  display: grid;
+  gap: 8px;
+}
+
+.lod-debug-output {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  border: 1px solid rgba(232, 237, 240, 0.12);
+  background: rgba(5, 9, 11, 0.72);
+  color: #d9f1e9;
+  font: 0.72rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  outline: none;
+  padding: 10px;
+  white-space: pre;
+}
+
 .panel {
   right: 20px;
   top: 78px;
