@@ -35,6 +35,11 @@ type TerrainCoverageTile = {
   readonly z: number;
 };
 
+type PrioritizedTerrainTile = {
+  tile: TerrainQuadtreeTile;
+  priority: number;
+};
+
 export class TerrainTileSelector {
   private readonly tiling = new WebMercatorTilingScheme();
 
@@ -264,28 +269,39 @@ function coalesceTilesToBudget(
   maxTiles: number,
   minLevel: number,
 ): TerrainQuadtreeTile[] {
-  const tiles = new Map(inputTiles.map((tile) => [tile.id, tile]));
+  const tiles = new Map<string, PrioritizedTerrainTile>();
+
+  inputTiles.forEach((tile, priority) => {
+    if (!tiles.has(tile.id)) {
+      tiles.set(tile.id, { tile, priority });
+    }
+  });
 
   while (tiles.size > maxTiles) {
-    const candidate = highestLevelTile(tiles.values());
+    const candidate = lowestPriorityHighestLevelTile(tiles.values(), minLevel);
 
-    if (!candidate || candidate.level <= minLevel) {
+    if (!candidate || candidate.tile.level <= minLevel) {
       break;
     }
 
-    const parent = createTerrainQuadtreeTile(Math.floor(candidate.x / 2), Math.floor(candidate.y / 2), candidate.level - 1);
+    const parent = createTerrainQuadtreeTile(
+      Math.floor(candidate.tile.x / 2),
+      Math.floor(candidate.tile.y / 2),
+      candidate.tile.level - 1,
+    );
     removeTerrainDescendants(tiles, parent);
-    tiles.set(parent.id, parent);
+    tiles.set(parent.id, { tile: parent, priority: candidate.priority });
   }
 
   return [...tiles.values()]
+    .map((entry) => entry.tile)
     .sort((a, b) => a.level - b.level || a.y - b.y || a.x - b.x)
     .slice(0, maxTiles);
 }
 
-function removeTerrainDescendants(tiles: Map<string, TerrainQuadtreeTile>, parent: TerrainQuadtreeTile): void {
-  for (const [id, tile] of tiles) {
-    if (isTerrainDescendantOf(tile, parent)) {
+function removeTerrainDescendants(tiles: Map<string, PrioritizedTerrainTile>, parent: TerrainQuadtreeTile): void {
+  for (const [id, entry] of tiles) {
+    if (isTerrainDescendantOf(entry.tile, parent)) {
       tiles.delete(id);
     }
   }
@@ -300,16 +316,26 @@ function isTerrainDescendantOf(tile: TerrainQuadtreeTile, parent: TerrainQuadtre
   return Math.floor(tile.x / factor) === parent.x && Math.floor(tile.y / factor) === parent.y;
 }
 
-function highestLevelTile(tiles: Iterable<TerrainQuadtreeTile>): TerrainQuadtreeTile | undefined {
-  let best: TerrainQuadtreeTile | undefined;
+function lowestPriorityHighestLevelTile(
+  tiles: Iterable<PrioritizedTerrainTile>,
+  minLevel: number,
+): PrioritizedTerrainTile | undefined {
+  let best: PrioritizedTerrainTile | undefined;
 
-  for (const tile of tiles) {
+  for (const entry of tiles) {
+    if (entry.tile.level <= minLevel) {
+      continue;
+    }
+
     if (
       !best ||
-      tile.level > best.level ||
-      (tile.level === best.level && (tile.y > best.y || (tile.y === best.y && tile.x > best.x)))
+      entry.priority > best.priority ||
+      (entry.priority === best.priority &&
+        (entry.tile.level > best.tile.level ||
+          (entry.tile.level === best.tile.level &&
+            (entry.tile.y > best.tile.y || (entry.tile.y === best.tile.y && entry.tile.x > best.tile.x)))))
     ) {
-      best = tile;
+      best = entry;
     }
   }
 

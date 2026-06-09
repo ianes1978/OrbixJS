@@ -62,7 +62,7 @@ export class GlobeSurfaceTileProvider {
     while (current.z >= this.baseLevel) {
       if (loaded.has(current.id)) {
         return {
-          ...current,
+          ...tile,
           requestedId: tile.id,
           sourceTile: current,
           state: current.id === tile.id ? "exact" : "fallback",

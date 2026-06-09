@@ -9,8 +9,10 @@ describe("GlobeSurfaceTileProvider", () => {
     });
 
     expect(selection.level).toBe(3);
-    expect(selection.renderTiles.map((tile) => ({ id: tile.id, state: tile.state, requestedId: tile.requestedId }))).toEqual([
-      { id: "2/2/2", state: "fallback", requestedId: "3/4/4" },
+    expect(
+      selection.renderTiles.map((tile) => ({ id: tile.id, sourceId: tile.sourceTile.id, state: tile.state, requestedId: tile.requestedId })),
+    ).toEqual([
+      { id: "3/4/4", sourceId: "2/2/2", state: "fallback", requestedId: "3/4/4" },
     ]);
   });
 
@@ -33,7 +35,7 @@ describe("GlobeSurfaceTileProvider", () => {
     expect(selection.level).toBe(3);
   });
 
-  it("uses a loaded parent fallback instead of overlapping loaded children with missing siblings", () => {
+  it("uses requested tile geometry when a loaded parent supplies fallback imagery", () => {
     const provider = new GlobeSurfaceTileProvider({ minLevel: 2, maxLevel: 3, baseLevel: 2 });
     const selection = provider.select(
       0,
@@ -49,10 +51,18 @@ describe("GlobeSurfaceTileProvider", () => {
         ],
       },
     );
-    const renderIds = selection.renderTiles.map((tile) => tile.id);
+    const renderTiles = selection.renderTiles.map((tile) => ({
+      id: tile.id,
+      sourceId: tile.sourceTile.id,
+      state: tile.state,
+    }));
 
-    expect(renderIds).toEqual(["2/2/2"]);
-    expect(selection.renderTiles[0]?.state).toBe("fallback");
+    expect(renderTiles).toEqual([
+      { id: "3/4/4", sourceId: "3/4/4", state: "exact" },
+      { id: "3/5/4", sourceId: "3/5/4", state: "exact" },
+      { id: "3/4/5", sourceId: "2/2/2", state: "fallback" },
+      { id: "3/5/5", sourceId: "2/2/2", state: "fallback" },
+    ]);
   });
 
   it("does not collapse loaded edge children just because off-screen siblings are absent", () => {

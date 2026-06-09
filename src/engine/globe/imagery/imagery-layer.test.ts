@@ -141,7 +141,7 @@ describe("ImageryLayer", () => {
     expect(stats.vtUnavailablePages).toBe(1);
   });
 
-  it("keeps the last renderable active set while newly requested tiles are still unavailable", () => {
+  it("clears the active tile set while newly requested tiles are still unavailable", () => {
     const provider: RasterTileProvider = {
       tileSize: 256,
       cacheSize: 0,
@@ -159,7 +159,7 @@ describe("ImageryLayer", () => {
       coverageTiles: [{ id: "6/40/40", x: 40, y: 40, z: 6 }],
     });
 
-    expect(layer.activeTileIds).toEqual(["6/30/30"]);
+    expect(layer.activeTileIds).toEqual([]);
   });
 
   it("marks the monolithic base map texture red so fallback is obvious in visual tests", async () => {

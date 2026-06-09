@@ -1,7 +1,7 @@
 import { WebMercatorTilingScheme } from "../tiling/web-mercator-tiling";
 import { type CameraTileSelectorContext } from "./tile-selector";
 import { createQuadtreeTile, type QuadtreeTile } from "./quadtree-tile";
-import { GlobeSurfaceTileProvider } from "./globe-surface-tile-provider";
+import { GlobeSurfaceTileProvider, type GlobeSurfaceTile } from "./globe-surface-tile-provider";
 import { type RasterTileProvider } from "./tile-provider";
 import { type CameraTileSelectorOptions } from "./tile-selector";
 
@@ -102,18 +102,13 @@ export class ImageryLayer {
     }
 
     this.pumpTileLoadQueue();
+    const renderTiles = this.materializeFallbackRenderTiles(selection.renderTiles);
 
-    if (selection.renderTiles.length > 0) {
-      this.active.clear();
+    this.active.clear();
 
-      for (const tile of selection.renderTiles) {
-        this.active.add(tile.id);
-      }
+    for (const tile of renderTiles) {
+      this.active.add(tile.id);
     }
-
-    this.refreshVirtualTextureComposites(selection.renderTiles, selection.requestTiles);
-    this.trimCompositeCache(selection.renderTiles);
-    const activeCompositeStats = summarizeActiveComposites(selection.renderTiles, this.compositeImages);
 
     return {
       level: selection.level,
@@ -123,26 +118,26 @@ export class ImageryLayer {
       loadedTiles: selection.requestTiles.filter((tile) => this.loaded.has(tile.id)).length,
       pendingTiles: selection.requestTiles.filter((tile) => this.pending.has(tile.id)).length,
       errorTiles: selection.requestTiles.filter((tile) => this.errors.has(tile.id)).length,
-      renderTiles: selection.renderTiles.length,
-      exactRenderTiles: selection.renderTiles.filter((tile) => tile.state === "exact").length,
-      fallbackRenderTiles: selection.renderTiles.filter((tile) => tile.state === "fallback").length,
+      renderTiles: renderTiles.length,
+      exactRenderTiles: renderTiles.filter((tile) => tile.state === "exact").length,
+      fallbackRenderTiles: renderTiles.filter((tile) => tile.state === "fallback").length,
       requestLevels: summarizeTileLevels(selection.requestTiles),
-      renderLevels: summarizeTileLevels(selection.renderTiles),
-      exactRenderLevels: summarizeTileLevels(selection.renderTiles.filter((tile) => tile.state === "exact")),
-      fallbackRenderLevels: summarizeTileLevels(selection.renderTiles.filter((tile) => tile.state === "fallback")),
+      renderLevels: summarizeTileLevels(renderTiles),
+      exactRenderLevels: summarizeTileLevels(renderTiles.filter((tile) => tile.state === "exact")),
+      fallbackRenderLevels: summarizeTileLevels(renderTiles.filter((tile) => tile.state === "fallback")),
       errorLevels: summarizeTileLevels(selection.requestTiles.filter((tile) => this.errors.has(tile.id))),
-      compositeRenderTiles: activeCompositeStats.pages,
-      compositeDescendants: activeCompositeStats.children,
-      compositeMaxLevel: activeCompositeStats.maxLevel,
+      compositeRenderTiles: renderTiles.filter((tile) => tile.state === "fallback").length,
+      compositeDescendants: renderTiles.reduce((count, tile) => count + fallbackDescendantFactor(tile), 0),
+      compositeMaxLevel: maxTileLevel(renderTiles.filter((tile) => tile.state === "fallback")),
       compositeCacheSize: this.compositeImages.size,
       vtFeedbackPages: selection.requestTiles.length,
       vtResidentPages: selection.requestTiles.filter((tile) => this.sourceImages.has(tile.id)).length,
       vtMissingPages: selection.requestTiles.filter((tile) => !this.sourceImages.has(tile.id) && !this.errors.has(tile.id)).length,
       vtUnavailablePages: this.errors.size,
-      vtFallbackPages: selection.renderTiles.filter((tile) => tile.state === "fallback").length,
-      vtCompositePages: activeCompositeStats.pages,
-      vtCompositeChildren: activeCompositeStats.children,
-      vtCompositeMaxLevel: activeCompositeStats.maxLevel,
+      vtFallbackPages: renderTiles.filter((tile) => tile.state === "fallback").length,
+      vtCompositePages: renderTiles.filter((tile) => tile.state === "fallback").length,
+      vtCompositeChildren: renderTiles.reduce((count, tile) => count + fallbackDescendantFactor(tile), 0),
+      vtCompositeMaxLevel: maxTileLevel(renderTiles.filter((tile) => tile.state === "fallback")),
       cacheSize: this.provider.cacheSize,
     };
   }
@@ -212,6 +207,84 @@ export class ImageryLayer {
     };
   }
 
+  private materializeFallbackRenderTiles(renderTiles: readonly GlobeSurfaceTile[]): GlobeSurfaceTile[] {
+    const materialized: GlobeSurfaceTile[] = [];
+
+    for (const tile of renderTiles) {
+      if (tile.state === "exact") {
+        materialized.push(tile);
+        continue;
+      }
+
+      const image = this.compositeFallbackImage(tile);
+
+      if (!image) {
+        continue;
+      }
+
+      this.options.onTileReady?.(tile, image);
+      materialized.push(tile);
+    }
+
+    return materialized;
+  }
+
+  private compositeFallbackImage(tile: GlobeSurfaceTile): HTMLCanvasElement | undefined {
+    const cached = this.compositeImages.get(tile.id);
+    const signature = `${tile.id}<-${tile.sourceTile.id}`;
+
+    if (cached?.signature === signature) {
+      return cached.image;
+    }
+
+    const source = this.sourceImages.get(tile.sourceTile.id);
+
+    if (!source || tile.z < tile.sourceTile.z) {
+      return undefined;
+    }
+
+    const factor = 2 ** (tile.z - tile.sourceTile.z);
+    const localX = tile.x - tile.sourceTile.x * factor;
+    const localY = tile.y - tile.sourceTile.y * factor;
+
+    if (localX < 0 || localY < 0 || localX >= factor || localY >= factor) {
+      return undefined;
+    }
+
+    const size = this.provider.tileSize;
+    const sourceWidth = source.width || size;
+    const sourceHeight = source.height || size;
+    const sourceTileWidth = sourceWidth / factor;
+    const sourceTileHeight = sourceHeight / factor;
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return undefined;
+    }
+
+    canvas.width = size;
+    canvas.height = size;
+    context.drawImage(
+      source,
+      localX * sourceTileWidth,
+      localY * sourceTileHeight,
+      sourceTileWidth,
+      sourceTileHeight,
+      0,
+      0,
+      size,
+      size,
+    );
+    this.compositeImages.set(tile.id, {
+      image: canvas,
+      descendantCount: factor * factor,
+      maxLevel: tile.z,
+      signature,
+    });
+    return canvas;
+  }
+
   private prioritizeTileLoads(requestTiles: readonly QuadtreeTile[]): void {
     if (this.loadQueue.length === 0) {
       return;
@@ -276,75 +349,6 @@ export class ImageryLayer {
     }
   }
 
-  private refreshVirtualTextureComposites(
-    renderTiles: readonly QuadtreeTile[],
-    requestTiles: readonly QuadtreeTile[],
-  ): void {
-    for (const tile of renderTiles) {
-      this.refreshCompositeTile(tile, requestTiles);
-    }
-  }
-
-  private refreshCompositeTile(tile: QuadtreeTile, requestTiles: readonly QuadtreeTile[]): void {
-    const baseImage = this.sourceImages.get(tile.id);
-
-    if (!baseImage) {
-      return;
-    }
-
-    const descendants = loadedDescendants(tile, requestTiles, this.sourceImages);
-
-    if (descendants.length === 0) {
-      return;
-    }
-
-    const signature = descendants.map((descendant) => descendant.tile.id).sort().join("|");
-    const existing = this.compositeImages.get(tile.id);
-
-    if (existing?.signature === signature) {
-      return;
-    }
-
-    const size = this.provider.tileSize;
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      return;
-    }
-
-    canvas.width = size;
-    canvas.height = size;
-    context.drawImage(baseImage, 0, 0, size, size);
-
-    for (const descendant of descendants.sort((a, b) => a.tile.z - b.tile.z || a.tile.y - b.tile.y || a.tile.x - b.tile.x)) {
-      const factor = 2 ** (descendant.tile.z - tile.z);
-      const localX = descendant.tile.x - tile.x * factor;
-      const localY = descendant.tile.y - tile.y * factor;
-      const width = size / factor;
-      const height = size / factor;
-
-      context.drawImage(descendant.image, localX * width, localY * height, width, height);
-    }
-
-    this.compositeImages.set(tile.id, {
-      image: canvas,
-      descendantCount: descendants.length,
-      maxLevel: Math.max(...descendants.map((descendant) => descendant.tile.z)),
-      signature,
-    });
-    this.options.onTileReady?.(tile, canvas);
-  }
-
-  private trimCompositeCache(renderTiles: readonly QuadtreeTile[]): void {
-    const activeIds = new Set(selectionIds(renderTiles));
-
-    for (const id of this.compositeImages.keys()) {
-      if (!activeIds.has(id)) {
-        this.compositeImages.delete(id);
-      }
-    }
-  }
 }
 
 function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): CameraTileSelectorOptions {
@@ -353,57 +357,6 @@ function layerSelectorOptions({ minLevel, maxLevel }: ImageryLayerOptions): Came
 
 function selectionIds(tiles: readonly QuadtreeTile[]): string[] {
   return tiles.map((tile) => tile.id);
-}
-
-function loadedDescendants(
-  ancestor: QuadtreeTile,
-  requestTiles: readonly QuadtreeTile[],
-  images: ReadonlyMap<string, RasterTileImage>,
-): Array<{ tile: QuadtreeTile; image: RasterTileImage }> {
-  const descendants: Array<{ tile: QuadtreeTile; image: RasterTileImage }> = [];
-
-  for (const tile of requestTiles) {
-    const image = images.get(tile.id);
-
-    if (image && isDescendant(tile, ancestor)) {
-      descendants.push({ tile, image });
-    }
-  }
-
-  return descendants;
-}
-
-function summarizeActiveComposites(
-  tiles: readonly QuadtreeTile[],
-  composites: ReadonlyMap<string, { descendantCount: number; maxLevel: number }>,
-): { pages: number; children: number; maxLevel?: number } {
-  let pages = 0;
-  let children = 0;
-  let maxLevel: number | undefined;
-
-  for (const tile of tiles) {
-    const composite = composites.get(tile.id);
-
-    if (!composite) {
-      continue;
-    }
-
-    pages += 1;
-    children += composite.descendantCount;
-    maxLevel = maxLevel === undefined ? composite.maxLevel : Math.max(maxLevel, composite.maxLevel);
-  }
-
-  return { pages, children, maxLevel };
-}
-
-function isDescendant(tile: QuadtreeTile, ancestor: QuadtreeTile): boolean {
-  if (tile.z <= ancestor.z) {
-    return false;
-  }
-
-  const factor = 2 ** (tile.z - ancestor.z);
-
-  return Math.floor(tile.x / factor) === ancestor.x && Math.floor(tile.y / factor) === ancestor.y;
 }
 
 function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
@@ -425,4 +378,16 @@ function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
     average: tiles.length > 0 ? total / tiles.length : undefined,
     histogram,
   };
+}
+
+function fallbackDescendantFactor(tile: GlobeSurfaceTile): number {
+  if (tile.state !== "fallback" || tile.z <= tile.sourceTile.z) {
+    return 0;
+  }
+
+  return 2 ** (tile.z - tile.sourceTile.z);
+}
+
+function maxTileLevel(tiles: readonly QuadtreeTile[]): number | undefined {
+  return tiles.reduce<number | undefined>((level, tile) => (level === undefined ? tile.z : Math.max(level, tile.z)), undefined);
 }

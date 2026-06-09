@@ -112,6 +112,24 @@ describe("TerrainTileSelector", () => {
     expect(new Set(selection.tiles.map((tile) => tile.level)).size).toBeGreaterThan(1);
   });
 
+  it("preserves earlier priority coverage tiles when terrain coverage is coalesced", () => {
+    const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 14 });
+    const selection = selector.select(0, 0, 1.01, {
+      coverageTiles: [
+        { z: 12, x: 4000, y: 4000 },
+        { z: 12, x: 100, y: 100 },
+        { z: 12, x: 101, y: 100 },
+        { z: 12, x: 100, y: 101 },
+        { z: 12, x: 101, y: 101 },
+      ],
+      maxTiles: 2,
+    });
+
+    expect(selection.tiles.length).toBeLessThanOrEqual(2);
+    expect(selection.tiles.some((tile) => tile.id === "12/4000/4000")).toBe(true);
+    expect(selection.tiles.some((tile) => tile.id === "11/50/50")).toBe(true);
+  });
+
   it("removes child terrain tiles once their parent is selected for budget coalescing", () => {
     const selector = new TerrainTileSelector({ minLevel: 2, maxLevel: 6 });
     const selection = selector.select(0, 0, 1.01, {

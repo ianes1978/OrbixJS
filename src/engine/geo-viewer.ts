@@ -1312,6 +1312,15 @@ export class GeoViewer {
 
     const useScreenSpaceCoverage = altitudeMeters < 80_000;
 
+    if (useScreenSpaceCoverage) {
+      const clodCoverage = this.clodCoverageTiles(maxTiles, targetLevel, width, height);
+
+      if (clodCoverage && clodCoverage.length > 0) {
+        this.lastCoverageStrategy = "camera-clipmap-screen-quadtree";
+        return clodCoverage;
+      }
+    }
+
     const rayCoverage = useScreenSpaceCoverage
       ? undefined
       : this.coverageTilesFromVisibleSamples(coveragePositions, targetLevel, maxTiles);
@@ -1369,9 +1378,57 @@ export class GeoViewer {
     const prioritized = selected
       .sort((a, b) => screenBoundsDistanceToViewportCenter(a.bounds, width, height) - screenBoundsDistanceToViewportCenter(b.bounds, width, height))
       .map((entry) => entry.tile);
+    const cameraAnchoredCoverage = useScreenSpaceCoverage
+      ? this.cameraAnchoredCoverageTiles(targetLevel, maxTiles)
+      : [];
+    const mergedCoverage =
+      cameraAnchoredCoverage.length > 0
+        ? mergePriorityCoverageTiles(cameraAnchoredCoverage, prioritized, maxTiles)
+        : prioritized.slice(0, maxTiles);
 
-    this.lastCoverageStrategy = prioritized.length > 0 ? (useScreenSpaceCoverage ? "screen-quadtree-near" : "screen-quadtree") : "none";
-    return prioritized.length > 0 ? prioritized.slice(0, maxTiles) : undefined;
+    this.lastCoverageStrategy =
+      mergedCoverage.length > 0
+        ? cameraAnchoredCoverage.length > 0
+          ? "camera-anchored-screen-quadtree"
+          : useScreenSpaceCoverage
+            ? "screen-quadtree-near"
+            : "screen-quadtree"
+        : "none";
+    return mergedCoverage.length > 0 ? mergedCoverage : undefined;
+  }
+
+  private cameraAnchoredCoverageTiles(targetLevel: number, maxTiles: number): QuadtreeTile[] {
+    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
+
+    if (altitudeMeters > 80_000 || !Number.isFinite(targetLevel) || maxTiles <= 0) {
+      return [];
+    }
+
+    const camera = this.cameraSurfaceStatus();
+
+    if (!Number.isFinite(camera.lon) || !Number.isFinite(camera.lat)) {
+      return [];
+    }
+
+    const level = Math.max(2, Math.round(targetLevel));
+    const tilted = Math.abs(this.camera.tiltOffset) > 0.35;
+    const padding = altitudeMeters <= 2_500 ? 4 : tilted ? 4 : 2;
+    const limit = Math.min(maxTiles, altitudeMeters <= 2_500 || tilted ? 81 : 25);
+    const count = this.imageryTiling.tileCount(level);
+    const center = this.imageryTiling.positionToTileXY(camera.lon, camera.lat, level);
+    const tiles: QuadtreeTile[] = [];
+
+    for (let y = Math.max(0, center.y - padding); y <= Math.min(count - 1, center.y + padding); y += 1) {
+      for (let x = center.x - padding; x <= center.x + padding; x += 1) {
+        tiles.push(createQuadtreeTile(moduloTileX(x, count), y, level));
+
+        if (tiles.length >= limit) {
+          return tiles;
+        }
+      }
+    }
+
+    return tiles;
   }
 
   private clodCoverageTiles(
@@ -1381,44 +1438,25 @@ export class GeoViewer {
     height: number,
   ): QuadtreeTile[] | undefined {
     const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-    const tiles = new Map<string, QuadtreeTile>();
-    const addTile = (tile: QuadtreeTile): boolean => {
-      if (!tiles.has(tile.id)) {
-        tiles.set(tile.id, tile);
-      }
 
-      return tiles.size < maxTiles;
-    };
+    const cameraTiles = mergeOrderedCoverageTiles(this.cameraClipmapRingTiles(targetLevel, maxTiles), maxTiles);
 
-    for (const tile of this.cameraClipmapRingTiles(targetLevel, maxTiles)) {
-      if (!addTile(tile)) {
-        return [...tiles.values()];
-      }
-    }
-
-    if (altitudeMeters <= 2_500 && tiles.size > 0) {
-      return [...tiles.values()];
-    }
-
-    const distanceBudget = Math.max(0, maxTiles - tiles.size);
+    const distanceBudget = Math.max(0, maxTiles - cameraTiles.length);
     const distanceCoverage =
       distanceBudget > 0
         ? this.distanceDependentCoverageTiles(distanceBudget, targetLevel, width, height)
         : undefined;
 
-    if (distanceCoverage) {
-      const distanceTiles = altitudeMeters <= 80_000
-        ? distanceCoverage
-        : this.expandCoverageTiles(distanceCoverage, distanceBudget);
-
-      for (const tile of distanceTiles) {
-        if (!addTile(tile)) {
-          return [...tiles.values()];
-        }
-      }
+    if (!distanceCoverage || distanceCoverage.length === 0) {
+      return cameraTiles.length > 0 ? cameraTiles : undefined;
     }
 
-    return tiles.size > 0 ? [...tiles.values()] : undefined;
+    const distanceTiles = altitudeMeters <= 80_000
+      ? distanceCoverage
+      : this.expandCoverageTiles(distanceCoverage, distanceBudget);
+    const merged = mergePriorityCoverageTiles(cameraTiles, distanceTiles, maxTiles);
+
+    return merged.length > 0 ? merged : undefined;
   }
 
   private cameraClipmapRingTiles(targetLevel: number, maxTiles: number): QuadtreeTile[] {
@@ -1930,7 +1968,9 @@ export class GeoViewer {
     }
 
     if (points.length === 0) {
-      return this.tileFacesCamera(tile) ? conservativeViewportBounds(width, height) : undefined;
+      return this.cameraAltitudeAboveSurfaceMeters() <= 2_500 && this.tileFacesCamera(tile)
+        ? conservativeViewportBounds(width, height)
+        : undefined;
     }
 
     const xs = points.map((point) => point[0]);
@@ -2422,6 +2462,126 @@ function nonOverlappingQuadtreeTiles(tiles: readonly QuadtreeTile[]): QuadtreeTi
   }
 
   return selected;
+}
+
+function mergePriorityCoverageTiles(
+  priorityTiles: readonly QuadtreeTile[],
+  secondaryTiles: readonly QuadtreeTile[],
+  maxTiles: number,
+): QuadtreeTile[] {
+  const selected: QuadtreeTile[] = [];
+  const visited = new Set<string>();
+  const priorityMaxLevel = priorityTiles.reduce((level, tile) => Math.max(level, tile.z), 0);
+  const addExact = (tile: QuadtreeTile): boolean => {
+    if (visited.has(tile.id)) {
+      return selected.length < maxTiles;
+    }
+
+    selected.push(tile);
+    visited.add(tile.id);
+    return selected.length < maxTiles;
+  };
+  const addSecondary = (tile: QuadtreeTile): boolean => {
+    if (selected.length >= maxTiles || visited.has(tile.id)) {
+      return selected.length < maxTiles;
+    }
+
+    const overlap = selected.find((selectedTile) => quadtreeTilesOverlap(tile, selectedTile));
+
+    if (!overlap) {
+      return addExact(tile);
+    }
+
+    if (tile.z >= overlap.z) {
+      return selected.length < maxTiles;
+    }
+
+    if (tile.z >= priorityMaxLevel) {
+      return selected.length < maxTiles;
+    }
+
+    for (const child of quadtreeChildren(tile)) {
+      if (!addSecondary(child)) {
+        return false;
+      }
+    }
+
+    return selected.length < maxTiles;
+  };
+
+  for (const tile of priorityTiles) {
+    if (!selected.some((selectedTile) => quadtreeTilesOverlap(tile, selectedTile)) && !addExact(tile)) {
+      return selected;
+    }
+  }
+
+  for (const tile of secondaryTiles) {
+    if (!addSecondary(tile)) {
+      return selected;
+    }
+  }
+
+  return selected;
+}
+
+function mergeOrderedCoverageTiles(tiles: readonly QuadtreeTile[], maxTiles: number): QuadtreeTile[] {
+  const selected: QuadtreeTile[] = [];
+  const visited = new Set<string>();
+  const maxLevel = tiles.reduce((level, tile) => Math.max(level, tile.z), 0);
+  const add = (tile: QuadtreeTile): boolean => {
+    if (selected.length >= maxTiles || visited.has(tile.id)) {
+      return selected.length < maxTiles;
+    }
+
+    const overlap = selected.find((selectedTile) => quadtreeTilesOverlap(tile, selectedTile));
+
+    if (!overlap) {
+      selected.push(tile);
+      visited.add(tile.id);
+      return selected.length < maxTiles;
+    }
+
+    if (tile.z >= overlap.z || tile.z >= maxLevel) {
+      return selected.length < maxTiles;
+    }
+
+    for (const child of quadtreeChildren(tile)) {
+      if (!add(child)) {
+        return false;
+      }
+    }
+
+    return selected.length < maxTiles;
+  };
+
+  for (const tile of tiles) {
+    if (!add(tile)) {
+      return selected;
+    }
+  }
+
+  return selected;
+}
+
+function quadtreeChildren(tile: QuadtreeTile): QuadtreeTile[] {
+  const childX = tile.x * 2;
+  const childY = tile.y * 2;
+  const childLevel = tile.z + 1;
+
+  return [
+    createQuadtreeTile(childX, childY, childLevel),
+    createQuadtreeTile(childX + 1, childY, childLevel),
+    createQuadtreeTile(childX, childY + 1, childLevel),
+    createQuadtreeTile(childX + 1, childY + 1, childLevel),
+  ];
+}
+
+function quadtreeTilesOverlap(a: QuadtreeTile, b: QuadtreeTile): boolean {
+  if (a.z === b.z) {
+    return a.x === b.x && a.y === b.y;
+  }
+
+  return a.z > b.z ? isQuadtreeDescendantOf(a, b) : isQuadtreeDescendantOf(b, a);
 }
 
 function isQuadtreeDescendantOf(tile: QuadtreeTile, ancestor: QuadtreeTile): boolean {
