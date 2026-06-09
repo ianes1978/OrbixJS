@@ -85,7 +85,7 @@ describe("TerrainSurfaceRuntime", () => {
     expect(runtime.stats().fallbackRenderTiles).toBe(1);
   });
 
-  it("keeps exact terrain children over their loaded parent fallback", async () => {
+  it("keeps the loaded parent fallback instead of overlapping exact terrain children", async () => {
     const deferred: Array<{ key: TerrainTileKey; resolve: (tile: ReturnType<typeof createFlatTerrainTile>) => void }> = [];
     const provider = {
       getTile: vi.fn<TerrainProvider["getTile"]>((key) => {
@@ -124,9 +124,8 @@ describe("TerrainSurfaceRuntime", () => {
     });
     const renderIds = runtime.readyMeshes().map((entry) => entry.id);
 
-    expect(renderIds).toContain("2/2/2");
-    expect(renderIds).toContain("3/4/4");
-    expect(runtime.stats().exactRenderTiles).toBe(1);
+    expect(renderIds).toEqual(["2/2/2"]);
+    expect(runtime.stats().exactRenderTiles).toBe(0);
     expect(runtime.stats().fallbackRenderTiles).toBe(1);
   });
 

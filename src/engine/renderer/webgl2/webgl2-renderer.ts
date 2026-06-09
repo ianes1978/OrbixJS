@@ -25,7 +25,7 @@ import {
 import {
   parseTerrainImageryTileId,
   resolveTerrainImageryFallback,
-  terrainTileCanReplaceImageryTile,
+  terrainImageryTilesOverlap,
 } from "../terrain-imagery-fallback";
 
 type GlobeProgram = {
@@ -382,7 +382,9 @@ export class WebGL2Renderer implements Renderer {
     this.gl.clearColor(0.012, 0.022, 0.028, 1);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
 
-    this.renderGlobeBase(plan.projection, plan.view, plan.nodes, plan.passes.includes("imagery"));
+    if (!surfaceTilesActive) {
+      this.renderGlobeBase(plan.projection, plan.view, plan.nodes);
+    }
 
     if (plan.passes.includes("imagery")) {
       this.renderImageryTiles(plan.projection, plan.view);
@@ -461,11 +463,11 @@ export class WebGL2Renderer implements Renderer {
     }
 
     this.gl.useProgram(this.tileProgram.program);
-    this.gl.disable(this.gl.CULL_FACE);
+    this.gl.enable(this.gl.CULL_FACE);
+    this.gl.cullFace(this.gl.BACK);
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.depthMask(true);
     this.gl.depthFunc(this.gl.LEQUAL);
-    this.gl.enable(this.gl.POLYGON_OFFSET_FILL);
     this.gl.uniformMatrix4fv(this.tileProgram.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.tileProgram.uView, false, view);
     this.gl.uniformMatrix4fv(this.tileProgram.uModel, false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
@@ -483,8 +485,6 @@ export class WebGL2Renderer implements Renderer {
         continue;
       }
 
-      const depthBias = -Math.min(entry.level, 24) * 0.125;
-      this.gl.polygonOffset(depthBias, depthBias);
       this.gl.activeTexture(this.gl.TEXTURE0);
       this.gl.bindTexture(this.gl.TEXTURE_2D, entry.texture);
       this.gl.uniform1i(this.tileProgram.uImagery, 0);
@@ -492,30 +492,17 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
     }
 
-    this.gl.disable(this.gl.POLYGON_OFFSET_FILL);
     this.gl.enable(this.gl.DEPTH_TEST);
-    this.gl.enable(this.gl.CULL_FACE);
     this.gl.depthFunc(this.gl.LESS);
   }
 
-  private renderGlobeBase(
-    projection: Float32Array,
-    view: Float32Array,
-    nodes: readonly { modelMatrix: Float32Array }[],
-    asUnderlay: boolean,
-  ): void {
+  private renderGlobeBase(projection: Float32Array, view: Float32Array, nodes: readonly { modelMatrix: Float32Array }[]): void {
     if (!this.gl || !this.program || !this.globe) {
       return;
     }
 
-    if (asUnderlay) {
-      this.gl.disable(this.gl.DEPTH_TEST);
-      this.gl.depthMask(false);
-    } else {
-      this.gl.enable(this.gl.DEPTH_TEST);
-      this.gl.depthMask(true);
-    }
-
+    this.gl.enable(this.gl.DEPTH_TEST);
+    this.gl.depthMask(true);
     this.gl.useProgram(this.program.program);
     this.gl.uniformMatrix4fv(this.program.uProjection, false, projection);
     this.gl.uniformMatrix4fv(this.program.uView, false, view);
@@ -531,10 +518,6 @@ export class WebGL2Renderer implements Renderer {
       this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
     }
 
-    if (asUnderlay) {
-      this.gl.depthMask(true);
-      this.gl.enable(this.gl.DEPTH_TEST);
-    }
   }
 
   private hasReadyTerrainSurfaceForImageryTile(id: string): boolean {
@@ -547,7 +530,7 @@ export class WebGL2Renderer implements Renderer {
     for (const terrainId of this.activeTerrainIds) {
       const terrain = this.terrainEntries.get(terrainId);
 
-      if (terrain && terrainTileCanReplaceImageryTile(terrain.tile, imageryTile)) {
+      if (terrain && terrainImageryTilesOverlap(terrain.tile, imageryTile)) {
         return true;
       }
     }

@@ -56,12 +56,13 @@ describe("terrain imagery tile overlap", () => {
 });
 
 describe("terrain imagery replacement", () => {
-  it("keeps descendant imagery under a coarser terrain tile", () => {
-    expect(terrainTileCanReplaceImageryTile({ level: 4, x: 8, y: 5 }, { level: 6, x: 34, y: 22 })).toBe(false);
+  it("replaces descendant imagery under a coarser terrain tile", () => {
+    expect(terrainTileCanReplaceImageryTile({ level: 4, x: 8, y: 5 }, { level: 6, x: 34, y: 22 })).toBe(true);
   });
 
-  it("allows only same-level terrain to replace imagery", () => {
+  it("replaces overlapping imagery ancestors and exact tiles", () => {
     expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 6, x: 34, y: 22 })).toBe(true);
-    expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 4, x: 8, y: 5 })).toBe(false);
+    expect(terrainTileCanReplaceImageryTile({ level: 6, x: 34, y: 22 }, { level: 4, x: 8, y: 5 })).toBe(true);
+    expect(terrainTileCanReplaceImageryTile({ level: 6, x: 36, y: 22 }, { level: 4, x: 8, y: 5 })).toBe(false);
   });
 });

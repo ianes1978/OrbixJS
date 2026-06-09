@@ -43,7 +43,7 @@ describe("WebGPURenderer", () => {
     expect(device.createRenderPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         label: "OrbixJS WebGPU imagery tile pipeline",
-        primitive: expect.objectContaining({ cullMode: "none" }),
+        primitive: expect.objectContaining({ cullMode: "back" }),
       }),
     );
     expect(device.createBindGroup).toHaveBeenCalled();
@@ -215,7 +215,7 @@ describe("WebGPURenderer", () => {
     );
   });
 
-  it("draws the globe parent fallback behind active WebGPU surface tiles", async () => {
+  it("does not draw the globe parent fallback behind active WebGPU surface tiles", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
     const canvas = createCanvasMock();
@@ -233,7 +233,7 @@ describe("WebGPURenderer", () => {
     renderer.setSurfaceFallbackVisible(true);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
 
-    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the monolithic globe visible until terrain surface tiles have imagery", async () => {
@@ -279,7 +279,7 @@ describe("WebGPURenderer", () => {
     expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(expect.anything(), "uint16");
   });
 
-  it("draws terrain surface tiles instead of the monolithic globe once imagery is ready", async () => {
+  it("draws terrain surface tiles without the globe underlay once imagery is ready", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
     const canvas = createCanvasMock();
@@ -317,7 +317,7 @@ describe("WebGPURenderer", () => {
     );
   });
 
-  it("keeps descendant imagery tiles under a coarser WebGPU terrain parent", async () => {
+  it("suppresses descendant imagery tiles under a coarser WebGPU terrain parent", async () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const device = createDeviceMock();
     const canvas = createCanvasMock();
@@ -346,7 +346,7 @@ describe("WebGPURenderer", () => {
     ]);
     renderer.render({ scene: new Scene(), camera: new OrbitCamera() });
 
-    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(2);
+    expect(device.pass.drawIndexed).toHaveBeenCalledTimes(1);
     expect(device.pass.setIndexBuffer).toHaveBeenLastCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({

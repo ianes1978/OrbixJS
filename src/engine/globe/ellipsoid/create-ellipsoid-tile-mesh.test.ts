@@ -5,8 +5,6 @@ import { WebMercatorTilingScheme, webMercatorYToLatitude } from "../tiling/web-m
 import { createEllipsoidTileMesh } from "./create-ellipsoid-tile-mesh";
 
 describe("createEllipsoidTileMesh", () => {
-  const imageryTileSurfaceOffsetMeters = 1;
-
   it("creates a patch mesh for one imagery tile", () => {
     const mesh = createEllipsoidTileMesh({ x: 2, y: 2, z: 2 }, 4);
 
@@ -38,7 +36,7 @@ describe("createEllipsoidTileMesh", () => {
     const expected = Ellipsoid.WGS84.cartographicToCartesian({
       lon: rectangle.west,
       lat: mercatorMidLat,
-      height: imageryTileSurfaceOffsetMeters,
+      height: 0,
     });
     const maxRadius = Ellipsoid.WGS84.maximumRadius;
 

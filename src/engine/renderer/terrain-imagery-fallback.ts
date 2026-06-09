@@ -62,5 +62,5 @@ export function terrainImageryTilesOverlap(terrainTile: TerrainTileKey, imageryT
 }
 
 export function terrainTileCanReplaceImageryTile(terrainTile: TerrainTileKey, imageryTile: TerrainTileKey): boolean {
-  return terrainTile.level === imageryTile.level && terrainImageryTilesOverlap(terrainTile, imageryTile);
+  return terrainImageryTilesOverlap(terrainTile, imageryTile);
 }

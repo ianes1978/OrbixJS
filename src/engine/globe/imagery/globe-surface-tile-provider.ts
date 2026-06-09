@@ -3,6 +3,7 @@ import { createQuadtreeTile, type QuadtreeTile } from "./quadtree-tile";
 
 export type GlobeSurfaceTile = QuadtreeTile & {
   requestedId: string;
+  sourceTile: QuadtreeTile;
   state: "exact" | "fallback";
   targetLevel: number;
 };
@@ -63,12 +64,13 @@ export class GlobeSurfaceTileProvider {
         return {
           ...current,
           requestedId: tile.id,
+          sourceTile: current,
           state: current.id === tile.id ? "exact" : "fallback",
           targetLevel,
         };
       }
 
-      if (current.z === 0) {
+      if (current.z === this.baseLevel) {
         return undefined;
       }
 
@@ -113,9 +115,32 @@ function effectiveSelectionLevel(tiles: readonly QuadtreeTile[], fallbackLevel: 
 }
 
 function orderRenderTiles(tiles: GlobeSurfaceTile[]): GlobeSurfaceTile[] {
-  return tiles.sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
+  return pruneOverlappingRenderTiles(tiles).sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
 }
 
 function parentTile(tile: QuadtreeTile): QuadtreeTile {
   return createQuadtreeTile(Math.floor(tile.x / 2), Math.floor(tile.y / 2), tile.z - 1);
+}
+
+function pruneOverlappingRenderTiles(tiles: readonly GlobeSurfaceTile[]): GlobeSurfaceTile[] {
+  const selected: GlobeSurfaceTile[] = [];
+
+  for (const tile of [...tiles].sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x)) {
+    if (selected.some((ancestor) => isDescendantOf(tile, ancestor))) {
+      continue;
+    }
+
+    selected.push(tile);
+  }
+
+  return selected;
+}
+
+function isDescendantOf(tile: QuadtreeTile, ancestor: QuadtreeTile): boolean {
+  if (tile.z <= ancestor.z) {
+    return false;
+  }
+
+  const factor = 2 ** (tile.z - ancestor.z);
+  return Math.floor(tile.x / factor) === ancestor.x && Math.floor(tile.y / factor) === ancestor.y;
 }

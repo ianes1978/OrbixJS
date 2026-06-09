@@ -991,6 +991,16 @@ Step:
 - aggiungere collisione camera-terrain base
 - introdurre cache CPU/GPU per terrain tile
 
+Nota stato rendering surface tile:
+
+- visualizzazione WebGPU/WebGL2 stabile con una sola superficie attiva: niente underlay monolitico sotto le tile, niente offset verticale per vincere il depth buffer
+- le surface tile ellipsoid usano backface culling; con culling disattivato, da lontano possono apparire facce posteriori e bande/spicchi
+- da quota alta serve copertura conservativa `whole-globe-quadtree`; poche tile troppo grandi rompono il limb del globo
+- il fallback parent e esclusivo: se un parent copre un ramo, i child pronti non devono essere disegnati sopra lo stesso spazio
+- cosa non e ancora definitivo: manca un vero scheduler quadtree che promuova i child solo quando il subtree e coerente, con transizioni/morphing invece di fallback brusco
+- cosa resta fragile: la geometria Web Mercator usata come superficie primaria ai poli e al limb; serve una surface tile mesh WGS84/ellipsoid piu solida e indipendente dall'imagery tiling
+- per il terrain: evitare sempre coesistenza terrain/ellipsoid/parent-child nella stessa area; aggiungere poi skirt, morphing e normal continuity senza usare underlay o offset come workaround
+
 Criterio di uscita:
 
 - la demo mostra rilievo reale dell'Alto Adige, non solo globo liscio

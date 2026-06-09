@@ -264,18 +264,18 @@ function normalizeLayerOptions(options: LodLayerOptions | undefined): Required<L
 
 function tiles3dErrorForProfile(profile: LodProfile): number {
   if (profile === "performance") {
-    return 0.06;
+    return 32;
   }
 
   if (profile === "quality") {
-    return 0.025;
+    return 8;
   }
 
   if (profile === "ultra") {
-    return 0.018;
+    return 4;
   }
 
-  return 0.035;
+  return 16;
 }
 
 function clamp(value: number, min: number, max: number): number {

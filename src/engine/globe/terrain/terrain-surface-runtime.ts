@@ -156,7 +156,9 @@ export class TerrainSurfaceRuntime {
       }
     }
 
-    return [...resolved.values()].sort((a, b) => a.tile.level - b.tile.level || a.tile.y - b.tile.y || a.tile.x - b.tile.x);
+    return pruneOverlappingTerrainEntries([...resolved.values()]).sort(
+      (a, b) => a.tile.level - b.tile.level || a.tile.y - b.tile.y || a.tile.x - b.tile.x,
+    );
   }
 
   activeTiles(): TerrainTileKey[] {
@@ -485,4 +487,27 @@ function summarizeTerrainLevels(tiles: readonly TerrainTileKey[]): TerrainLevelS
     average: tiles.length > 0 ? total / tiles.length : undefined,
     histogram,
   };
+}
+
+function pruneOverlappingTerrainEntries(entries: TerrainSurfaceMeshEntry[]): TerrainSurfaceMeshEntry[] {
+  const selected: TerrainSurfaceMeshEntry[] = [];
+
+  for (const entry of entries.sort((a, b) => a.tile.level - b.tile.level || a.tile.y - b.tile.y || a.tile.x - b.tile.x)) {
+    if (selected.some((selectedEntry) => isTerrainDescendantOf(entry.tile, selectedEntry.tile))) {
+      continue;
+    }
+
+    selected.push(entry);
+  }
+
+  return selected;
+}
+
+function isTerrainDescendantOf(tile: TerrainTileKey, parent: TerrainTileKey): boolean {
+  if (tile.level <= parent.level) {
+    return false;
+  }
+
+  const factor = 2 ** (tile.level - parent.level);
+  return Math.floor(tile.x / factor) === parent.x && Math.floor(tile.y / factor) === parent.y;
 }

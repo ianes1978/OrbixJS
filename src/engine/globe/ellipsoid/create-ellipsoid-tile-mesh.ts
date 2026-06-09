@@ -8,11 +8,9 @@ export type TileMeshData = {
   vertexStride: number;
 };
 
-const imageryTileSurfaceOffsetMeters = 1;
-
 export function createEllipsoidTileMesh(
   tile: TileCoordinate,
-  segments = 12,
+  segments = ellipsoidTileMeshSegments(tile.z),
   ellipsoid = Ellipsoid.WGS84,
 ): TileMeshData {
   const tiling = new WebMercatorTilingScheme();
@@ -30,7 +28,7 @@ export function createEllipsoidTileMesh(
       const u = column / segments;
       const lon = rectangle.west + (rectangle.east - rectangle.west) * u;
       const normal = ellipsoid.geodeticSurfaceNormal(lon, lat);
-      const position = ellipsoid.cartographicToCartesian({ lon, lat, height: imageryTileSurfaceOffsetMeters });
+      const position = ellipsoid.cartographicToCartesian({ lon, lat, height: 0 });
       const scaledPosition = [
         position[0] / maxRadius,
         position[1] / maxRadius,
@@ -64,4 +62,28 @@ export function createEllipsoidTileMesh(
     indices: new Uint16Array(indices),
     vertexStride: 8,
   };
+}
+
+export function ellipsoidTileMeshSegments(level: number): number {
+  if (level <= 2) {
+    return 128;
+  }
+
+  if (level <= 3) {
+    return 96;
+  }
+
+  if (level <= 5) {
+    return 64;
+  }
+
+  if (level <= 7) {
+    return 32;
+  }
+
+  if (level <= 10) {
+    return 20;
+  }
+
+  return 12;
 }

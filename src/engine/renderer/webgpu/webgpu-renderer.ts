@@ -12,7 +12,7 @@ import { emptyRendererResourceStats } from "../interface/resource-manager";
 import {
   parseTerrainImageryTileId,
   resolveTerrainImageryFallback,
-  terrainTileCanReplaceImageryTile,
+  terrainImageryTilesOverlap,
 } from "../terrain-imagery-fallback";
 import {
   webGpuGlobeProgram,
@@ -522,7 +522,7 @@ export class WebGPURenderer implements Renderer {
         : undefined,
     });
 
-    if (this.imageryReady || this.surfaceFallbackVisible || !surfaceTilesActive) {
+    if (!surfaceTilesActive) {
       pass.setPipeline(this.globePipeline);
       pass.setBindGroup(0, this.globeBindGroup);
       pass.setVertexBuffer(0, this.globeVertexBuffer);
@@ -747,7 +747,7 @@ export class WebGPURenderer implements Renderer {
       },
       primitive: {
         topology: "triangle-list",
-        cullMode: "none",
+        cullMode: "back",
       },
       depthStencil: {
         format: webGpuDepthFormat,
@@ -1073,7 +1073,7 @@ export class WebGPURenderer implements Renderer {
     for (const terrainId of this.activeTerrainIds) {
       const terrain = this.terrainEntries.get(terrainId);
 
-      if (terrain && terrainTileCanReplaceImageryTile(terrain.tile, imageryTile)) {
+      if (terrain && terrainImageryTilesOverlap(terrain.tile, imageryTile)) {
         return true;
       }
     }

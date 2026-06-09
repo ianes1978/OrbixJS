@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import { GlobeSurfaceTileProvider } from "./globe-surface-tile-provider";
 
 describe("GlobeSurfaceTileProvider", () => {
-  it("draws loaded children over a parent fallback", () => {
+  it("renders the nearest loaded ancestor fallback for a missing requested tile", () => {
     const provider = new GlobeSurfaceTileProvider({ minLevel: 2, maxLevel: 3, baseLevel: 2 });
-    const selection = provider.select(0, 0, 1.2, new Set(["2/2/2", "3/4/4"]), { targetLevel: 3 });
-    const renderIds = selection.renderTiles.map((tile) => tile.id);
+    const selection = provider.select(0, 0, 1.2, new Set(["2/2/2"]), {
+      coverageTiles: [{ id: "3/4/4", x: 4, y: 4, z: 3 }],
+    });
 
     expect(selection.level).toBe(3);
-    expect(renderIds).toEqual(["2/2/2", "3/4/4"]);
+    expect(selection.renderTiles.map((tile) => ({ id: tile.id, state: tile.state, requestedId: tile.requestedId }))).toEqual([
+      { id: "2/2/2", state: "fallback", requestedId: "3/4/4" },
+    ]);
   });
 
   it("renders exact child tiles when no loaded ancestor covers the same branch", () => {
@@ -30,7 +33,7 @@ describe("GlobeSurfaceTileProvider", () => {
     expect(selection.level).toBe(3);
   });
 
-  it("keeps the loaded parent fallback without hiding loaded children", () => {
+  it("uses a loaded parent fallback instead of overlapping loaded children with missing siblings", () => {
     const provider = new GlobeSurfaceTileProvider({ minLevel: 2, maxLevel: 3, baseLevel: 2 });
     const selection = provider.select(
       0,
@@ -48,11 +51,8 @@ describe("GlobeSurfaceTileProvider", () => {
     );
     const renderIds = selection.renderTiles.map((tile) => tile.id);
 
-    expect(renderIds).toContain("2/2/2");
-    expect(renderIds).toContain("3/4/4");
-    expect(renderIds).toContain("3/5/4");
-    expect(renderIds).not.toContain("3/4/5");
-    expect(renderIds).not.toContain("3/5/5");
+    expect(renderIds).toEqual(["2/2/2"]);
+    expect(selection.renderTiles[0]?.state).toBe("fallback");
   });
 
   it("does not collapse loaded edge children just because off-screen siblings are absent", () => {

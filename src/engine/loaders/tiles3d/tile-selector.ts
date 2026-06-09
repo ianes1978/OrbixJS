@@ -1,7 +1,10 @@
 import { type TilesetTile } from "./tileset";
+import { computeScreenSpaceError, shouldRefineByScreenSpaceError } from "../../core/lod/screen-space-error";
 import { dot, normalize, subtract, type Vec3 } from "../../core/math/vec3";
 
 const WGS84_RADIUS_METERS = 6_378_137;
+const defaultViewportHeight = 900;
+const defaultFov = Math.PI / 4;
 
 export type SelectedTilesetTile = {
   tile: TilesetTile;
@@ -15,32 +18,63 @@ export function selectTilesetTile(
     cameraPosition?: Vec3;
     cameraTarget?: Vec3;
     maxScreenSpaceError?: number;
+    viewportHeight?: number;
+    fov?: number;
   } = {},
 ): SelectedTilesetTile | undefined {
-  const maxScreenSpaceError = options.maxScreenSpaceError ?? 0.035;
+  const maxScreenSpaceError = options.maxScreenSpaceError ?? 16;
   if (!isTileInFrontOfCamera(root, options.cameraPosition, options.cameraTarget)) {
     return undefined;
   }
 
-  return selectTile(root, cameraDistance, maxScreenSpaceError, 0);
+  return selectTile(
+    root,
+    cameraDistance,
+    {
+      maxScreenSpaceError,
+      viewportHeight: options.viewportHeight ?? defaultViewportHeight,
+      fov: options.fov ?? defaultFov,
+    },
+    0,
+  );
 }
 
 function selectTile(
   tile: TilesetTile,
   cameraDistance: number,
-  maxScreenSpaceError: number,
+  options: {
+    maxScreenSpaceError: number;
+    viewportHeight: number;
+    fov: number;
+  },
   depth: number,
 ): SelectedTilesetTile {
-  if (tile.children.length === 0 || tileScreenSpaceError(tile, cameraDistance) <= maxScreenSpaceError) {
+  if (
+    tile.children.length === 0 ||
+    !shouldRefineByScreenSpaceError(tileScreenSpaceError(tile, cameraDistance, options), options.maxScreenSpaceError)
+  ) {
     return { tile, depth };
   }
 
-  return selectTile(tile.children[0]!, cameraDistance, maxScreenSpaceError, depth + 1);
+  return selectTile(tile.children[0]!, cameraDistance, options, depth + 1);
 }
 
-function tileScreenSpaceError(tile: TilesetTile, cameraDistance: number): number {
-  const normalizedAltitude = Math.max(cameraDistance - 1, 0.001);
-  return tile.geometricError / WGS84_RADIUS_METERS / normalizedAltitude;
+function tileScreenSpaceError(
+  tile: TilesetTile,
+  cameraDistance: number,
+  options: {
+    viewportHeight: number;
+    fov: number;
+  },
+): number {
+  const distanceMeters = Math.max(cameraDistance - 1, 0) * WGS84_RADIUS_METERS;
+
+  return computeScreenSpaceError({
+    geometricErrorMeters: tile.geometricError,
+    distanceMeters,
+    viewportHeight: options.viewportHeight,
+    fov: options.fov,
+  });
 }
 
 function isTileInFrontOfCamera(tile: TilesetTile, cameraPosition: Vec3 | undefined, cameraTarget: Vec3 | undefined): boolean {
