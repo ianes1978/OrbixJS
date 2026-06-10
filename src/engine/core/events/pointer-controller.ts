@@ -16,6 +16,7 @@ export class PointerController {
   private lastX = 0;
   private lastY = 0;
   private lastPinchDistance: number | undefined;
+  private lastPinchCenter: { x: number; y: number } | undefined;
   private surfaceDragPoint: Vec3 | undefined;
   private smoothedSurfacePoint: Vec3 | undefined;
   private readonly pointers = new Map<number, { x: number; y: number }>();
@@ -51,6 +52,7 @@ export class PointerController {
 
     if (this.pointers.size >= 2) {
       this.lastPinchDistance = this.pinchDistance();
+      this.lastPinchCenter = this.pinchCenter();
       this.dragging = false;
       this.surfaceDragPoint = undefined;
       this.smoothedSurfacePoint = undefined;
@@ -64,6 +66,7 @@ export class PointerController {
 
     if (this.pointers.size >= 2) {
       const distance = this.pinchDistance();
+      const center = this.pinchCenter();
 
       if (distance !== undefined && this.lastPinchDistance !== undefined && distance > 0) {
         this.camera.zoom(
@@ -73,7 +76,19 @@ export class PointerController {
         );
       }
 
+      // Drag verticale a due dita = tilt (dita in su → verso l'orizzonte).
+      // Convive col pinch: in un pinch puro il centro resta fermo, in un
+      // drag parallelo la distanza tra le dita resta costante.
+      if (center && this.lastPinchCenter) {
+        const centerDeltaY = center.y - this.lastPinchCenter.y;
+
+        if (centerDeltaY !== 0) {
+          this.camera.tilt(-centerDeltaY * 0.005);
+        }
+      }
+
       this.lastPinchDistance = distance;
+      this.lastPinchCenter = center;
       return;
     }
 
@@ -134,6 +149,7 @@ export class PointerController {
   private readonly onPointerUp = (event: PointerEvent) => {
     this.pointers.delete(event.pointerId);
     this.lastPinchDistance = this.pointers.size >= 2 ? this.pinchDistance() : undefined;
+    this.lastPinchCenter = this.pointers.size >= 2 ? this.pinchCenter() : undefined;
     this.dragging = this.pointers.size === 1;
     this.surfaceDragPoint = undefined;
     this.smoothedSurfacePoint = undefined;
@@ -226,6 +242,18 @@ export class PointerController {
     }
 
     return Math.hypot(second.x - first.x, second.y - first.y);
+  }
+
+  private pinchCenter(): { x: number; y: number } | undefined {
+    const pointers = [...this.pointers.values()];
+    const first = pointers[0];
+    const second = pointers[1];
+
+    if (!first || !second) {
+      return undefined;
+    }
+
+    return { x: (first.x + second.x) * 0.5, y: (first.y + second.y) * 0.5 };
   }
 }
 
