@@ -39,7 +39,7 @@ const webGpuDepthFormat = "depth24plus";
 const webGpuImageryFormat = "rgba8unorm";
 const webGpuHeightmapFormat = "r32float";
 
-const webGpuClipSpaceCorrection = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
+const webGpuClipSpaceCorrection = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 1]);
 
 type NavigatorWithGpu = Navigator & {
   gpu?: WebGpuLike;
@@ -1211,7 +1211,7 @@ export class WebGPURenderer implements Renderer {
     pass.drawIndexed(this.debugModel.indexCount);
   }
 
-  private writeDebugModelUniforms(viewProjection: Float32Array): void {
+  private writeDebugModelUniforms(viewProjection: Float64Array): void {
     if (!this.device || !this.modelUniformBuffer || !this.debugModelVisible || !this.debugModel) {
       return;
     }
@@ -1451,11 +1451,11 @@ export class WebGPURenderer implements Renderer {
   }
 }
 
-function webGpuViewProjection(frame: RendererFrame, aspect: number): Float32Array {
+function webGpuViewProjection(frame: RendererFrame, aspect: number): Float64Array {
   return multiply(webGpuClipSpaceCorrection, multiply(frame.camera.projectionMatrix(aspect), frame.camera.viewMatrix()));
 }
 
-function createGlobeUniforms(viewProjection: Float32Array, imageryReady: boolean, tileDebugOverlayVisible = false): Float32Array {
+function createGlobeUniforms(viewProjection: Float64Array, imageryReady: boolean, tileDebugOverlayVisible = false): Float32Array {
   const uniforms = new Float32Array(20);
   uniforms.set(viewProjection, 0);
   uniforms[16] = imageryReady ? 1 : 0;

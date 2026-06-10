@@ -27,8 +27,8 @@ export function createRendererFramePlan(
   const passes = createRenderPassList(options);
 
   return {
-    projection: frame.camera.projectionMatrix(aspect),
-    view: frame.camera.viewMatrix(),
+    projection: new Float32Array(frame.camera.projectionMatrix(aspect)),
+    view: new Float32Array(frame.camera.viewMatrix()),
     cameraPosition: frame.camera.position,
     nodes: frame.scene.visibleNodes.map(toRendererFrameNode),
     passes,

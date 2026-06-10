@@ -8,10 +8,14 @@ export type LodLayerOptions = {
   targetTilePixels?: number;
 };
 
+export type TileSelectionStrategyName = "classic" | "quadtree";
+
 export type LodOptions =
   | LodProfile
   | {
       profile?: LodProfile;
+      /** Strategia di selezione tile (Plan3): "quadtree" (SSE, default) o "classic" (legacy). */
+      strategy?: TileSelectionStrategyName;
       adaptive?: boolean;
       devicePixelRatioLimit?: number;
       pixelErrorBudget?: number;
@@ -35,6 +39,7 @@ export type LodOptions =
 
 export type NormalizedLodOptions = {
   profile: LodProfile;
+  strategy: TileSelectionStrategyName;
   adaptive: boolean;
   devicePixelRatioLimit: number;
   pixelErrorBudget: number;
@@ -96,7 +101,7 @@ export type LodContextInput = {
 const earthRadiusMeters = 6_378_137;
 const defaultTerrainGridSizeByLevel = [32, 32, 32, 24, 24, 16, 16, 16, 12, 12, 8, 8, 8, 6, 6, 4, 4, 4, 2, 2, 2];
 
-const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "imagery" | "terrain" | "tiles3d">> = {
+const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "strategy" | "imagery" | "terrain" | "tiles3d">> = {
   performance: {
     adaptive: true,
     devicePixelRatioLimit: 1.25,
@@ -144,6 +149,7 @@ export function normalizeLodOptions(options: LodOptions | undefined): Normalized
 
   return {
     profile,
+    strategy: objectOptions.strategy ?? "quadtree",
     adaptive: objectOptions.adaptive ?? defaults.adaptive,
     devicePixelRatioLimit: objectOptions.devicePixelRatioLimit ?? defaults.devicePixelRatioLimit,
     pixelErrorBudget: objectOptions.pixelErrorBudget ?? defaults.pixelErrorBudget,

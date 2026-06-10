@@ -1,16 +1,16 @@
 import { cross, dot, normalize, subtract, type Vec3 } from "./vec3";
 
-export type Mat4 = Float32Array;
+export type Mat4 = Float64Array;
 
 export function identity(): Mat4 {
-  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  return new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 }
 
 export function perspective(fovyRadians: number, aspect: number, near: number, far: number): Mat4 {
   const f = 1 / Math.tan(fovyRadians / 2);
   const rangeInv = 1 / (near - far);
 
-  return new Float32Array([
+  return new Float64Array([
     f / aspect,
     0,
     0,
@@ -35,7 +35,7 @@ export function lookAt(eye: Vec3, target: Vec3, up: Vec3): Mat4 {
   const x = normalize(cross(up, z));
   const y = cross(z, x);
 
-  return new Float32Array([
+  return new Float64Array([
     x[0],
     y[0],
     z[0],
@@ -56,7 +56,7 @@ export function lookAt(eye: Vec3, target: Vec3, up: Vec3): Mat4 {
 }
 
 export function multiply(a: Mat4, b: Mat4): Mat4 {
-  const out = new Float32Array(16);
+  const out = new Float64Array(16);
 
   for (let column = 0; column < 4; column += 1) {
     for (let row = 0; row < 4; row += 1) {
@@ -72,7 +72,7 @@ export function multiply(a: Mat4, b: Mat4): Mat4 {
 }
 
 export function invert(m: Mat4): Mat4 {
-  const out = new Float32Array(16);
+  const out = new Float64Array(16);
   const b00 = m[0] * m[5] - m[1] * m[4];
   const b01 = m[0] * m[6] - m[2] * m[4];
   const b02 = m[0] * m[7] - m[3] * m[4];

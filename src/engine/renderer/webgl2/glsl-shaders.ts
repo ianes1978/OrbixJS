@@ -99,6 +99,7 @@ in vec2 vUv;
 uniform sampler2D uImagery;
 uniform vec3 uSunDirection;
 uniform bool uDebugOverlay;
+uniform float uFadeAlpha;
 
 out vec4 outColor;
 
@@ -115,7 +116,7 @@ void main() {
   float edgeDistance = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
   float edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
   vec3 lineColor = vec3(0.36, 0.95, 1.0);
-  outColor = vec4(mix(color, lineColor, uDebugOverlay ? edgeLine * 0.28 : 0.0), 1.0);
+  outColor = vec4(mix(color, lineColor, uDebugOverlay ? edgeLine * 0.28 : 0.0), uFadeAlpha);
 }
 `;
 
@@ -131,6 +132,9 @@ uniform float uExaggeration;
 uniform float uSkirtDepth;
 uniform vec2 uImageryUvScale;
 uniform vec2 uImageryUvOffset;
+uniform vec3 uCameraPosition;
+// (inizio, fine) della zona di morphing CDLOD in distanza unit-scale.
+uniform vec2 uMorphRange;
 
 out vec3 vNormal;
 out vec3 vPosition;
@@ -151,6 +155,20 @@ vec3 ellipsoidNormalAt(float lon, float lat) {
   return normalize(vec3(cosLat * cos(lon), sin(lat), -cosLat * sin(lon)));
 }
 
+// Forma geodetica standard WGS84 (stessa convenzione di Ellipsoid.cartographicToCartesian).
+vec3 geodeticToWorld(float lon, float lat, float height) {
+  float cosLat = cos(lat);
+  float sinLat = sin(lat);
+  float e2 = 1.0 - (WGS84_B * WGS84_B) / (WGS84_A * WGS84_A);
+  float N = WGS84_A / sqrt(1.0 - e2 * sinLat * sinLat);
+  vec3 world = vec3(
+    (N + height) * cosLat * cos(lon),
+    (N * (1.0 - e2) + height) * sinLat,
+    -(N + height) * cosLat * sin(lon)
+  );
+  return world / WGS84_A;
+}
+
 vec3 terrainWorldAt(vec2 sampleUv) {
   float tileCount = exp2(uTileKey.x);
   float globalX = (uTileKey.y + sampleUv.x) / tileCount;
@@ -158,8 +176,20 @@ vec3 terrainWorldAt(vec2 sampleUv) {
   float lon = globalX * PI * 2.0 - PI;
   float lat = webMercatorYToLatitude(globalY);
   float height = texture(uHeightmap, clamp(sampleUv, vec2(0.0), vec2(1.0))).r * uExaggeration;
-  vec3 normal = ellipsoidNormalAt(lon, lat);
-  return normal * vec3(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+  return geodeticToWorld(lon, lat, height);
+}
+
+// Geomorphing CDLOD: verso il bordo esterno della zona di transizione l'altezza
+// scivola sul campionamento a meta' risoluzione (≈ il livello padre), cosi' il
+// passaggio di LOD non produce pop verticale.
+float morphedHeightAt(vec2 sampleUv, float morph) {
+  vec2 heightmapSize = vec2(textureSize(uHeightmap, 0));
+  vec2 texel = 1.0 / max(heightmapSize - vec2(1.0), vec2(1.0));
+  vec2 coarseStep = texel * 2.0;
+  vec2 snapped = round(sampleUv / coarseStep) * coarseStep;
+  float fine = texture(uHeightmap, clamp(sampleUv, vec2(0.0), vec2(1.0))).r;
+  float coarse = texture(uHeightmap, clamp(snapped, vec2(0.0), vec2(1.0))).r;
+  return mix(fine, coarse, morph);
 }
 
 void main() {
@@ -168,9 +198,12 @@ void main() {
   float globalY = (uTileKey.z + uv.y) / tileCount;
   float lon = globalX * PI * 2.0 - PI;
   float lat = webMercatorYToLatitude(globalY);
-  float height = texture(uHeightmap, uv).r * uExaggeration - position.z * uSkirtDepth;
+  vec3 surfaceWorld = geodeticToWorld(lon, lat, 0.0);
+  float cameraDistance = distance(surfaceWorld, uCameraPosition);
+  float morph = clamp((cameraDistance - uMorphRange.x) / max(uMorphRange.y - uMorphRange.x, 1e-9), 0.0, 1.0);
+  float height = morphedHeightAt(uv, morph) * uExaggeration - position.z * uSkirtDepth;
   vec3 ellipsoidNormal = ellipsoidNormalAt(lon, lat);
-  vec3 world = ellipsoidNormal * vec3(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+  vec3 world = geodeticToWorld(lon, lat, height);
   vec2 heightmapSize = vec2(textureSize(uHeightmap, 0));
   vec2 texel = 1.0 / max(heightmapSize - vec2(1.0), vec2(1.0));
   vec3 west = terrainWorldAt(uv - vec2(texel.x, 0.0));

@@ -3,7 +3,7 @@ import { type CameraFlyToOptions, type CameraLimits, type CameraSnapshot } from 
 import { type CameraKeyframe } from "./core/camera/camera-path";
 import { sunDirectionFromDate } from "./core/astro/sun-position";
 import { PointerController } from "./core/events/pointer-controller";
-import { Ellipsoid } from "./core/geodesy/ellipsoid";
+import { Ellipsoid, type Cartographic } from "./core/geodesy/ellipsoid";
 import {
   createAdaptiveLodState,
   createLodContext,
@@ -14,9 +14,10 @@ import {
   type LodContext,
   type LodOptions,
   type NormalizedLodOptions,
+  type TileSelectionStrategyName,
 } from "./core/lod/lod";
 import { selectGlobeLodTargets } from "./core/lod/globe-lod-policy";
-import { invert, multiply, transformPoint } from "./core/math/mat4";
+import { invert, multiply, transformPoint, type Mat4 } from "./core/math/mat4";
 import { directionBetween, type Ray, intersectUnitSphere } from "./core/math/ray";
 import { dot, length, normalize, subtract, type MutableVec3, type Vec3 } from "./core/math/vec3";
 import { loadGlb } from "./loaders/gltf/glb-loader";
@@ -29,6 +30,15 @@ import { type TileLevelStats } from "./globe/imagery/imagery-layer";
 import { createQuadtreeTile, type QuadtreeTile } from "./globe/imagery/quadtree-tile";
 import { selectLevel } from "./globe/imagery/tile-selector";
 import { createSurfaceTileSet, type SurfaceTile } from "./globe/surface/surface-tile";
+import { ClassicSelectionStrategy } from "./globe/selection/classic-selection-strategy";
+import { QuadtreeSelectionStrategy } from "./globe/quadtree/quadtree-selection-strategy";
+import { type TileSelectionHost, type TileSelectionStrategy } from "./globe/selection/selection-strategy";
+import {
+  conservativeViewportBounds,
+  nonOverlappingQuadtreeTiles,
+  screenBoundsIntersectsViewport,
+  type ScreenBounds,
+} from "./globe/selection/coverage-utils";
 import { WebMercatorTilingScheme } from "./globe/tiling/web-mercator-tiling";
 import { type TerrainProvider, type TerrainTileKey } from "./globe/terrain/terrain-provider";
 import {
@@ -110,6 +120,8 @@ export type GeoViewerFrameStats = {
   coverageSamples: number;
   coverageStrategy: string;
   coverageLevels: TileLevelStats;
+  /** Tile entrati+usciti dalla selezione rispetto al frame precedente (stabilità temporale). */
+  tileChurn: number;
   effectiveRequestBudget: number;
   imageryTargetLevel?: number;
   terrainTargetLevel?: number;
@@ -246,6 +258,7 @@ export class GeoViewer {
   private lastTerrainRequestTileIds: string[] = [];
   private lastCoverageBudget = 0;
   private lastCoverageSamples = 0;
+  private lastTileChurn = 0;
   private tileLabelOverlay: HTMLDivElement | undefined;
   private lastDebugSurfaceKey = "";
   private lastRendererTerrainKey = "";
@@ -315,12 +328,52 @@ export class GeoViewer {
   private cameraHeightLimits: CameraHeightLimits;
   private cameraCollision: Required<CameraCollisionOptions>;
   private lastCoverageStrategy = "none";
+  private selectionStrategy: TileSelectionStrategy;
+
+  private createSelectionStrategy(strategy: TileSelectionStrategyName): TileSelectionStrategy {
+    const host = this.createSelectionHost();
+
+    return strategy === "quadtree" ? new QuadtreeSelectionStrategy(host) : new ClassicSelectionStrategy(host);
+  }
+
+  private createSelectionHost(): TileSelectionHost {
+    const viewer = this;
+
+    return {
+      get imageryTiling() {
+        return viewer.imageryTiling;
+      },
+      canvasSize: () => [this.canvas.width || this.canvas.clientWidth, this.canvas.height || this.canvas.clientHeight],
+      cameraFov: () => this.camera.fov,
+      cameraTiltOffset: () => this.camera.tiltOffset,
+      cameraAltitudeAboveSurfaceMeters: () => this.cameraAltitudeAboveSurfaceMeters(),
+      cameraDistanceForLod: () => this.cameraDistanceForLod(),
+      cameraSurfaceStatus: () => this.cameraSurfaceStatus(),
+      lodViewportHeight: () => this.lodViewportHeight(),
+      smoothedCpuMs: () => this.smoothedCpuMs,
+      adaptiveQualityReduction: () => this.adaptiveLodState.qualityReduction,
+      currentViewportSampleCount: () => this.currentViewportSampleCount,
+      projectedImageryLevel: () => this.projectedImageryLevel(),
+      pickNormalizedDeviceCoordinate: (x, y) => this.pickNormalizedDeviceCoordinate(x, y),
+      pickRayFromNdc: (x, y) => this.pickRayFromNdc(x, y),
+      nearestVisibleCartographicSample: () => this.nearestVisibleCartographicSample(),
+      projectTileScreenBounds: (tile) => this.projectTileScreenBounds(tile),
+      cameraPositionUnit: () => this.camera.position,
+      viewProjectionMatrix: () => {
+        const width = this.canvas.width || this.canvas.clientWidth || 1;
+        const height = this.canvas.height || this.canvas.clientHeight || 1;
+
+        return multiply(this.camera.projectionMatrix(width / height), this.camera.viewMatrix());
+      },
+    };
+  }
 
   constructor(options: GeoViewerOptions) {
     this.onImageryStatsCallback = options.onImageryStats;
     this.onFrameStatsCallback = options.onFrameStats;
     this.onTilesetStatsCallback = options.onTilesetStats;
     this.lodOptions = normalizeLodOptions(options.lod);
+    this.selectionStrategy = this.createSelectionStrategy(this.lodOptions.strategy);
     this.cameraHeightLimits = options.cameraHeightLimits ?? {};
     this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
     this.defaultTerrainExaggeration = options.terrainExaggeration ?? 1;
@@ -709,8 +762,28 @@ export class GeoViewer {
     }
   }
 
+  private cameraCartographicCache?: { position: [number, number, number]; value: Cartographic };
+
+  private cameraCartographic(): Cartographic {
+    const position = this.camera.position;
+    const cached = this.cameraCartographicCache;
+
+    if (
+      cached &&
+      cached.position[0] === position[0] &&
+      cached.position[1] === position[1] &&
+      cached.position[2] === position[2]
+    ) {
+      return cached.value;
+    }
+
+    const value = Ellipsoid.WGS84.unitCartesianToCartographic(position);
+    this.cameraCartographicCache = { position: [position[0], position[1], position[2]], value };
+    return value;
+  }
+
   cameraSurfaceStatus(): CameraSurfaceStatus {
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const cartographic = this.cameraCartographic();
     const ellipsoidHeight = Math.max(0, this.cameraEllipsoidHeightMeters());
     const terrainHeight = this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat);
     const heightAboveTerrain = terrainHeight === undefined ? ellipsoidHeight : Math.max(0, ellipsoidHeight - terrainHeight);
@@ -727,7 +800,7 @@ export class GeoViewer {
 
   cameraKeyframe(duration = 3): CameraKeyframe {
     const center = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample();
-    const fallback = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const fallback = this.cameraCartographic();
     const lon = center ? center[0] : fallback.lon;
     const lat = center ? center[1] : fallback.lat;
     const height = Math.max(0, this.cameraEllipsoidHeightMeters());
@@ -895,29 +968,57 @@ export class GeoViewer {
       const afterSamples = performance.now();
       const requestBudget = this.effectiveRequestBudget(lodContext);
       const coverageBudget = this.effectiveCoverageTileBudget(lodContext);
-      const coverageTiles = this.screenSpaceCoverageTiles(
-        coverageBudget,
-        imageryTargetLevel,
+      const coverageSelection = this.selectionStrategy.selectCoverage({
+        maxTiles: coverageBudget,
+        targetLevel: imageryTargetLevel,
         coveragePositions,
-        this.stableCoverageTargetPixels("imagery"),
-      );
-      const surfaceCoverageTiles = coverageTiles ? nonOverlappingQuadtreeTiles(coverageTiles) : undefined;
+        targetTilePixels: this.stableCoverageTargetPixels("imagery"),
+      });
+      this.lastCoverageStrategy = coverageSelection?.strategy ?? "none";
+      const coverageTiles = coverageSelection?.tiles;
+      // Il quadtree SSE produce foglie già non sovrapposte E ordinate per
+      // priorità di caricamento: il pruning le riordinerebbe per (z,y,x)
+      // distruggendo la priorità.
+      const quadtreeSelection = this.lodOptions.strategy === "quadtree";
+      const surfaceCoverageTiles = coverageTiles
+        ? quadtreeSelection
+          ? coverageTiles
+          : nonOverlappingQuadtreeTiles(coverageTiles)
+        : undefined;
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const terrainCoverageTiles = this.terrainSurface && imageryCenter
         ? terrainTargetLevel === imageryTargetLevel
           ? surfaceCoverageTiles
-          : this.screenSpaceCoverageTiles(
-              this.effectiveTerrainTileBudget(lodContext),
-              terrainTargetLevel,
-              coveragePositions,
-              this.stableCoverageTargetPixels("terrain"),
-              false,
-            )
+          : quadtreeSelection &&
+              surfaceCoverageTiles &&
+              imageryTargetLevel !== undefined &&
+              terrainTargetLevel !== undefined &&
+              imageryTargetLevel > terrainTargetLevel
+            ? // Plan3 Fase 5: il terrain deriva dallo stesso albero dell'imagery,
+              // mappato al livello terrain — un solo attraversamento per frame.
+              deriveCoarserCoverage(
+                surfaceCoverageTiles,
+                imageryTargetLevel - terrainTargetLevel,
+                this.effectiveTerrainTileBudget(lodContext),
+              )
+            : this.selectionStrategy.selectCoverage({
+                maxTiles: this.effectiveTerrainTileBudget(lodContext),
+                targetLevel: terrainTargetLevel,
+                coveragePositions,
+                targetTilePixels: this.stableCoverageTargetPixels("terrain"),
+                recordStrategy: false,
+              })?.tiles
         : undefined;
-      const terrainSurfaceCoverageTiles = terrainCoverageTiles ? nonOverlappingQuadtreeTiles(terrainCoverageTiles) : undefined;
+      const terrainSurfaceCoverageTiles = terrainCoverageTiles
+        ? quadtreeSelection
+          ? terrainCoverageTiles
+          : nonOverlappingQuadtreeTiles(terrainCoverageTiles)
+        : undefined;
       const coverageLevels = summarizeTileLevels(surfaceCoverageTiles ?? []);
       const afterCoverage = performance.now();
-      this.lastImageryRequestTileIds = surfaceCoverageTiles?.map((tile) => tile.id) ?? [];
+      const nextImageryRequestTileIds = surfaceCoverageTiles?.map((tile) => tile.id) ?? [];
+      this.lastTileChurn = countTileChurn(this.lastImageryRequestTileIds, nextImageryRequestTileIds);
+      this.lastImageryRequestTileIds = nextImageryRequestTileIds;
       this.lastCoverageBudget = coverageBudget;
       this.lastCoverageSamples = coveragePositions.length;
       const stats = this.imagery.update(
@@ -987,6 +1088,7 @@ export class GeoViewer {
         coverageBudget,
         coverageSamples: coveragePositions.length,
         coverageStrategy: this.lastCoverageStrategy,
+        tileChurn: this.lastTileChurn,
         coverageLevels,
         effectiveRequestBudget: requestBudget,
         imageryTargetLevel,
@@ -1108,6 +1210,14 @@ export class GeoViewer {
 
   private effectiveCoverageTileBudget(lodContext: LodContext): number {
     const elasticBudget = this.effectiveTileBudget(lodContext);
+
+    // Il quadtree SSE copre onestamente tutto il frustum: i tetti per quota,
+    // tarati sulle strategie ad anelli, lo strozzerebbero. Il raffinamento è
+    // già limitato dalla soglia SSE; serve solo il tetto elastico globale.
+    if (this.lodOptions.strategy === "quadtree") {
+      return Math.min(elasticBudget, 256);
+    }
+
     const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
 
     if (altitudeMeters <= 2_500) {
@@ -1115,11 +1225,11 @@ export class GeoViewer {
     }
 
     if (altitudeMeters <= 20_000) {
-      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 72 : 64);
+      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 144 : 64);
     }
 
     if (altitudeMeters < 80_000) {
-      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 128 : 96);
+      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 176 : 96);
     }
 
     if (altitudeMeters <= 250_000) {
@@ -1691,7 +1801,7 @@ export class GeoViewer {
       return samples;
     }
 
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const cartographic = this.cameraCartographic();
     const anchor: readonly [number, number, number?] = [cartographic.lon, cartographic.lat, 0];
 
     return [anchor, ...samples];
@@ -1735,692 +1845,6 @@ export class GeoViewer {
     }
 
     return nearest;
-  }
-
-  private screenSpaceCoverageTiles(
-    maxTiles = 2048,
-    targetLevelOverride?: number,
-    coveragePositions: readonly (readonly [number, number, number?])[] = [],
-    targetTilePixels = 256 * 1.08,
-    recordStrategy = true,
-  ): QuadtreeTile[] | undefined {
-    const width = this.canvas.width || this.canvas.clientWidth;
-    const height = this.canvas.height || this.canvas.clientHeight;
-
-    if (width <= 0 || height <= 0) {
-      if (recordStrategy) {
-        this.lastCoverageStrategy = "none";
-      }
-      return undefined;
-    }
-
-    const targetLevel =
-      targetLevelOverride ??
-      this.projectedImageryLevel() ??
-      selectLevel(this.cameraDistanceForLod(), 22, {
-        viewportHeight: this.lodViewportHeight(),
-        fov: this.camera.fov,
-      });
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitudeMeters > 8_000_000) {
-      const distantGlobeLevel = altitudeMeters > 18_000_000 ? 2 : 3;
-      const globeTiles = this.wholeGlobeCoverageTiles(distantGlobeLevel, maxTiles);
-
-      if (globeTiles.length > 0) {
-        if (recordStrategy) {
-          this.lastCoverageStrategy = "whole-globe-quadtree";
-        }
-        return globeTiles;
-      }
-    }
-
-    const useScreenSpaceCoverage = altitudeMeters < 80_000;
-
-    if (useScreenSpaceCoverage) {
-      const clodCoverage = this.clodCoverageTiles(maxTiles, targetLevel, width, height);
-
-      if (clodCoverage && clodCoverage.length > 0) {
-        if (recordStrategy) {
-          this.lastCoverageStrategy = "camera-clipmap-screen-quadtree";
-        }
-        return clodCoverage;
-      }
-    }
-
-    if (altitudeMeters <= 1_000_000) {
-      const anchoredCoverage = this.cameraAnchoredCoverageTiles(targetLevel, maxTiles);
-
-      if (anchoredCoverage.length > 0) {
-        if (recordStrategy) {
-          this.lastCoverageStrategy = "camera-anchored-mid-altitude";
-        }
-        return anchoredCoverage;
-      }
-    }
-
-    const rayCoverage = useScreenSpaceCoverage
-      ? undefined
-      : this.coverageTilesFromVisibleSamples(coveragePositions, targetLevel, maxTiles);
-
-    if (rayCoverage) {
-      if (recordStrategy) {
-        this.lastCoverageStrategy = "sample-bbox";
-      }
-      return rayCoverage;
-    }
-
-    const threshold = Math.max(32, targetTilePixels);
-    const rootLevel = altitudeMeters > 8_000_000 ? 1 : 2;
-    const rootCount = this.imageryTiling.tileCount(rootLevel);
-    const stack: QuadtreeTile[] = [];
-    const selected: { tile: QuadtreeTile; bounds: ScreenBounds }[] = [];
-
-    for (let y = 0; y < rootCount; y += 1) {
-      for (let x = 0; x < rootCount; x += 1) {
-        stack.push(createQuadtreeTile(x, y, rootLevel));
-      }
-    }
-
-    while (stack.length > 0) {
-      const tile = stack.pop();
-
-      if (!tile) {
-        continue;
-      }
-
-      const bounds = this.projectTileScreenBounds(tile);
-
-      if (!bounds || !screenBoundsIntersectsViewport(bounds, width, height)) {
-        continue;
-      }
-
-      const projectedSize = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-      const shouldSubdivide = tile.z < targetLevel && projectedSize > threshold;
-      const canSubdivide = shouldSubdivide && selected.length + stack.length + 4 <= maxTiles;
-
-      if (!canSubdivide) {
-        selected.push({ tile, bounds });
-        continue;
-      }
-
-      const childX = tile.x * 2;
-      const childY = tile.y * 2;
-      const childLevel = tile.z + 1;
-      stack.push(
-        createQuadtreeTile(childX, childY, childLevel),
-        createQuadtreeTile(childX + 1, childY, childLevel),
-        createQuadtreeTile(childX, childY + 1, childLevel),
-        createQuadtreeTile(childX + 1, childY + 1, childLevel),
-      );
-    }
-
-    const prioritized = selected
-      .sort((a, b) => screenBoundsDistanceToViewportCenter(a.bounds, width, height) - screenBoundsDistanceToViewportCenter(b.bounds, width, height))
-      .map((entry) => entry.tile);
-    const cameraAnchoredCoverage = useScreenSpaceCoverage
-      ? this.cameraAnchoredCoverageTiles(targetLevel, maxTiles)
-      : [];
-    const mergedCoverage =
-      cameraAnchoredCoverage.length > 0
-        ? mergePriorityCoverageTiles(cameraAnchoredCoverage, prioritized, maxTiles)
-        : prioritized.slice(0, maxTiles);
-
-    if (recordStrategy) {
-      this.lastCoverageStrategy =
-        mergedCoverage.length > 0
-          ? cameraAnchoredCoverage.length > 0
-            ? "camera-anchored-screen-quadtree"
-            : useScreenSpaceCoverage
-              ? "screen-quadtree-near"
-              : "screen-quadtree"
-          : "none";
-    }
-    return mergedCoverage.length > 0 ? mergedCoverage : undefined;
-  }
-
-  private cameraAnchoredCoverageTiles(targetLevel: number, maxTiles: number): QuadtreeTile[] {
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitudeMeters > 1_000_000 || !Number.isFinite(targetLevel) || maxTiles <= 0) {
-      return [];
-    }
-
-    const anchor = this.viewCoverageAnchorCartographic();
-
-    if (!anchor) {
-      return [];
-    }
-
-    const level = Math.max(2, Math.round(targetLevel));
-    const tilted = Math.abs(this.camera.tiltOffset) > 0.35;
-    const midAltitude = altitudeMeters > 80_000;
-    const padding = midAltitude ? 4 : altitudeMeters <= 2_500 ? 2 : tilted ? 3 : 2;
-    const limit = Math.min(maxTiles, midAltitude ? 81 : altitudeMeters <= 2_500 ? 25 : tilted ? 49 : 25);
-    const count = this.imageryTiling.tileCount(level);
-    const center = this.imageryTiling.positionToTileXY(anchor[0], anchor[1], level);
-    const tiles: QuadtreeTile[] = [];
-
-    for (let y = Math.max(0, center.y - padding); y <= Math.min(count - 1, center.y + padding); y += 1) {
-      for (let x = center.x - padding; x <= center.x + padding; x += 1) {
-        tiles.push(createQuadtreeTile(moduloTileX(x, count), y, level));
-
-        if (tiles.length >= limit) {
-          return tiles;
-        }
-      }
-    }
-
-    return tiles;
-  }
-
-  private viewCoverageAnchorCartographic(): [number, number, number] | undefined {
-    const viewSamples = [
-      [0, 0],
-      [0, -0.25],
-      [-0.25, -0.25],
-      [0.25, -0.25],
-      [0, -0.5],
-      [-0.35, -0.5],
-      [0.35, -0.5],
-    ] as const;
-
-    for (const [x, y] of viewSamples) {
-      const cartographic = this.pickNormalizedDeviceCoordinate(x, y);
-
-      if (cartographic) {
-        return [cartographic.lon, cartographic.lat, cartographic.height];
-      }
-    }
-
-    const center = this.nearestVisibleCartographicSample();
-
-    if (center) {
-      return center;
-    }
-
-    for (const [x, y] of viewSamples) {
-      const ray = this.pickRayFromNdc(x, y);
-      const cartographic = ray ? cartographicFromClosestRaySurfacePoint(ray) : undefined;
-
-      if (cartographic) {
-        return cartographic;
-      }
-    }
-
-    const camera = this.cameraSurfaceStatus();
-
-    return Number.isFinite(camera.lon) && Number.isFinite(camera.lat)
-      ? [camera.lon, camera.lat, 0]
-      : undefined;
-  }
-
-  private clodCoverageTiles(
-    maxTiles: number,
-    targetLevel: number,
-    width: number,
-    height: number,
-  ): QuadtreeTile[] | undefined {
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    const cameraTiles = mergeOrderedCoverageTiles(this.cameraClipmapRingTiles(targetLevel, maxTiles), maxTiles);
-
-    const distanceBudget = Math.max(0, maxTiles - cameraTiles.length);
-    const allowDistanceCoverage = this.smoothedCpuMs < 80 && this.adaptiveLodState.qualityReduction < 1.25;
-    const distanceCoverage =
-      distanceBudget > 0 && allowDistanceCoverage
-        ? this.distanceDependentCoverageTiles(distanceBudget, targetLevel, width, height)
-        : undefined;
-
-    if (!distanceCoverage || distanceCoverage.length === 0) {
-      return cameraTiles.length > 0 ? cameraTiles : undefined;
-    }
-
-    const distanceTiles = altitudeMeters <= 80_000
-      ? distanceCoverage
-      : this.expandCoverageTiles(distanceCoverage, distanceBudget);
-    const merged = mergePriorityCoverageTiles(cameraTiles, distanceTiles, maxTiles);
-
-    return merged.length > 0 ? merged : undefined;
-  }
-
-  private cameraClipmapRingTiles(targetLevel: number, maxTiles: number): QuadtreeTile[] {
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitudeMeters > 120_000) {
-      return [];
-    }
-
-    const anchor = this.viewCoverageAnchorCartographic();
-
-    if (!anchor) {
-      return [];
-    }
-
-    const roundedTargetLevel = Math.max(2, Math.round(targetLevel));
-    const rings =
-      altitudeMeters <= 2_500
-        ? [
-            { level: roundedTargetLevel, padding: 1 },
-            { level: roundedTargetLevel - 2, padding: 1 },
-            { level: roundedTargetLevel - 4, padding: 2 },
-          ]
-        : Math.abs(this.camera.tiltOffset) > 0.35
-          ? [
-              { level: roundedTargetLevel, padding: 1 },
-              { level: roundedTargetLevel - 2, padding: 1 },
-              { level: roundedTargetLevel - 4, padding: 2 },
-            ]
-          : [
-              { level: roundedTargetLevel, padding: 1 },
-              { level: roundedTargetLevel - 3, padding: 2 },
-            ];
-    const tiles = new Map<string, QuadtreeTile>();
-
-    for (const ring of rings) {
-      const level = Math.max(2, ring.level);
-      const count = this.imageryTiling.tileCount(level);
-      const center = this.imageryTiling.positionToTileXY(anchor[0], anchor[1], level);
-
-      for (let y = Math.max(0, center.y - ring.padding); y <= Math.min(count - 1, center.y + ring.padding); y += 1) {
-        for (let x = center.x - ring.padding; x <= center.x + ring.padding; x += 1) {
-          const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
-          tiles.set(tile.id, tile);
-
-          if (tiles.size >= maxTiles) {
-            return [...tiles.values()];
-          }
-        }
-      }
-    }
-
-    return [...tiles.values()];
-  }
-
-  private distanceDependentCoverageTiles(
-    maxTiles: number,
-    targetLevel: number,
-    width: number,
-    height: number,
-  ): QuadtreeTile[] | undefined {
-    const startedAt = performance.now();
-    const budgetMs = this.smoothedCpuMs > 32 ? 4 : 8;
-    const rootLevel = 2;
-    const rootCount = this.imageryTiling.tileCount(rootLevel);
-    const queue: ScreenTileCandidate[] = [];
-    const selected: QuadtreeTile[] = [];
-
-    for (let y = 0; y < rootCount; y += 1) {
-      for (let x = 0; x < rootCount; x += 1) {
-        if (performance.now() - startedAt > budgetMs) {
-          return undefined;
-        }
-
-        const candidate = this.screenTileCandidate(createQuadtreeTile(x, y, rootLevel), targetLevel, width, height);
-
-        if (candidate) {
-          queue.push(candidate);
-        }
-      }
-    }
-
-    while (queue.length > 0) {
-      if (performance.now() - startedAt > budgetMs) {
-        return selected.length > 0 ? selected.slice(0, maxTiles) : undefined;
-      }
-
-      const index = bestCandidateIndex(queue);
-      const candidate = queue.splice(index, 1)[0];
-      const childrenFitBudget = selected.length + queue.length + 4 <= maxTiles;
-
-      if (candidate.tile.z < candidate.desiredLevel && childrenFitBudget) {
-        const childX = candidate.tile.x * 2;
-        const childY = candidate.tile.y * 2;
-        const childLevel = candidate.tile.z + 1;
-        const children = [
-          createQuadtreeTile(childX, childY, childLevel),
-          createQuadtreeTile(childX + 1, childY, childLevel),
-          createQuadtreeTile(childX, childY + 1, childLevel),
-          createQuadtreeTile(childX + 1, childY + 1, childLevel),
-        ]
-          .map((tile) => this.screenTileCandidate(tile, targetLevel, width, height))
-          .filter((child): child is ScreenTileCandidate => child !== undefined);
-
-        if (children.length > 0) {
-          queue.push(...children);
-          continue;
-        }
-      }
-
-      if (this.isNearGroundCoarseCoverage(candidate.tile, targetLevel) && (selected.length > 0 || queue.length > 0)) {
-        continue;
-      }
-
-      selected.push(candidate.tile);
-    }
-
-    return selected.length > 0 ? selected.slice(0, maxTiles) : undefined;
-  }
-
-  private wholeGlobeCoverageTiles(level: number, maxTiles: number): QuadtreeTile[] {
-    const clampedLevel = Math.max(0, Math.round(level));
-    const count = this.imageryTiling.tileCount(clampedLevel);
-    const tiles: QuadtreeTile[] = [];
-
-    for (let y = 0; y < count; y += 1) {
-      for (let x = 0; x < count; x += 1) {
-        tiles.push(createQuadtreeTile(x, y, clampedLevel));
-
-        if (tiles.length >= maxTiles) {
-          return tiles;
-        }
-      }
-    }
-
-    return tiles;
-  }
-
-  private distanceCoverageTileBudget(maxTiles: number): number {
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitudeMeters <= 2_500) {
-      return Math.min(maxTiles, 192);
-    }
-
-    if (altitudeMeters <= 8_000) {
-      return Math.min(maxTiles, 256);
-    }
-
-    return maxTiles;
-  }
-
-  private screenTileCandidate(
-    tile: QuadtreeTile,
-    targetLevel: number,
-    width: number,
-    height: number,
-  ): ScreenTileCandidate | undefined {
-    const bounds = this.projectTileScreenBounds(tile);
-
-    if (!bounds || !screenBoundsIntersectsViewport(bounds, width, height)) {
-      return undefined;
-    }
-
-    const desiredLevel = this.distanceDesiredTileLevel(tile, targetLevel);
-    const distanceToCenter = screenBoundsDistanceToViewportCenter(bounds, width, height);
-    const viewportScale = Math.max(1, Math.hypot(width, height));
-    const normalizedCenterDistance = Math.sqrt(distanceToCenter) / viewportScale;
-
-    return {
-      tile,
-      bounds,
-      desiredLevel,
-      priority: desiredLevel * 1_000_000 + tile.z * 10_000 - normalizedCenterDistance * 1_000,
-    };
-  }
-
-  private distanceDesiredTileLevel(tile: QuadtreeTile, targetLevel: number): number {
-    const rectangle = this.imageryTiling.tileXYToRectangle(tile);
-    const camera = this.cameraSurfaceStatus();
-    const cameraToTileMeters = distanceFromCartographicToRectangleMeters(camera.lon, camera.lat, rectangle);
-    const referenceMeters = Math.max(250, this.cameraAltitudeAboveSurfaceMeters());
-    const distanceRatio = Math.max(1, cameraToTileMeters / referenceMeters);
-    const levelDrop = Math.floor(Math.log2(distanceRatio));
-    const minLevel = this.minimumNearGroundCoverageLevel(targetLevel);
-
-    return Math.max(minLevel, Math.min(targetLevel, Math.round(targetLevel - levelDrop)));
-  }
-
-  private isNearGroundSampleCoverage(tiles: readonly QuadtreeTile[], targetLevel: number): boolean {
-    if (tiles.length === 0 || this.cameraAltitudeAboveSurfaceMeters() > 12_000) {
-      return false;
-    }
-
-    const minimumLevel = this.minimumNearGroundCoverageLevel(targetLevel);
-    return tiles.every((tile) => tile.z >= minimumLevel);
-  }
-
-  private isNearGroundCoarseCoverage(tile: QuadtreeTile, targetLevel: number): boolean {
-    if (this.cameraAltitudeAboveSurfaceMeters() > 12_000) {
-      return false;
-    }
-
-    return tile.z < this.minimumNearGroundCoverageLevel(targetLevel);
-  }
-
-  private minimumNearGroundCoverageLevel(targetLevel: number): number {
-    const altitude = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitude <= 2_500) {
-      return Math.max(2, targetLevel - 3);
-    }
-
-    if (altitude <= 8_000) {
-      return Math.max(2, targetLevel - 4);
-    }
-
-    if (altitude <= 20_000) {
-      return Math.max(2, targetLevel - 5);
-    }
-
-    return 2;
-  }
-
-  private coverageTilesFromVisibleSamples(
-    coveragePositions: readonly (readonly [number, number, number?])[],
-    targetLevel: number,
-    maxTiles: number,
-  ): QuadtreeTile[] | undefined {
-    const samples = coveragePositions.filter(
-      (position): position is readonly [number, number, number?] =>
-        Number.isFinite(position[0]) && Number.isFinite(position[1]),
-    );
-
-    if (samples.length === 0 || !Number.isFinite(targetLevel)) {
-      return undefined;
-    }
-
-    const minLevel = 2;
-    const startLevel = Math.max(minLevel, Math.round(targetLevel));
-    const fallbackDepth = this.cameraAltitudeAboveSurfaceMeters() <= 2_500 ? 8 : 3;
-    const minimumScreenSpaceLevel = Math.max(minLevel, startLevel - fallbackDepth);
-    const sampleCompleteness = samples.length / Math.max(1, this.currentViewportSampleCount);
-
-    if (sampleCompleteness < 0.35) {
-      return undefined;
-    }
-
-    for (let level = startLevel; level >= minimumScreenSpaceLevel; level -= 1) {
-      const count = this.imageryTiling.tileCount(level);
-      const anchor = this.imageryTiling.positionToTileXY(samples[0][0], samples[0][1], level);
-      const padding = this.coveragePaddingForLevel(level, sampleCompleteness);
-      let minX = Number.POSITIVE_INFINITY;
-      let maxX = Number.NEGATIVE_INFINITY;
-      let minY = Number.POSITIVE_INFINITY;
-      let maxY = Number.NEGATIVE_INFINITY;
-
-      for (const [lon, lat] of samples) {
-        const tile = this.imageryTiling.positionToTileXY(lon, lat, level);
-        const unwrappedX = unwrapTileX(tile.x, anchor.x, count);
-
-        minX = Math.min(minX, unwrappedX);
-        maxX = Math.max(maxX, unwrappedX);
-        minY = Math.min(minY, tile.y);
-        maxY = Math.max(maxY, tile.y);
-      }
-
-      if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
-        continue;
-      }
-
-      const paddedMinY = Math.max(0, minY - padding);
-      const paddedMaxY = Math.min(count - 1, maxY + padding);
-      const spanX = maxX - minX + 1 + padding * 2;
-      const spanY = paddedMaxY - paddedMinY + 1;
-      const estimatedTileCount = spanX * spanY;
-
-      if (spanX <= 0 || spanY <= 0 || estimatedTileCount > maxTiles) {
-        continue;
-      }
-
-      const tiles = new Map<string, QuadtreeTile>();
-
-      for (let y = paddedMinY; y <= paddedMaxY; y += 1) {
-        for (let x = minX - padding; x <= maxX + padding; x += 1) {
-          const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
-          tiles.set(tile.id, tile);
-        }
-      }
-
-      if (tiles.size > 0 && tiles.size <= maxTiles) {
-        return [...tiles.values()].slice(0, maxTiles);
-      }
-    }
-
-    return undefined;
-  }
-
-  private coverageTilesFromSampleNeighborhoods(
-    coveragePositions: readonly (readonly [number, number, number?])[],
-    targetLevel: number,
-    maxTiles: number,
-  ): QuadtreeTile[] | undefined {
-    const samples = coveragePositions.filter(
-      (position): position is readonly [number, number, number?] =>
-        Number.isFinite(position[0]) && Number.isFinite(position[1]),
-    );
-
-    if (samples.length === 0 || !Number.isFinite(targetLevel)) {
-      return undefined;
-    }
-
-    const minLevel = 2;
-    const startLevel = Math.max(minLevel, Math.round(targetLevel));
-    const minimumLevel = minLevel;
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    for (let level = startLevel; level >= minimumLevel; level -= 1) {
-      const count = this.imageryTiling.tileCount(level);
-      const padding =
-        altitudeMeters <= 2_500
-          ? Math.abs(this.camera.tiltOffset) > 0.35
-            ? 1
-            : 2
-          : Math.min(1, this.coveragePaddingForLevel(level));
-      const tiles = new Map<string, QuadtreeTile>();
-      let overflow = false;
-
-      for (const [lon, lat] of samples) {
-        const center = this.imageryTiling.positionToTileXY(lon, lat, level);
-
-        for (let y = center.y - padding; y <= center.y + padding; y += 1) {
-          if (y < 0 || y >= count) {
-            continue;
-          }
-
-          for (let x = center.x - padding; x <= center.x + padding; x += 1) {
-            const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
-            tiles.set(tile.id, tile);
-
-            if (tiles.size > maxTiles) {
-              overflow = true;
-              break;
-            }
-          }
-
-          if (overflow) {
-            break;
-          }
-        }
-
-        if (overflow) {
-          break;
-        }
-      }
-
-      if (!overflow && tiles.size > 0) {
-        return [...tiles.values()].slice(0, maxTiles);
-      }
-    }
-
-    return undefined;
-  }
-
-  private radentNearGroundMixedCoverage(
-    samples: readonly (readonly [number, number, number?])[],
-    targetLevel: number,
-    maxTiles: number,
-  ): QuadtreeTile[] | undefined {
-    if (this.cameraAltitudeAboveSurfaceMeters() > 80_000 || Math.abs(this.camera.tiltOffset) <= 0.35) {
-      return undefined;
-    }
-
-    const tiles = new Map<string, QuadtreeTile>();
-    const anchorSamples = samples.slice(0, 1);
-    const addNeighborhood = (level: number, padding: number): void => {
-      const count = this.imageryTiling.tileCount(level);
-
-      for (const [lon, lat] of anchorSamples) {
-        const center = this.imageryTiling.positionToTileXY(lon, lat, level);
-
-        for (let y = Math.max(0, center.y - padding); y <= Math.min(count - 1, center.y + padding); y += 1) {
-          for (let x = center.x - padding; x <= center.x + padding; x += 1) {
-            const tile = createQuadtreeTile(moduloTileX(x, count), y, level);
-            tiles.set(tile.id, tile);
-          }
-        }
-      }
-    };
-
-    addNeighborhood(Math.max(2, targetLevel - 5), 3);
-    addNeighborhood(Math.max(2, targetLevel - 3), 2);
-    addNeighborhood(targetLevel, 1);
-
-    return tiles.size > 0 && tiles.size <= maxTiles ? [...tiles.values()] : undefined;
-  }
-
-  private coveragePaddingForLevel(level: number, sampleCompleteness = 1): number {
-    const incompleteViewPadding = sampleCompleteness < 0.6 ? 2 : sampleCompleteness < 0.85 ? 1 : 0;
-
-    if (level >= 13) {
-      return 3 + incompleteViewPadding;
-    }
-
-    if (level >= 10) {
-      return 2 + incompleteViewPadding;
-    }
-
-    return 1 + incompleteViewPadding;
-  }
-
-  private expandCoverageTiles(tiles: readonly QuadtreeTile[], maxTiles: number): QuadtreeTile[] {
-    const expanded = new Map<string, QuadtreeTile>();
-
-    for (const tile of tiles) {
-      const count = this.imageryTiling.tileCount(tile.z);
-      const padding = tile.z >= 13 ? 3 : tile.z >= 10 ? 2 : 1;
-
-      for (let y = tile.y - padding; y <= tile.y + padding; y += 1) {
-        if (y < 0 || y >= count) {
-          continue;
-        }
-
-        for (let x = tile.x - padding; x <= tile.x + padding; x += 1) {
-          const wrappedX = ((x % count) + count) % count;
-          const expandedTile = createQuadtreeTile(wrappedX, y, tile.z);
-
-          if (!expanded.has(expandedTile.id)) {
-            expanded.set(expandedTile.id, expandedTile);
-          }
-
-          if (expanded.size >= maxTiles) {
-            return [...expanded.values()];
-          }
-        }
-      }
-    }
-
-    return [...expanded.values()];
   }
 
   private projectedImageryLevel(tileSize = 256, qualityFactor = 1.15): number | undefined {
@@ -2603,15 +2027,14 @@ export class GeoViewer {
       return this.tileFacesCamera(tile);
     }
 
-    if (this.cameraAltitudeAboveSurfaceMeters() < 250_000) {
-      return this.tileFacesCamera(tile);
-    }
-
     const cameraNormal = normalize(this.camera.position);
     const horizonDot = 1 / cameraDistance;
-    const centerDot = dot(cameraNormal, center);
+    const centerDot = dot(cameraNormal, normalize(center));
+    // Margine per il terreno oltre l'orizzonte geometrico e per l'appiattimento
+    // dell'ellissoide (raggio locale < 1): più largo vicino al suolo.
+    const horizonSlack = this.cameraAltitudeAboveSurfaceMeters() < 250_000 ? 0.004 : 0.002;
 
-    return centerDot + radius >= horizonDot - 0.002 && this.tileFacesCamera(tile);
+    return centerDot + radius >= horizonDot - horizonSlack && this.tileFacesCamera(tile);
   }
 
   private tileFacesCamera(tile: { x: number; y: number; z: number }): boolean {
@@ -2748,7 +2171,7 @@ export class GeoViewer {
       return undefined;
     }
 
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(hit);
+    const cartographic = Ellipsoid.WGS84.unitCartesianToCartographic(hit);
     return { lon: cartographic.lon, lat: cartographic.lat, height: 0 };
   }
 
@@ -2759,7 +2182,7 @@ export class GeoViewer {
       return undefined;
     }
 
-    let cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(ellipsoidHit);
+    let cartographic = Ellipsoid.WGS84.unitCartesianToCartographic(ellipsoidHit);
     let height = this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat);
 
     if (height === undefined) {
@@ -2772,7 +2195,7 @@ export class GeoViewer {
       return undefined;
     }
 
-    cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(point);
+    cartographic = Ellipsoid.WGS84.unitCartesianToCartographic(point);
     height = this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat) ?? height;
     point = intersectNormalizedWgs84Surface(ray, height);
 
@@ -2780,7 +2203,7 @@ export class GeoViewer {
       return undefined;
     }
 
-    cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(point);
+    cartographic = Ellipsoid.WGS84.unitCartesianToCartographic(point);
     return {
       point,
       lon: cartographic.lon,
@@ -2834,7 +2257,7 @@ export class GeoViewer {
       return cached.height;
     }
 
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const cartographic = this.cameraCartographic();
     const height = this.sampleTerrainHeightAt(cartographic.lon, cartographic.lat);
     this.terrainHeightBelowCameraCache = {
       token: this.terrainHeightSampleToken,
@@ -2863,20 +2286,11 @@ export class GeoViewer {
   }
 
   private cameraEllipsoidHeightMeters(): number {
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
-    const normal = Ellipsoid.WGS84.geodeticSurfaceNormal(cartographic.lon, cartographic.lat);
-    const surface = Ellipsoid.WGS84.cartographicToCartesian({ lon: cartographic.lon, lat: cartographic.lat, height: 0 });
-    const camera = [
-      this.camera.position[0] * Ellipsoid.WGS84.maximumRadius,
-      this.camera.position[1] * Ellipsoid.WGS84.maximumRadius,
-      this.camera.position[2] * Ellipsoid.WGS84.maximumRadius,
-    ] as const;
-
-    return dot(subtract(camera, surface), normal);
+    return this.cameraCartographic().height ?? 0;
   }
 
   private cameraSurfaceDistanceForHeight(heightMeters: number): number {
-    const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(this.camera.position);
+    const cartographic = this.cameraCartographic();
     const surface = Ellipsoid.WGS84.cartographicToCartesian({
       lon: cartographic.lon,
       lat: cartographic.lat,
@@ -2893,86 +2307,6 @@ export class GeoViewer {
 }
 
 export { Ellipsoid } from "./core/geodesy/ellipsoid";
-
-type ScreenBounds = {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-};
-
-type ScreenTileCandidate = {
-  tile: QuadtreeTile;
-  bounds: ScreenBounds;
-  desiredLevel: number;
-  priority: number;
-};
-
-type RadianRectangle = {
-  west: number;
-  south: number;
-  east: number;
-  north: number;
-};
-
-function screenBoundsIntersectsViewport(bounds: ScreenBounds, width: number, height: number): boolean {
-  const padding = Math.max(96, Math.min(width, height) * 0.18);
-
-  return bounds.maxX >= -padding && bounds.minX <= width + padding && bounds.maxY >= -padding && bounds.minY <= height + padding;
-}
-
-function conservativeViewportBounds(width: number, height: number): ScreenBounds {
-  return {
-    minX: -width,
-    maxX: width * 2,
-    minY: -height,
-    maxY: height * 2,
-  };
-}
-
-function screenBoundsDistanceToViewportCenter(bounds: ScreenBounds, width: number, height: number): number {
-  const centerX = (bounds.minX + bounds.maxX) * 0.5;
-  const centerY = (bounds.minY + bounds.maxY) * 0.5;
-  const dx = centerX - width * 0.5;
-  const dy = centerY - height * 0.5;
-
-  return dx * dx + dy * dy;
-}
-
-function bestCandidateIndex(candidates: readonly ScreenTileCandidate[]): number {
-  let bestIndex = 0;
-  let bestPriority = Number.NEGATIVE_INFINITY;
-
-  for (let index = 0; index < candidates.length; index += 1) {
-    if (candidates[index].priority > bestPriority) {
-      bestPriority = candidates[index].priority;
-      bestIndex = index;
-    }
-  }
-
-  return bestIndex;
-}
-
-function distanceFromCartographicToRectangleMeters(lon: number, lat: number, rectangle: RadianRectangle): number {
-  const closestLon = clampRadians(lon, rectangle.west, rectangle.east);
-  const closestLat = clampRadians(lat, rectangle.south, rectangle.north);
-
-  return haversineMeters(lon, lat, closestLon, closestLat);
-}
-
-function haversineMeters(lonA: number, latA: number, lonB: number, latB: number): number {
-  const dLat = latB - latA;
-  const dLon = lonB - lonA;
-  const sinLat = Math.sin(dLat * 0.5);
-  const sinLon = Math.sin(dLon * 0.5);
-  const a = sinLat * sinLat + Math.cos(latA) * Math.cos(latB) * sinLon * sinLon;
-
-  return 2 * Ellipsoid.WGS84.maximumRadius * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
-}
-
-function clampRadians(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
   const histogram: Record<number, number> = {};
@@ -2995,148 +2329,48 @@ function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
   };
 }
 
-function nonOverlappingQuadtreeTiles(tiles: readonly QuadtreeTile[]): QuadtreeTile[] {
-  const selected: QuadtreeTile[] = [];
-  const unique = new Map(tiles.map((tile) => [tile.id, tile]));
-
-  for (const tile of [...unique.values()].sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x)) {
-    if (selected.some((ancestor) => isQuadtreeDescendantOf(tile, ancestor))) {
-      continue;
-    }
-
-    selected.push(tile);
-  }
-
-  return selected;
-}
-
-function mergePriorityCoverageTiles(
-  priorityTiles: readonly QuadtreeTile[],
-  secondaryTiles: readonly QuadtreeTile[],
-  maxTiles: number,
-): QuadtreeTile[] {
-  const selected: QuadtreeTile[] = [];
-  const visited = new Set<string>();
-  const priorityMaxLevel = priorityTiles.reduce((level, tile) => Math.max(level, tile.z), 0);
-  const addExact = (tile: QuadtreeTile): boolean => {
-    if (visited.has(tile.id)) {
-      return selected.length < maxTiles;
-    }
-
-    selected.push(tile);
-    visited.add(tile.id);
-    return selected.length < maxTiles;
-  };
-  const addSecondary = (tile: QuadtreeTile): boolean => {
-    if (selected.length >= maxTiles || visited.has(tile.id)) {
-      return selected.length < maxTiles;
-    }
-
-    const overlap = selected.find((selectedTile) => quadtreeTilesOverlap(tile, selectedTile));
-
-    if (!overlap) {
-      return addExact(tile);
-    }
-
-    if (tile.z >= overlap.z) {
-      return selected.length < maxTiles;
-    }
-
-    if (tile.z >= priorityMaxLevel) {
-      return selected.length < maxTiles;
-    }
-
-    for (const child of quadtreeChildren(tile)) {
-      if (!addSecondary(child)) {
-        return false;
-      }
-    }
-
-    return selected.length < maxTiles;
-  };
-
-  for (const tile of priorityTiles) {
-    if (!selected.some((selectedTile) => quadtreeTilesOverlap(tile, selectedTile)) && !addExact(tile)) {
-      return selected;
-    }
-  }
-
-  for (const tile of secondaryTiles) {
-    if (!addSecondary(tile)) {
-      return selected;
-    }
-  }
-
-  return selected;
-}
-
-function mergeOrderedCoverageTiles(tiles: readonly QuadtreeTile[], maxTiles: number): QuadtreeTile[] {
-  const selected: QuadtreeTile[] = [];
-  const visited = new Set<string>();
-  const maxLevel = tiles.reduce((level, tile) => Math.max(level, tile.z), 0);
-  const add = (tile: QuadtreeTile): boolean => {
-    if (selected.length >= maxTiles || visited.has(tile.id)) {
-      return selected.length < maxTiles;
-    }
-
-    const overlap = selected.find((selectedTile) => quadtreeTilesOverlap(tile, selectedTile));
-
-    if (!overlap) {
-      selected.push(tile);
-      visited.add(tile.id);
-      return selected.length < maxTiles;
-    }
-
-    if (tile.z >= overlap.z || tile.z >= maxLevel) {
-      return selected.length < maxTiles;
-    }
-
-    for (const child of quadtreeChildren(tile)) {
-      if (!add(child)) {
-        return false;
-      }
-    }
-
-    return selected.length < maxTiles;
-  };
+function deriveCoarserCoverage(tiles: readonly QuadtreeTile[], levelDrop: number, maxTiles: number): QuadtreeTile[] {
+  const drop = Math.max(0, Math.round(levelDrop));
+  const minLevel = 2;
+  const derived = new Map<string, QuadtreeTile>();
 
   for (const tile of tiles) {
-    if (!add(tile)) {
-      return selected;
+    const targetLevel = Math.max(minLevel, tile.z - drop);
+    const factor = 2 ** (tile.z - targetLevel);
+    const coarse = createQuadtreeTile(Math.floor(tile.x / factor), Math.floor(tile.y / factor), targetLevel);
+
+    if (!derived.has(coarse.id)) {
+      derived.set(coarse.id, coarse);
+
+      if (derived.size >= maxTiles) {
+        break;
+      }
     }
   }
 
-  return selected;
+  // Il drop uniforme su foglie di livelli diversi può produrre coppie
+  // antenato/discendente: le mesh terrain sovrapposte vanno potate.
+  return nonOverlappingQuadtreeTiles([...derived.values()]);
 }
 
-function quadtreeChildren(tile: QuadtreeTile): QuadtreeTile[] {
-  const childX = tile.x * 2;
-  const childY = tile.y * 2;
-  const childLevel = tile.z + 1;
+function countTileChurn(previousIds: readonly string[], nextIds: readonly string[]): number {
+  const previous = new Set(previousIds);
+  const next = new Set(nextIds);
+  let churn = 0;
 
-  return [
-    createQuadtreeTile(childX, childY, childLevel),
-    createQuadtreeTile(childX + 1, childY, childLevel),
-    createQuadtreeTile(childX, childY + 1, childLevel),
-    createQuadtreeTile(childX + 1, childY + 1, childLevel),
-  ];
-}
-
-function quadtreeTilesOverlap(a: QuadtreeTile, b: QuadtreeTile): boolean {
-  if (a.z === b.z) {
-    return a.x === b.x && a.y === b.y;
+  for (const id of next) {
+    if (!previous.has(id)) {
+      churn += 1;
+    }
   }
 
-  return a.z > b.z ? isQuadtreeDescendantOf(a, b) : isQuadtreeDescendantOf(b, a);
-}
-
-function isQuadtreeDescendantOf(tile: QuadtreeTile, ancestor: QuadtreeTile): boolean {
-  if (tile.z <= ancestor.z) {
-    return false;
+  for (const id of previous) {
+    if (!next.has(id)) {
+      churn += 1;
+    }
   }
 
-  const factor = 2 ** (tile.z - ancestor.z);
-  return Math.floor(tile.x / factor) === ancestor.x && Math.floor(tile.y / factor) === ancestor.y;
+  return churn;
 }
 
 function quadtreeTileFromId(id: string): QuadtreeTile | undefined {
@@ -3149,32 +2383,8 @@ function terrainTileAsQuadtree(tile: TerrainTileKey): QuadtreeTile {
   return createQuadtreeTile(tile.x, tile.y, tile.level);
 }
 
-function cartographicFromClosestRaySurfacePoint(ray: Ray): [number, number, number] | undefined {
-  const t = -dot(ray.origin, ray.direction);
-
-  if (!Number.isFinite(t) || t <= 0) {
-    return undefined;
-  }
-
-  const closest: Vec3 = [
-    ray.origin[0] + ray.direction[0] * t,
-    ray.origin[1] + ray.direction[1] * t,
-    ray.origin[2] + ray.direction[2] * t,
-  ];
-
-  if (!closest.every(Number.isFinite) || length(closest) <= 1e-6) {
-    return undefined;
-  }
-
-  const cartographic = Ellipsoid.WGS84.surfaceNormalToCartographic(normalize(closest));
-
-  return Number.isFinite(cartographic.lon) && Number.isFinite(cartographic.lat)
-    ? [cartographic.lon, cartographic.lat, 0]
-    : undefined;
-}
-
 function transformPointWithW(
-  m: Float32Array,
+  m: Mat4,
   point: Vec3,
 ): { x: number; y: number; z: number; w: number } | undefined {
   const x = point[0];
@@ -3241,24 +2451,6 @@ function normalizeCameraCollisionOptions(options: CameraCollisionOptions | undef
 
 function finiteOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) ? value : fallback;
-}
-
-function unwrapTileX(x: number, anchor: number, count: number): number {
-  let unwrapped = x;
-
-  while (unwrapped - anchor > count / 2) {
-    unwrapped -= count;
-  }
-
-  while (anchor - unwrapped > count / 2) {
-    unwrapped += count;
-  }
-
-  return unwrapped;
-}
-
-function moduloTileX(x: number, count: number): number {
-  return ((x % count) + count) % count;
 }
 
 function intersectNormalizedWgs84Surface(ray: Ray, heightMeters: number): Vec3 | undefined {

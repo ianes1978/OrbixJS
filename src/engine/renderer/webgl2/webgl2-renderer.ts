@@ -48,6 +48,7 @@ type TileProgram = {
   uImagery: WebGLUniformLocation;
   uSunDirection: WebGLUniformLocation;
   uDebugOverlay: WebGLUniformLocation;
+  uFadeAlpha: WebGLUniformLocation;
 };
 
 type TerrainProgram = {
@@ -64,6 +65,8 @@ type TerrainProgram = {
   uImageryUvOffset: WebGLUniformLocation;
   uSunDirection: WebGLUniformLocation;
   uDebugOverlay: WebGLUniformLocation;
+  uCameraPosition: WebGLUniformLocation;
+  uMorphRange: WebGLUniformLocation;
 };
 
 type VectorProgram = {
@@ -115,6 +118,8 @@ type TileEntry = {
   textureResource: RendererResourceHandle;
   level: number;
   ready: boolean;
+  /** Timestamp del primo upload texture: guida il fade-in anti-pop. */
+  readyAt?: number;
 };
 
 type GpuTexture = {
@@ -217,6 +222,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
     this.gl.generateMipmap(this.gl.TEXTURE_2D);
     entry.ready = true;
+    entry.readyAt ??= performance.now();
   }
 
   ensureDebugImageryTile(tile: QuadtreeTile): void {
@@ -390,7 +396,7 @@ export class WebGL2Renderer implements Renderer {
       this.renderImageryTiles(plan.projection, plan.view);
     }
 
-    this.renderTerrainMeshes(plan.projection, plan.view);
+    this.renderTerrainMeshes(plan.projection, plan.view, plan.cameraPosition);
 
     if (plan.passes.includes("vector")) {
       this.renderVectorLines(plan.projection, plan.view, plan.cameraPosition);
@@ -474,6 +480,10 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniform3fv(this.tileProgram.uSunDirection, this.sunDirection);
     this.gl.uniform1i(this.tileProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
 
+    const now = performance.now();
+    const drawable: { entry: TileEntry; alpha: number }[] = [];
+    const fadingAncestorIds = new Set<string>();
+
     for (const id of this.activeTileIds) {
       const entry = this.tileEntries.get(id);
 
@@ -485,18 +495,90 @@ export class WebGL2Renderer implements Renderer {
         continue;
       }
 
+      const alpha = tileFadeAlpha(entry, now);
+      drawable.push({ entry, alpha });
+
+      // Durante il fade il padre piu' vicino gia' caricato resta sotto, cosi'
+      // il nuovo livello entra senza pop ne' buchi.
+      if (alpha < 1) {
+        const ancestorId = this.nearestReadyAncestorTileId(id);
+
+        if (ancestorId) {
+          fadingAncestorIds.add(ancestorId);
+        }
+      }
+    }
+
+    const drawTile = (entry: TileEntry, alpha: number) => {
+      if (!this.gl || !this.tileProgram) {
+        return;
+      }
+
+      this.gl.uniform1f(this.tileProgram.uFadeAlpha, alpha);
       this.gl.activeTexture(this.gl.TEXTURE0);
       this.gl.bindTexture(this.gl.TEXTURE_2D, entry.texture);
       this.gl.uniform1i(this.tileProgram.uImagery, 0);
       this.gl.bindVertexArray(entry.mesh.vao);
       this.gl.drawElements(this.gl.TRIANGLES, entry.mesh.indexCount, entry.mesh.indexType, 0);
+    };
+
+    // Pass 1: antenati di supporto, opachi, senza scrivere il depth (i figli
+    // in fade devono passare il depth test sopra di loro).
+    this.gl.depthMask(false);
+
+    for (const ancestorId of fadingAncestorIds) {
+      const ancestor = this.tileEntries.get(ancestorId);
+
+      if (ancestor?.ready && !this.activeTileIds.has(ancestorId)) {
+        drawTile(ancestor, 1);
+      }
+    }
+
+    this.gl.depthMask(true);
+
+    // Pass 2: tile attive; quelle in fade in blending sopra l'antenato.
+    for (const { entry, alpha } of drawable) {
+      if (alpha < 1) {
+        this.gl.enable(this.gl.BLEND);
+        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        drawTile(entry, alpha);
+        this.gl.disable(this.gl.BLEND);
+      } else {
+        drawTile(entry, 1);
+      }
     }
 
     this.gl.enable(this.gl.DEPTH_TEST);
     this.gl.depthFunc(this.gl.LESS);
   }
 
-  private renderGlobeBase(projection: Float32Array, view: Float32Array, nodes: readonly { modelMatrix: Float32Array }[]): void {
+  private nearestReadyAncestorTileId(id: string): string | undefined {
+    const [z, x, y] = id.split("/").map(Number);
+
+    if (![z, x, y].every(Number.isFinite)) {
+      return undefined;
+    }
+
+    let level = z - 1;
+    let tileX = Math.floor(x / 2);
+    let tileY = Math.floor(y / 2);
+
+    while (level >= 2) {
+      const ancestorId = `${level}/${tileX}/${tileY}`;
+
+      if (this.tileEntries.get(ancestorId)?.ready) {
+        return ancestorId;
+      }
+
+      level -= 1;
+      tileX = Math.floor(tileX / 2);
+      tileY = Math.floor(tileY / 2);
+    }
+
+    return undefined;
+  }
+
+  private renderGlobeBase(projection: Float32Array, view: Float32Array, nodes: readonly { modelMatrix: ArrayLike<number> }[]): void {
     if (!this.gl || !this.program || !this.globe) {
       return;
     }
@@ -514,7 +596,7 @@ export class WebGL2Renderer implements Renderer {
     this.gl.bindVertexArray(this.globe.vao);
 
     for (const node of nodes) {
-      this.gl.uniformMatrix4fv(this.program.uModel, false, node.modelMatrix);
+      this.gl.uniformMatrix4fv(this.program.uModel, false, new Float32Array(node.modelMatrix));
       this.gl.drawElements(this.gl.TRIANGLES, this.globe.indexCount, this.globe.indexType, 0);
     }
 
@@ -560,7 +642,7 @@ export class WebGL2Renderer implements Renderer {
     return false;
   }
 
-  private renderTerrainMeshes(projection: Float32Array, view: Float32Array): void {
+  private renderTerrainMeshes(projection: Float32Array, view: Float32Array, cameraPosition: readonly [number, number, number]): void {
     if (!this.gl || !this.terrainProgram || this.activeTerrainIds.size === 0) {
       return;
     }
@@ -572,6 +654,9 @@ export class WebGL2Renderer implements Renderer {
     this.gl.uniformMatrix4fv(this.terrainProgram.uView, false, view);
     this.gl.uniform3fv(this.terrainProgram.uSunDirection, this.sunDirection);
     this.gl.uniform1i(this.terrainProgram.uDebugOverlay, this.tileDebugOverlayVisible ? 1 : 0);
+    this.gl.uniform3f(this.terrainProgram.uCameraPosition, cameraPosition[0], cameraPosition[1], cameraPosition[2]);
+    // Fattore di proiezione ricavato dalla projection matrix: P[5] = 1/tan(fov/2).
+    const viewportFactor = (this.canvas.height || 1) * projection[5] * 0.5;
 
     for (const id of this.activeTerrainIds) {
       const terrain = this.terrainEntries.get(id);
@@ -601,6 +686,8 @@ export class WebGL2Renderer implements Renderer {
       this.gl.uniform2f(this.terrainProgram.uImageryUvScale, imageryFallback.uvScale[0], imageryFallback.uvScale[1]);
       this.gl.uniform2f(this.terrainProgram.uImageryUvOffset, imageryFallback.uvOffset[0], imageryFallback.uvOffset[1]);
       this.gl.uniform3f(this.terrainProgram.uTileKey, terrain.tile.level, terrain.tile.x, terrain.tile.y);
+      const morphRange = terrainMorphRangeUnit(terrain.tile, viewportFactor);
+      this.gl.uniform2f(this.terrainProgram.uMorphRange, morphRange[0], morphRange[1]);
       this.gl.bindVertexArray(patch.vao);
       this.gl.drawElements(this.gl.TRIANGLES, patch.indexCount, patch.indexType, 0);
     }
@@ -786,12 +873,13 @@ function createTileProgram(gl: WebGL2RenderingContext, resources: RendererResour
   const uImagery = gl.getUniformLocation(program, "uImagery");
   const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
   const uDebugOverlay = gl.getUniformLocation(program, "uDebugOverlay");
+  const uFadeAlpha = gl.getUniformLocation(program, "uFadeAlpha");
 
-  if (!uProjection || !uView || !uModel || !uImagery || !uSunDirection || !uDebugOverlay) {
+  if (!uProjection || !uView || !uModel || !uImagery || !uSunDirection || !uDebugOverlay || !uFadeAlpha) {
     throw new Error("Missing WebGL2 tile uniform");
   }
 
-  return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection, uDebugOverlay };
+  return { program, resource, uProjection, uView, uModel, uImagery, uSunDirection, uDebugOverlay, uFadeAlpha };
 }
 
 function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererResourceManager): TerrainProgram {
@@ -830,6 +918,8 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
   const uImageryUvOffset = gl.getUniformLocation(program, "uImageryUvOffset");
   const uSunDirection = gl.getUniformLocation(program, "uSunDirection");
   const uDebugOverlay = gl.getUniformLocation(program, "uDebugOverlay");
+  const uCameraPosition = gl.getUniformLocation(program, "uCameraPosition");
+  const uMorphRange = gl.getUniformLocation(program, "uMorphRange");
 
   if (
     !uProjection ||
@@ -842,7 +932,9 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
     !uImageryUvScale ||
     !uImageryUvOffset ||
     !uSunDirection ||
-    !uDebugOverlay
+    !uDebugOverlay ||
+    !uCameraPosition ||
+    !uMorphRange
   ) {
     throw new Error("Missing WebGL2 terrain uniform");
   }
@@ -861,6 +953,8 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
     uImageryUvOffset,
     uSunDirection,
     uDebugOverlay,
+    uCameraPosition,
+    uMorphRange,
   };
 }
 
@@ -1379,6 +1473,36 @@ function pushLineVertex(
   });
 
   vertices.push(position[0] / maxRadius, position[1] / maxRadius, position[2] / maxRadius);
+}
+
+/**
+ * Zona di morphing CDLOD per un tile terrain: (inizio, fine) in distanza
+ * unit-scale. La fine coincide circa con la distanza a cui il runtime passa
+ * al livello padre (tile proiettato ≈ soglia SSE di default).
+ */
+function terrainMorphRangeUnit(
+  tile: { level: number; x: number; y: number },
+  viewportFactor: number,
+): [number, number] {
+  const tileCount = 2 ** tile.level;
+  const mercatorY = (tile.y + 0.5) / tileCount;
+  const n = Math.PI * (1 - 2 * mercatorY);
+  const centerLat = Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  const widthUnit = ((2 * Math.PI) / tileCount) * Math.max(0.05, Math.cos(centerLat));
+  const defaultThresholdPx = 294;
+  const transitionDistance = (widthUnit * Math.max(1, viewportFactor)) / defaultThresholdPx;
+
+  return [transitionDistance * 0.6, transitionDistance * 0.92];
+}
+
+const tileFadeDurationMs = 220;
+
+function tileFadeAlpha(entry: { readyAt?: number }, now: number): number {
+  if (entry.readyAt === undefined) {
+    return 1;
+  }
+
+  return Math.min(1, Math.max(0, (now - entry.readyAt) / tileFadeDurationMs));
 }
 
 function identityMatrix(): Float32Array {

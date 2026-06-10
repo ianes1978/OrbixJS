@@ -208,6 +208,20 @@ fn ellipsoidNormalAt(lon: f32, lat: f32) -> vec3<f32> {
   return normalize(vec3<f32>(cosLat * cos(lon), sin(lat), -cosLat * sin(lon)));
 }
 
+// Forma geodetica standard WGS84 (stessa convenzione di Ellipsoid.cartographicToCartesian).
+fn geodeticToWorld(lon: f32, lat: f32, height: f32) -> vec3<f32> {
+  let cosLat = cos(lat);
+  let sinLat = sin(lat);
+  let e2 = 1.0 - (WGS84_B * WGS84_B) / (WGS84_A * WGS84_A);
+  let N = WGS84_A / sqrt(1.0 - e2 * sinLat * sinLat);
+  let world = vec3<f32>(
+    (N + height) * cosLat * cos(lon),
+    (N * (1.0 - e2) + height) * sinLat,
+    -(N + height) * cosLat * sin(lon)
+  );
+  return world / WGS84_A;
+}
+
 fn sampleTerrainHeight(sampleUv: vec2<f32>) -> f32 {
   let dimensions = vec2<i32>(textureDimensions(uHeightmap));
   let maxCoord = max(dimensions - vec2<i32>(1, 1), vec2<i32>(1, 1));
@@ -222,8 +236,7 @@ fn terrainWorldAt(sampleUv: vec2<f32>) -> vec3<f32> {
   let lon = globalX * PI * 2.0 - PI;
   let lat = webMercatorYToLatitude(globalY);
   let height = sampleTerrainHeight(sampleUv);
-  let normal = ellipsoidNormalAt(lon, lat);
-  return normal * vec3<f32>(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+  return geodeticToWorld(lon, lat, height);
 }
 
 @vertex
@@ -239,7 +252,7 @@ fn main(
   let lat = webMercatorYToLatitude(globalY);
   let height = sampleTerrainHeight(uv) - patchPosition.z * uTerrain.params.x;
   let ellipsoidNormal = ellipsoidNormalAt(lon, lat);
-  let world = ellipsoidNormal * vec3<f32>(WGS84_A + height, WGS84_B + height, WGS84_A + height) / WGS84_A;
+  let world = geodeticToWorld(lon, lat, height);
   let dimensions = vec2<f32>(textureDimensions(uHeightmap));
   let texel = 1.0 / max(dimensions - vec2<f32>(1.0), vec2<f32>(1.0));
   let west = terrainWorldAt(uv - vec2<f32>(texel.x, 0.0));

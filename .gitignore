@@ -29,3 +29,6 @@ Thumbs.db
 
 # Local Codex captures
 .codex/
+
+# Config MCP locale (percorsi specifici della macchina)
+.mcp.json

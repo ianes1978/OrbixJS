@@ -578,7 +578,9 @@ let lastImageryStats:
     }
   | undefined;
 let lastFrameStats: GeoViewerFrameStats | undefined;
+const lodStrategyParam = urlParams.get("lod");
 const defaultLodOptions = {
+  strategy: (lodStrategyParam === "classic" ? "classic" : "quadtree") as "classic" | "quadtree",
   pixelErrorBudget: 1.15,
   maxVisibleTiles: 768,
   maxNetworkRequests: 20,
