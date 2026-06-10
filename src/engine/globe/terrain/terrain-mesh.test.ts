@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cross, dot, normalize, subtract } from "../../core/math/vec3";
 import { createFlatTerrainTile } from "./terrain-provider";
-import { createTerrainMesh, tileSampleToCartographic } from "./terrain-mesh";
+import { createTerrainMesh, terrainGridSizeForLevel, tileSampleToCartographic } from "./terrain-mesh";
 
 describe("terrain-mesh", () => {
   it("builds a normalized terrain mesh from a heightmap tile", () => {
@@ -52,6 +52,17 @@ describe("terrain-mesh", () => {
     const mesh = createTerrainMesh(tile);
 
     expect(mesh.indices).toBeInstanceOf(Uint32Array);
+  });
+
+  it("can triangulate a heightmap with a level-driven grid size", () => {
+    const tile = createFlatTerrainTile({ level: 10, x: 1, y: 1 }, { size: 33, height: 1000 });
+    const mesh = createTerrainMesh(tile, { gridSizeByLevel: [32, 32, 16, 16, 8, 8, 8, 6, 6, 4, 4] });
+
+    expect(terrainGridSizeForLevel(10, { gridSizeByLevel: [32, 32, 16, 16, 8, 8, 8, 6, 6, 4, 4] })).toBe(4);
+    expect(mesh.positions).toHaveLength(5 * 5 * 3);
+    expect(mesh.indices).toHaveLength(4 * 4 * 6);
+    expect(mesh.minHeight).toBe(1000);
+    expect(mesh.maxHeight).toBe(1000);
   });
 
   it("adds optional skirts around terrain tile borders", () => {

@@ -141,7 +141,10 @@ var uImagery: texture_2d<f32>;
 fn main(@location(0) normal: vec3<f32>, @location(1) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let light = normalize(vec3<f32>(-0.25, 0.52, 0.82));
   let diffuse = max(dot(normalize(normal), light), 0.0);
-  let imagery = textureSample(uImagery, uImagerySampler, uv).rgb;
+  let textureSizePx = vec2<f32>(textureDimensions(uImagery));
+  let halfTexel = 0.5 / max(textureSizePx, vec2<f32>(1.0));
+  let sampleUv = clamp(uv, halfTexel, vec2<f32>(1.0) - halfTexel);
+  let imagery = textureSample(uImagery, uImagerySampler, sampleUv).rgb;
   let edgeDistance = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
   let edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
   let color = imagery * (0.42 + diffuse * 0.72);
@@ -287,9 +290,17 @@ fn main(
 ) -> @location(0) vec4<f32> {
   let light = normalize(vec3<f32>(-0.25, 0.52, 0.82));
   let unitNormal = normalize(normal);
-  let diffuse = max(dot(unitNormal, light), 0.0);
+  let slopeLight = dot(unitNormal, light);
+  let diffuse = pow(max(slopeLight, 0.0), 1.35);
+  let selfShadow = smoothstep(0.03, 0.42, slopeLight);
   let rim = pow(1.0 - max(dot(unitNormal, normalize(-worldPosition)), 0.0), 3.2);
-  var color = textureSample(uImagery, uImagerySampler, imageryUv).rgb * (0.42 + diffuse * 0.72) + rim * vec3<f32>(0.035, 0.09, 0.11);
+  let textureSizePx = vec2<f32>(textureDimensions(uImagery));
+  let halfTexel = 0.5 / max(textureSizePx, vec2<f32>(1.0));
+  let sampleUv = clamp(imageryUv, halfTexel, vec2<f32>(1.0) - halfTexel);
+  let imagery = textureSample(uImagery, uImagerySampler, sampleUv).rgb;
+  let litTerrain = imagery * (0.34 + diffuse * 0.92);
+  let shadowTerrain = imagery * vec3<f32>(0.36, 0.42, 0.50);
+  var color = mix(shadowTerrain, litTerrain, selfShadow) + rim * vec3<f32>(0.035, 0.09, 0.11);
   let edgeDistance = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
   let edgeLine = 1.0 - smoothstep(0.0, 0.012, edgeDistance);
   color = mix(color, vec3<f32>(0.24, 0.88, 0.82), select(0.0, edgeLine * 0.22, uUniforms.imageryState.y > 0.5));

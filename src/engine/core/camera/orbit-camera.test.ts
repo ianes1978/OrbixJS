@@ -324,6 +324,23 @@ describe("OrbitCamera", () => {
     expect(camera.lookYawOffset).toBe(0);
   });
 
+  it("applies explicit view orientation during flyTo", () => {
+    const camera = new OrbitCamera();
+
+    camera.flyTo({
+      lon: 11.72,
+      lat: 46.62,
+      height: 9_000,
+      heading: 0.2,
+      pitch: 0.9,
+      fov: (58 * Math.PI) / 180,
+    });
+
+    expect(camera.lookYawOffset).toBeCloseTo(0.2);
+    expect(camera.tiltOffset).toBeCloseTo(0.9);
+    expect(camera.fov).toBeCloseTo((58 * Math.PI) / 180);
+  });
+
   it("applies camera limits at runtime", () => {
     const camera = new OrbitCamera({ distance: 3.2 });
 
@@ -361,5 +378,13 @@ describe("OrbitCamera", () => {
 
     expect(camera.minDistance).toBeCloseTo(0.998);
     expect(camera.distance).toBeCloseTo(0.998);
+  });
+
+  it("can zoom out after the camera has fallen below the supplied surface distance", () => {
+    const camera = new OrbitCamera({ distance: 0.998, minDistance: 0.998, maxDistance: 3.2, yaw: 0, pitch: 0 });
+
+    camera.zoom(0.25, 0, 1);
+
+    expect(camera.distance).toBeGreaterThan(1);
   });
 });

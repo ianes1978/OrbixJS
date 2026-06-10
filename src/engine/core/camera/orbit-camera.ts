@@ -7,6 +7,9 @@ export type CameraFlyToOptions = {
   lon: number;
   lat: number;
   height?: number;
+  heading?: number;
+  pitch?: number;
+  fov?: number;
 };
 
 export type CameraLimits = {
@@ -207,7 +210,9 @@ export class OrbitCamera {
         ? surfaceDistanceOverride
         : surfaceExitDistance(this.target, direction, surfaceRadius);
     const minAllowedDistance = Math.max(surfaceDistance, surfaceExitDistance(this.target, direction, this.minDistance));
-    const altitude = Math.max(this.distance - surfaceDistance, minAllowedDistance - surfaceDistance);
+    const rawAltitude = this.distance - surfaceDistance;
+    const altitude =
+      delta > 0 ? Math.max(rawAltitude, minZoomRecoveryAltitude(delta)) : Math.max(rawAltitude, minAllowedDistance - surfaceDistance);
     const nextAltitude = zoomAltitude(altitude, delta);
     this.distance = clamp(surfaceDistance + nextAltitude, minAllowedDistance, this.maxDistance);
   }
@@ -253,7 +258,7 @@ export class OrbitCamera {
     this.distance = clamp(this.distance, surfaceExitDistance(this.target, direction, this.minDistance), this.maxDistance);
   }
 
-  flyTo({ lon, lat, height = 1_000_000 }: CameraFlyToOptions): void {
+  flyTo({ lon, lat, height = 1_000_000, heading, pitch, fov }: CameraFlyToOptions): void {
     if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(height)) {
       return;
     }
@@ -271,8 +276,9 @@ export class OrbitCamera {
 
     this.yaw = Math.atan2(direction[0], direction[2]);
     this.pitch = clamp(Math.asin(direction[1]), this.minPitch, this.maxPitch);
-    this.tiltOffset = 0;
-    this.lookYawOffset = 0;
+    this.tiltOffset = pitch === undefined ? 0 : clamp(finiteOr(pitch, 0), this.minTilt, this.maxTilt);
+    this.lookYawOffset = heading === undefined ? 0 : normalizeAngle(finiteOr(heading, 0));
+    this.fov = fov === undefined ? this.fov : clamp(finiteOr(fov, this.fov), 0.1, Math.PI - 0.01);
     this.target[0] = 0;
     this.target[1] = 0;
     this.target[2] = 0;
@@ -532,6 +538,12 @@ function zoomAltitude(altitude: number, delta: number): number {
   const minimumStep = minimumStepMeters / 6_378_137;
 
   return Math.max(0, Math.min(exponentialAltitude, altitude - minimumStep));
+}
+
+function minZoomRecoveryAltitude(delta: number): number {
+  const meters = 1 + 24 * clamp(Math.abs(delta) / 0.25, 0, 1);
+
+  return meters / 6_378_137;
 }
 
 function rotateAroundAxis(value: Vec3, axis: Vec3, angle: number): MutableVec3 {

@@ -7,6 +7,7 @@ export {
   type GeoViewerFrameStats,
   type GeoViewerGltfOptions,
   type GeoViewerOptions,
+  type GeoViewerTileTelemetry,
   type GeoViewerTilesetOptions,
 } from "./engine/geo-viewer";
 export { loadGlb, parseGlb, type GlbAsset } from "./engine/loaders/gltf/glb-loader";
@@ -32,6 +33,7 @@ export {
 } from "./engine/globe/terrain/civis-quantized-mesh-terrain-provider";
 export {
   createTerrainMesh,
+  terrainGridSizeForLevel,
   tileSampleToCartographic,
   type TerrainMesh,
   type TerrainMeshOptions,
@@ -66,6 +68,7 @@ export {
   createProceduralTerrainProvider,
   type ProceduralTerrainProviderOptions,
 } from "./engine/globe/terrain/procedural-terrain-provider";
+export { DebugTileProvider, type DebugTileProviderOptions } from "./engine/globe/imagery/debug-tile-provider";
 export {
   findDataSource,
   loadDataCatalog,
@@ -117,6 +120,12 @@ export {
   type LodProfile,
   type NormalizedLodOptions,
 } from "./engine/core/lod/lod";
+export {
+  selectGlobeLodTargets,
+  shouldEqualizeTerrainZoom,
+  type GlobeLodPolicyInput,
+  type GlobeLodPolicyResult,
+} from "./engine/core/lod/globe-lod-policy";
 export {
   createRenderPassList,
   createRendererFramePlan,

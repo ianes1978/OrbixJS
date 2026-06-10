@@ -14,6 +14,8 @@ export type TerrainHeightmapTile = TerrainTileKey & {
 
 export interface TerrainProvider {
   readonly attribution?: string;
+  readonly minLevel?: number;
+  readonly maxNativeLevel?: number;
   isTileAvailable?(key: TerrainTileKey): boolean;
   getTile(key: TerrainTileKey, signal?: AbortSignal): Promise<TerrainHeightmapTile>;
   sampleHeight?(lon: number, lat: number): number | undefined;
@@ -40,6 +42,8 @@ export function createFlatTerrainTile(key: TerrainTileKey, options: { size?: num
 export function createFlatTerrainProvider(height = 0): TerrainProvider {
   return {
     attribution: "Flat terrain",
+    minLevel: 0,
+    maxNativeLevel: 0,
     getTile: async (key) => createFlatTerrainTile(key, { height }),
     sampleHeight: () => height,
   };

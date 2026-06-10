@@ -15,6 +15,8 @@ export type TerrainSurfaceTileState = "none" | "loading" | "ready" | "error";
 
 export type TerrainSurfaceStats = {
   level: number;
+  providerMinLevel?: number;
+  providerMaxNativeLevel?: number;
   activeTiles: number;
   loadedTiles: number;
   pendingTiles: number;
@@ -122,6 +124,8 @@ export class TerrainSurfaceRuntime {
     const exactRenderTiles = countExactRenderTiles(renderEntries, this.activeTileIds);
     this.lastStats = {
       level: selection.level,
+      providerMinLevel: this.options.provider.minLevel,
+      providerMaxNativeLevel: this.options.provider.maxNativeLevel,
       activeTiles: availableTiles.length,
       loadedTiles: availableTiles.filter((tile) => this.meshCache.has(createTerrainTileId(tile))).length,
       pendingTiles: this.pending.size,

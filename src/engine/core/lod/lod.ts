@@ -5,6 +5,7 @@ export type LodLayerOptions = {
   maxLevel?: number;
   lodBias?: number;
   priority?: number;
+  targetTilePixels?: number;
 };
 
 export type LodOptions =
@@ -21,6 +22,10 @@ export type LodOptions =
       imagery?: LodLayerOptions;
       terrain?: LodLayerOptions & {
         maxTiles?: number;
+        gridSizeByLevel?: readonly number[];
+        equalZoomMinAltitudeMeters?: number;
+        equalZoomMaxAltitudeMeters?: number;
+        equalZoomMinCameraSlope?: number;
       };
       tiles3d?: {
         maxScreenSpaceError?: number;
@@ -40,6 +45,10 @@ export type NormalizedLodOptions = {
   imagery: Required<LodLayerOptions>;
   terrain: Required<LodLayerOptions> & {
     maxTiles: number;
+    gridSizeByLevel: readonly number[];
+    equalZoomMinAltitudeMeters: number;
+    equalZoomMaxAltitudeMeters: number;
+    equalZoomMinCameraSlope: number;
   };
   tiles3d: {
     maxScreenSpaceError: number;
@@ -63,6 +72,10 @@ export type LodContext = {
   fov: number;
   metersPerPixel: number;
   pixelErrorBudget: number;
+  imageryTargetTilePixels: number;
+  terrainTargetTilePixels: number;
+  terrainEqualizedZoom: boolean;
+  terrainGridSizeByLevel: readonly number[];
   tileBudget: number;
   requestBudget: number;
   gpuMemoryBudgetMb: number;
@@ -81,6 +94,7 @@ export type LodContextInput = {
 };
 
 const earthRadiusMeters = 6_378_137;
+const defaultTerrainGridSizeByLevel = [32, 32, 32, 24, 24, 16, 16, 16, 12, 12, 8, 8, 8, 6, 6, 4, 4, 4, 2, 2, 2];
 
 const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "imagery" | "terrain" | "tiles3d">> = {
   performance: {
@@ -144,6 +158,10 @@ export function normalizeLodOptions(options: LodOptions | undefined): Normalized
     terrain: {
       ...normalizeLayerOptions(objectOptions.terrain),
       maxTiles: objectOptions.terrain?.maxTiles ?? Math.max(64, Math.round(maxVisibleTiles * 0.25)),
+      gridSizeByLevel: objectOptions.terrain?.gridSizeByLevel ?? defaultTerrainGridSizeByLevel,
+      equalZoomMinAltitudeMeters: objectOptions.terrain?.equalZoomMinAltitudeMeters ?? 10_000,
+      equalZoomMaxAltitudeMeters: objectOptions.terrain?.equalZoomMaxAltitudeMeters ?? 15_000_000,
+      equalZoomMinCameraSlope: objectOptions.terrain?.equalZoomMinCameraSlope ?? 0.8,
     },
     tiles3d: {
       maxScreenSpaceError: objectOptions.tiles3d?.maxScreenSpaceError ?? tiles3dErrorForProfile(profile),
@@ -165,14 +183,14 @@ export function updateAdaptiveLodState(
     return state;
   }
 
-  const highFrameMs = 22;
-  const lowFrameMs = 13;
+  const highFrameMs = 24;
+  const lowFrameMs = 18.5;
   let qualityReduction = state.qualityReduction;
 
   if (frameMs > highFrameMs) {
     qualityReduction += 0.08;
   } else if (frameMs < lowFrameMs) {
-    qualityReduction -= 0.025;
+    qualityReduction -= 0.06;
   }
 
   return {
@@ -201,6 +219,10 @@ export function createLodContext(options: NormalizedLodOptions, input: LodContex
     fov: input.fov,
     metersPerPixel,
     pixelErrorBudget: options.pixelErrorBudget * reductionFactor,
+    imageryTargetTilePixels: options.imagery.targetTilePixels,
+    terrainTargetTilePixels: options.terrain.targetTilePixels,
+    terrainEqualizedZoom: false,
+    terrainGridSizeByLevel: options.terrain.gridSizeByLevel,
     tileBudget: Math.max(16, Math.round(options.maxVisibleTiles / reductionFactor)),
     requestBudget: Math.max(4, Math.round(options.maxNetworkRequests / (1 + reduction))),
     gpuMemoryBudgetMb: options.maxGpuMemoryMb,
@@ -259,6 +281,7 @@ function normalizeLayerOptions(options: LodLayerOptions | undefined): Required<L
     maxLevel: options?.maxLevel ?? 22,
     lodBias: options?.lodBias ?? 0,
     priority: options?.priority ?? 50,
+    targetTilePixels: clamp(options?.targetTilePixels ?? 256, 32, 2048),
   };
 }
 

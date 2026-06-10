@@ -88,6 +88,8 @@ export function createHeightmapTerrainProvider(
 
 class HeightmapTerrainProvider implements TerrainProvider {
   readonly attribution: string | undefined;
+  readonly minLevel: number;
+  readonly maxNativeLevel: number;
   private readonly tiling: WebMercatorTilingScheme;
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string | undefined;
@@ -100,6 +102,8 @@ class HeightmapTerrainProvider implements TerrainProvider {
     options: HeightmapTerrainProviderOptions,
   ) {
     this.attribution = manifest.attribution;
+    this.minLevel = manifest.minLevel;
+    this.maxNativeLevel = manifest.maxLevel;
     this.tiling = new WebMercatorTilingScheme(manifest.maxLevel, manifest.tileSize);
     this.fetchImpl = options.fetch ?? fetch;
     this.baseUrl = options.baseUrl;

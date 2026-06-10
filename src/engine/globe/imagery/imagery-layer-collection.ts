@@ -32,6 +32,15 @@ export class ImageryLayerCollection {
     return this.addLayer(provider, options);
   }
 
+  addRasterLayer(provider: RasterTileProvider, options: { level?: number; minLevel?: number; maxLevel?: number } = {}): ImageryLayer {
+    return this.addLayer(provider, options);
+  }
+
+  clear(): void {
+    this.layers.length = 0;
+    this.options.onActiveTilesChanged?.([]);
+  }
+
   private addLayer(provider: RasterTileProvider, options: { level?: number; minLevel?: number; maxLevel?: number }): ImageryLayer {
     const layer = new ImageryLayer(provider, options.level ?? 2, {
       minLevel: options.minLevel,

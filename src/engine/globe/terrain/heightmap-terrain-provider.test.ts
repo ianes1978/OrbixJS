@@ -40,6 +40,8 @@ describe("heightmap-terrain-provider", () => {
     });
     const tile = await provider.getTile({ level: 1, x: 1, y: 1 });
 
+    expect(provider.minLevel).toBe(1);
+    expect(provider.maxNativeLevel).toBe(1);
     expect(tile.minHeight).toBe(10);
     expect(tile.maxHeight).toBe(40);
     expect([...tile.heights]).toEqual([10, 20, 30, 40]);

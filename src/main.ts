@@ -1,9 +1,11 @@
 import "./styles.css";
 import { GeoViewer, type GeoViewerFrameStats } from "./engine/geo-viewer";
 import { type TileLevelStats } from "./engine/globe/imagery/imagery-layer";
-import { cameraPathDuration, sampleCameraPath, type CameraPath } from "./engine/core/camera/camera-path";
-import { findDataSource, loadDataCatalog } from "./engine/catalog/data-catalog";
+import { type LodOptions } from "./engine/core/lod/lod";
+import { cameraPathDuration, sampleCameraPath, type CameraPath, type CameraPathSample } from "./engine/core/camera/camera-path";
+import { findDataSource, loadDataCatalog, type DataSourceDescriptor } from "./engine/catalog/data-catalog";
 import { loadOrbixProject, resolveOrbixLayerCrs } from "./engine/project/orbix-project";
+import { DebugTileProvider } from "./engine/globe/imagery/debug-tile-provider";
 import { createHeightmapTerrainProvider, loadHeightmapTerrainManifest } from "./engine/globe/terrain/heightmap-terrain-provider";
 import {
   createCivisQuantizedMeshTerrainProvider,
@@ -17,12 +19,20 @@ declare global {
   interface Window {
     __orbixDebug?: {
       viewer: GeoViewer;
-      flyTo: (options: { lon: number; lat: number; height: number }) => void;
+      flyTo: (options: { lon: number; lat: number; height: number; heading?: number; pitch?: number; fov?: number }) => void;
       renderFrame: () => void;
+      resetAdaptiveLod: () => void;
       setDtmTerrain: (enabled: boolean) => Promise<void>;
+      setDebugImagery: (enabled: boolean) => void;
+      tileTelemetry: () => ReturnType<GeoViewer["tileTelemetry"]>;
+      runCameraPathAudit: (pathId?: string) => Promise<CameraPathTelemetrySample[]>;
+      runBenchmark: (pathId?: string) => Promise<CameraPathBenchmarkResult | undefined>;
+      cameraPathLog: () => CameraPathTelemetrySample[];
+      benchmarkResult: () => CameraPathBenchmarkResult | undefined;
       stats: () => {
         frame: GeoViewerFrameStats | undefined;
         imagery: unknown;
+        tiles: ReturnType<GeoViewer["tileTelemetry"]>;
         camera: ReturnType<GeoViewer["cameraSnapshot"]>;
         surface: ReturnType<GeoViewer["cameraSurfaceStatus"]>;
         frameStatus: string;
@@ -66,8 +76,11 @@ app.innerHTML = `
             <button id="renderer-toggle" class="debug-toggle" type="button" aria-pressed="false">
               WebGPU
             </button>
-            <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="true">
-              LOD ON
+            <button id="tile-debug-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              LOD overlay
+            </button>
+            <button id="debug-imagery-toggle" class="debug-toggle" type="button" aria-pressed="false">
+              Test textures
             </button>
             <button id="coastline-toggle" class="debug-toggle" type="button" aria-pressed="false">
               Coastline
@@ -107,8 +120,8 @@ app.innerHTML = `
               Collision ON
             </button>
             <label class="slider-control">
-              <span>Clearance <output data-camera-limit-value="collisionClearanceMeters">1 m</output></span>
-              <input data-camera-limit="collisionClearanceMeters" type="range" min="0" max="50" step="0.1" value="1" />
+              <span>Clearance <output data-camera-limit-value="collisionClearanceMeters">0 m</output></span>
+              <input data-camera-limit="collisionClearanceMeters" type="range" min="0" max="100" step="0.5" value="0" />
             </label>
             <label class="slider-control">
               <span>Quota max <output data-camera-limit-value="maxHeightMeters">57310 km</output></span>
@@ -127,11 +140,36 @@ app.innerHTML = `
               <input data-camera-limit="fovDeg" type="range" min="15" max="90" step="1" value="45" />
             </label>
           </section>
+          <section class="control-section" aria-label="LOD configuration">
+            <h2>LOD</h2>
+            <label class="slider-control">
+              <span>Bilancio <output data-lod-value="qualityMultiplier">1.00x neutro</output></span>
+              <input data-lod-control="qualityMultiplier" type="range" min="0.5" max="1.75" step="0.05" value="1" />
+            </label>
+            <label class="slider-control">
+              <span>Texture tile <output data-lod-value="imageryTargetTilePixels">256 px</output></span>
+              <input data-lod-control="imageryTargetTilePixels" type="range" min="128" max="768" step="16" value="256" />
+            </label>
+            <label class="slider-control">
+              <span>DTM tile <output data-lod-value="terrainTargetTilePixels">256 px</output></span>
+              <input data-lod-control="terrainTargetTilePixels" type="range" min="96" max="640" step="16" value="256" />
+            </label>
+            <label class="slider-control">
+              <span>DTM budget <output data-lod-value="terrainMaxTiles">256</output></span>
+              <input data-lod-control="terrainMaxTiles" type="range" min="64" max="1536" step="32" value="256" />
+            </label>
+          </section>
           <section class="control-section" aria-label="Camera path">
             <h2>Camera path</h2>
             <div id="camera-paths" class="fly-presets path-presets" aria-label="Camera path presets"></div>
             <button id="camera-path-stop" class="debug-toggle compact-toggle" type="button" disabled>
               Stop path
+            </button>
+            <button id="camera-path-audit" class="debug-toggle compact-toggle" type="button">
+              Audit path
+            </button>
+            <button id="camera-path-benchmark" class="debug-toggle compact-toggle" type="button">
+              Benchmark
             </button>
             <button id="camera-snapshot-copy" class="debug-toggle compact-toggle" type="button">
               Copy camera
@@ -151,6 +189,20 @@ app.innerHTML = `
               id="camera-snapshot-output"
               class="snapshot-output"
               aria-label="Camera snapshot JSON"
+              readonly
+              hidden
+            ></textarea>
+            <textarea
+              id="camera-path-log-output"
+              class="snapshot-output"
+              aria-label="Camera path telemetry JSON"
+              readonly
+              hidden
+            ></textarea>
+            <textarea
+              id="camera-benchmark-output"
+              class="snapshot-output"
+              aria-label="Camera benchmark JSON"
               readonly
               hidden
             ></textarea>
@@ -199,6 +251,13 @@ app.innerHTML = `
                 aria-label="LOD debug text"
                 readonly
               >LOD debug -</textarea>
+              <textarea
+                id="tile-telemetry-output"
+                class="lod-debug-output"
+                aria-label="Tile telemetry JSON"
+                readonly
+                hidden
+              >{}</textarea>
             </label>
           </div>
           <div class="overall">
@@ -230,6 +289,7 @@ const pickingStatus = document.querySelector<HTMLElement>("#picking-status");
 const cameraStatus = document.querySelector<HTMLElement>("#camera-status");
 const lodDebugOutput = document.querySelector<HTMLTextAreaElement>("#lod-debug-output");
 const tileDebugToggle = document.querySelector<HTMLButtonElement>("#tile-debug-toggle");
+const debugImageryToggle = document.querySelector<HTMLButtonElement>("#debug-imagery-toggle");
 const coastlineToggle = document.querySelector<HTMLButtonElement>("#coastline-toggle");
 const modelToggle = document.querySelector<HTMLButtonElement>("#model-toggle");
 const dtmTerrainToggle = document.querySelector<HTMLButtonElement>("#dtm-terrain-toggle");
@@ -242,14 +302,21 @@ const sceneDateInput = document.querySelector<HTMLInputElement>("#scene-date");
 const flyPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-fly-to]");
 const cameraLimitInputs = document.querySelectorAll<HTMLInputElement>("[data-camera-limit]");
 const cameraLimitOutputs = document.querySelectorAll<HTMLOutputElement>("[data-camera-limit-value]");
+const lodControlInputs = document.querySelectorAll<HTMLInputElement>("[data-lod-control]");
+const lodControlOutputs = document.querySelectorAll<HTMLOutputElement>("[data-lod-value]");
 const cameraCollisionToggle = document.querySelector<HTMLButtonElement>("#camera-collision-toggle");
 const cameraPathControls = document.querySelector<HTMLElement>("#camera-paths");
 const cameraPathStop = document.querySelector<HTMLButtonElement>("#camera-path-stop");
+const cameraPathAudit = document.querySelector<HTMLButtonElement>("#camera-path-audit");
+const cameraPathBenchmark = document.querySelector<HTMLButtonElement>("#camera-path-benchmark");
 const cameraPathStatus = document.querySelector<HTMLElement>("#camera-path-status");
 const cameraSnapshotCopy = document.querySelector<HTMLButtonElement>("#camera-snapshot-copy");
 const cameraKeyframeCopy = document.querySelector<HTMLButtonElement>("#camera-keyframe-copy");
 const cameraSnapshotStatus = document.querySelector<HTMLElement>("#camera-snapshot-status");
 const cameraSnapshotOutput = document.querySelector<HTMLTextAreaElement>("#camera-snapshot-output");
+const cameraPathLogOutput = document.querySelector<HTMLTextAreaElement>("#camera-path-log-output");
+const cameraBenchmarkOutput = document.querySelector<HTMLTextAreaElement>("#camera-benchmark-output");
+const tileTelemetryOutput = document.querySelector<HTMLTextAreaElement>("#tile-telemetry-output");
 
 if (
   !list ||
@@ -265,6 +332,7 @@ if (
   !cameraStatus ||
   !lodDebugOutput ||
   !tileDebugToggle ||
+  !debugImageryToggle ||
   !coastlineToggle ||
   !modelToggle ||
   !dtmTerrainToggle ||
@@ -276,18 +344,111 @@ if (
   !sceneDateInput ||
   cameraLimitInputs.length === 0 ||
   cameraLimitOutputs.length === 0 ||
+  lodControlInputs.length === 0 ||
+  lodControlOutputs.length === 0 ||
   !cameraCollisionToggle ||
   !cameraPathControls ||
   !cameraPathStop ||
+  !cameraPathAudit ||
+  !cameraPathBenchmark ||
   !cameraPathStatus ||
   !cameraSnapshotCopy ||
   !cameraKeyframeCopy ||
   !cameraSnapshotStatus ||
   !cameraSnapshotOutput ||
+  !cameraPathLogOutput ||
+  !cameraBenchmarkOutput ||
+  !tileTelemetryOutput ||
   flyPresetButtons.length === 0
 ) {
   throw new Error("Missing progress UI element");
 }
+
+type CameraPathTelemetrySample = {
+  pathId: string;
+  pathName?: string;
+  elapsedSeconds: number;
+  segmentIndex: number;
+  progress: number;
+  finished: boolean;
+  sample: CameraPathSample;
+  camera: ReturnType<GeoViewer["cameraSnapshot"]>;
+  surface: ReturnType<GeoViewer["cameraSurfaceStatus"]>;
+  frame:
+    | {
+        fps: number;
+        frameMs: number;
+        cpuMs: number;
+        updateMs: number;
+        renderMs: number;
+        coverageTiles: number;
+        coverageBudget: number;
+        coverageSamples: number;
+        coverageStrategy: string;
+        imageryTargetLevel?: number;
+        terrainTargetLevel?: number;
+        updateBreakdown: GeoViewerFrameStats["updateBreakdown"];
+        lod: {
+          profile: string;
+          adaptiveQualityReduction: number;
+          altitudeMeters: number;
+          metersPerPixel: number;
+          imageryTargetTilePixels: number;
+          terrainTargetTilePixels: number;
+        };
+        terrain?: GeoViewerFrameStats["terrain"];
+      }
+    | undefined;
+  tiles: ReturnType<GeoViewer["tileTelemetry"]>;
+};
+
+type CameraPathBenchmarkResult = {
+  pathId: string;
+  pathName?: string;
+  sampleCount: number;
+  elapsedSeconds: number;
+  qualityMultiplier: number;
+  debugImagery: boolean;
+  dtmTerrain: boolean;
+  frame: BenchmarkStats;
+  cpu: BenchmarkStats;
+  update: BenchmarkStats;
+  render: BenchmarkStats;
+  coverage: {
+    maxTiles: number;
+    maxCoverageMs: number;
+    maxSamples: number;
+  };
+  imagery: {
+    maxRequested: number;
+    maxRendered: number;
+    maxVisible: number;
+    maxOffscreen: number;
+  };
+  terrain: {
+    maxRequested: number;
+    maxRendered: number;
+    maxVisible: number;
+    maxLoading: number;
+    maxErrors: number;
+    maxActiveTiles: number;
+    maxRenderTiles: number;
+    maxPendingTiles: number;
+    maxMeshCacheSize: number;
+    maxTargetLevel?: number;
+    providerMaxNativeLevel?: number;
+    minGridSize?: number;
+    maxGridSize?: number;
+  };
+  worstFrame?: CameraPathTelemetrySample;
+};
+
+type BenchmarkStats = {
+  min: number;
+  max: number;
+  avg: number;
+  p95: number;
+};
 
 const rendererToggleElement = rendererToggle;
 const menuToggleElement = mobileControlsToggle;
@@ -296,14 +457,21 @@ const infoToggleElement = infoToggle;
 const infoPanelElement = infoPanel;
 const cameraLimitInputElements = [...cameraLimitInputs];
 const cameraLimitOutputElements = [...cameraLimitOutputs];
+const lodControlInputElements = [...lodControlInputs];
+const lodControlOutputElements = [...lodControlOutputs];
 const cameraCollisionToggleElement = cameraCollisionToggle;
 const cameraPathControlsElement = cameraPathControls;
 const cameraPathStopElement = cameraPathStop;
+const cameraPathAuditElement = cameraPathAudit;
+const cameraPathBenchmarkElement = cameraPathBenchmark;
 const cameraPathStatusElement = cameraPathStatus;
 const cameraSnapshotCopyElement = cameraSnapshotCopy;
 const cameraKeyframeCopyElement = cameraKeyframeCopy;
 const cameraSnapshotStatusElement = cameraSnapshotStatus;
 const cameraSnapshotOutputElement = cameraSnapshotOutput;
+const cameraPathLogOutputElement = cameraPathLogOutput;
+const cameraBenchmarkOutputElement = cameraBenchmarkOutput;
+const tileTelemetryOutputElement = tileTelemetryOutput;
 const dtmTerrainToggleElement = dtmTerrainToggle;
 const terrainToggleElement = terrainToggle;
 const compactLayout = window.matchMedia("(max-width: 920px)");
@@ -364,11 +532,19 @@ const tileStatusElement = tileStatus;
 const frameStatusElement = frameStatus;
 const cameraStatusElement = cameraStatus;
 const lodDebugOutputElement = lodDebugOutput;
+const tileDebugToggleElement = tileDebugToggle;
+const debugImageryToggleElement = debugImageryToggle;
 const urlParams = new URLSearchParams(window.location.search);
 const rendererBackend = urlParams.get("renderer") === "webgpu" ? "webgpu" : "webgl2";
 const terrainDebugEnabled = urlParams.get("debugTerrain") === "1" || urlParams.get("terrain") === "1";
+const debugTileHolesEnabled = urlParams.get("debugTileHoles") === "1";
 const demoAssetCacheBust = import.meta.env.DEV ? String(Date.now()) : "";
-let debugTileOverlay = true;
+let debugTileOverlay = false;
+let debugImageryEnabled = urlParams.get("debugImagery") === "1" || urlParams.get("debugTextures") === "1";
+let baseImagerySource: DataSourceDescriptor | undefined;
+let lastRuntimeMetricsUpdateAt = 0;
+let lastCameraStatusUpdateAt = 0;
+const debugHudUpdateIntervalMs = 250;
 let lastImageryStats:
   | {
       level: number;
@@ -402,6 +578,21 @@ let lastImageryStats:
     }
   | undefined;
 let lastFrameStats: GeoViewerFrameStats | undefined;
+const defaultLodOptions = {
+  pixelErrorBudget: 1.15,
+  maxVisibleTiles: 768,
+  maxNetworkRequests: 20,
+  qualityBias: 0,
+  imagery: {
+    maxLevel: 20,
+    targetTilePixels: 256,
+  },
+  terrain: {
+    maxLevel: 15,
+    maxTiles: 256,
+    targetTilePixels: 256,
+  },
+} satisfies LodOptions;
 
 const viewer = new GeoViewer({
   container: globeHost,
@@ -416,21 +607,13 @@ const viewer = new GeoViewer({
   },
   cameraCollision: {
     enabled: true,
-    clearance: 1,
+    clearance: 0,
   },
-  lod: {
-    imagery: {
-      maxLevel: 20,
-    },
-    terrain: {
-      maxLevel: 15,
-      maxTiles: 512,
-    },
-  },
+  lod: defaultLodOptions,
   date: new Date(sceneDateInput.value),
   onImageryStats: (stats) => {
     lastImageryStats = stats;
-    imageryStatus.textContent = `LOD ${stats.level}`;
+    imageryStatus.textContent = debugImageryEnabled ? `Test LOD ${stats.level}` : `LOD ${stats.level}`;
     syncRuntimeMetrics();
   },
   onFrameStats: (stats) => {
@@ -451,11 +634,18 @@ rendererStatus.textContent = viewer.renderer.supported
 imageryStatus.textContent = "Ortofoto";
 syncRendererToggle();
 applyCameraLimitControls();
+applyLodControls();
 startCameraStatusLoop();
 
 cameraLimitInputElements.forEach((input) => {
   input.addEventListener("input", () => {
     applyCameraLimitControls();
+  });
+});
+
+lodControlInputElements.forEach((input) => {
+  input.addEventListener("input", () => {
+    applyLodControls();
   });
 });
 
@@ -494,7 +684,12 @@ tileDebugToggle.addEventListener("click", () => {
   viewer.setDebugTileOverlay(debugTileOverlay);
   tileDebugToggle.setAttribute("aria-pressed", String(debugTileOverlay));
   tileDebugToggle.textContent = debugTileOverlay ? "LOD ON" : "LOD overlay";
-  syncRuntimeMetrics();
+  syncRuntimeMetrics(true);
+});
+
+syncDebugImageryToggle();
+debugImageryToggleElement.addEventListener("click", () => {
+  setDebugImagery(!debugImageryEnabled);
 });
 
 let coastlineOverlay = false;
@@ -573,8 +768,12 @@ const flyToPresets = {
   usa: { lon: -100, lat: 40, height: 2_500_000 },
   tokyo: { lon: 139.7, lat: 35.7, height: 1_200_000 },
 };
+let loadedCameraPaths: CameraPath[] = [];
 let activeCameraPathFrame: number | undefined;
 let activeCameraPathId: string | undefined;
+let cameraPathTelemetryLog: CameraPathTelemetrySample[] = [];
+let cameraPathBenchmarkResult: CameraPathBenchmarkResult | undefined;
+let lastCameraPathLogAt = 0;
 
 flyPresetButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -589,6 +788,14 @@ flyPresetButtons.forEach((button) => {
 
 cameraPathStopElement.addEventListener("click", () => {
   stopCameraPath("fermato");
+});
+
+cameraPathAuditElement.addEventListener("click", () => {
+  void runCameraPathAudit();
+});
+
+cameraPathBenchmarkElement.addEventListener("click", () => {
+  void runBenchmark();
 });
 
 cameraSnapshotCopyElement.addEventListener("click", () => {
@@ -660,7 +867,8 @@ async function loadDemoProject(): Promise<void> {
       viewer.flyTo(project.camera);
     }
 
-    renderCameraPathControls(project.cameraPaths ?? []);
+    loadedCameraPaths = [...(project.cameraPaths ?? [])];
+    renderCameraPathControls(loadedCameraPaths);
 
     for (const layer of project.layers) {
       if (layer.visible === false) {
@@ -681,13 +889,8 @@ async function loadDemoProject(): Promise<void> {
       }
 
       if (layer.type === "imagery-xyz" && source.type === "imagery-xyz") {
-        viewer.imagery.addXYZLayer({
-          url: source.url,
-          level: source.minLevel ?? 2,
-          minLevel: source.minLevel,
-          maxLevel: source.maxLevel,
-          tileSize: source.tileSize,
-        });
+        baseImagerySource = source;
+        applyImagerySource();
       } else if (layer.type === "tileset" && source.type === "tileset") {
         await viewer.addTileset({ url: demoAssetUrl(source.url), id: source.title, scale: 180000 });
       } else if (layer.type === "terrain-heightmap" && source.type === "terrain-heightmap") {
@@ -701,7 +904,16 @@ async function loadDemoProject(): Promise<void> {
   }
 }
 
-function syncRuntimeMetrics(): void {
+function syncRuntimeMetrics(force = false): void {
+  const now = performance.now();
+
+  if (!force && now - lastRuntimeMetricsUpdateAt < debugHudUpdateIntervalMs) {
+    return;
+  }
+
+  lastRuntimeMetricsUpdateAt = now;
+  const tiles = viewer.tileTelemetry();
+
   if (lastFrameStats) {
     const adaptive = lastFrameStats.lod.adaptiveQualityReduction > 0.01
       ? `, adapt -${lastFrameStats.lod.adaptiveQualityReduction.toFixed(2)}`
@@ -718,11 +930,18 @@ function syncRuntimeMetrics(): void {
 
   const mode = debugTileOverlay ? "surface grid" : "surface";
   const coverage = lastFrameStats ? `coverage ${lastFrameStats.coverageTiles}` : "coverage -";
+  const terrainProviderActive =
+    tiles.terrain.providerMinLevel !== undefined ||
+    tiles.terrain.providerMaxNativeLevel !== undefined ||
+    tiles.terrain.targetLevel !== undefined;
   const terrain = lastFrameStats?.terrain
-    ? `terrain ${lastFrameStats.terrain.loadedTiles}/${lastFrameStats.terrain.activeTiles}, pending ${lastFrameStats.terrain.pendingTiles}, mesh ${lastFrameStats.terrain.meshCacheSize}`
-    : "terrain off";
-  tileStatusElement.textContent = `${lastImageryStats.renderTiles} img render, req ${lastImageryStats.loadedTiles}/${lastImageryStats.activeTiles}, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
-  lodDebugOutputElement.value = formatLodDebugStatus();
+    ? `terrain render ${tiles.terrain.rendered.length}, active ${lastFrameStats.terrain.activeTiles}, req ${tiles.terrain.requested.length}, visible ${tiles.terrain.visible.length}, z ${tiles.terrain.targetLevel ?? "-"} native ${tiles.terrain.providerMaxNativeLevel ?? "-"}, grid ${tiles.terrain.gridSize ?? "-"}, pending ${lastFrameStats.terrain.pendingTiles}, mesh ${lastFrameStats.terrain.meshCacheSize}`
+    : terrainProviderActive
+      ? `terrain idle, req ${tiles.terrain.requested.length}, z ${tiles.terrain.targetLevel ?? "-"} native ${tiles.terrain.providerMaxNativeLevel ?? "-"}, grid ${tiles.terrain.gridSize ?? "-"}`
+      : "terrain off";
+  tileStatusElement.textContent = `img render ${tiles.imagery.rendered.length}, visible ${tiles.imagery.visible.length}, req ${tiles.imagery.requested.length}, offscreen ${tiles.imagery.offscreen.length}, pending ${lastImageryStats.pendingTiles}, cache ${lastImageryStats.cacheSize}, ${coverage}, ${terrain}, ${mode}`;
+  lodDebugOutputElement.value = formatLodDebugStatus(tiles);
+  tileTelemetryOutputElement.value = JSON.stringify(tiles);
 }
 
 async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefined): Promise<void> {
@@ -791,6 +1010,53 @@ function syncDtmTerrainToggle(): void {
   dtmTerrainToggleElement.textContent = dtmTerrainVisible ? "DTM Alto Adige ON" : "DTM Alto Adige";
 }
 
+function setDebugImagery(enabled: boolean): void {
+  debugImageryEnabled = enabled;
+  applyImagerySource();
+  syncDebugImageryToggle();
+}
+
+function applyImagerySource(): void {
+  const source = baseImagerySource;
+
+  if (!source) {
+    syncDebugImageryToggle();
+    return;
+  }
+
+  viewer.imagery.clear();
+
+  if (debugImageryEnabled) {
+    viewer.imagery.addRasterLayer(
+      new DebugTileProvider({
+        tileSize: source.tileSize ?? 256,
+        cacheSize: 768,
+        missingModulo: debugTileHolesEnabled ? 7 : undefined,
+      }),
+      {
+        level: source.minLevel ?? 2,
+        minLevel: source.minLevel,
+        maxLevel: source.maxLevel,
+      },
+    );
+    imageryStatusElement.textContent = debugTileHolesEnabled ? "Test tiles holes" : "Test tiles";
+  } else {
+    viewer.imagery.addXYZLayer({
+      url: source.url,
+      level: source.minLevel ?? 2,
+      minLevel: source.minLevel,
+      maxLevel: source.maxLevel,
+      tileSize: source.tileSize,
+    });
+    imageryStatusElement.textContent = "Ortofoto";
+  }
+}
+
+function syncDebugImageryToggle(): void {
+  debugImageryToggleElement.setAttribute("aria-pressed", String(debugImageryEnabled));
+  debugImageryToggleElement.textContent = debugImageryEnabled ? "Test textures ON" : "Test textures";
+}
+
 window.__orbixDebug = {
   viewer,
   flyTo: (options) => {
@@ -798,6 +1064,7 @@ window.__orbixDebug = {
     viewer.flyTo(options);
   },
   renderFrame: () => viewer.renderFrameForDebug(),
+  resetAdaptiveLod: () => viewer.resetAdaptiveLod(),
   setDtmTerrain: async (enabled) => {
     if (dtmTerrainVisible === enabled) {
       return;
@@ -805,9 +1072,16 @@ window.__orbixDebug = {
 
     await toggleDtmTerrain();
   },
+  setDebugImagery,
+  tileTelemetry: () => viewer.tileTelemetry(),
+  runCameraPathAudit,
+  runBenchmark,
+  cameraPathLog: () => [...cameraPathTelemetryLog],
+  benchmarkResult: () => cameraPathBenchmarkResult,
   stats: () => ({
     frame: lastFrameStats,
     imagery: lastImageryStats,
+    tiles: viewer.tileTelemetry(),
     camera: viewer.cameraSnapshot(),
     surface: viewer.cameraSurfaceStatus(),
     frameStatus: frameStatusElement.textContent ?? "",
@@ -819,6 +1093,8 @@ function renderCameraPathControls(paths: readonly CameraPath[]): void {
   cameraPathControlsElement.replaceChildren();
   cameraPathStatusElement.textContent = paths.length > 0 ? "pronto" : "nessun path";
   cameraPathStopElement.disabled = true;
+  cameraPathAuditElement.disabled = paths.length === 0;
+  cameraPathBenchmarkElement.disabled = paths.length === 0;
 
   for (const path of paths) {
     const button = document.createElement("button");
@@ -839,6 +1115,9 @@ function playCameraPath(path: CameraPath): void {
   const duration = cameraPathDuration(path);
   const startedAt = performance.now();
   activeCameraPathId = path.id;
+  cameraPathTelemetryLog = [];
+  lastCameraPathLogAt = 0;
+  updateCameraPathLogOutput(false);
   cameraPathStatusElement.textContent = `play ${path.name ?? path.id}`;
   cameraPathStopElement.disabled = false;
   syncCameraPathButtons();
@@ -847,7 +1126,12 @@ function playCameraPath(path: CameraPath): void {
     const elapsedSeconds = (now - startedAt) / 1000;
     const sample = sampleCameraPath(path, elapsedSeconds);
 
-    viewer.flyTo({ lon: sample.lon, lat: sample.lat, height: sample.height });
+    viewer.flyTo(cameraPathSampleToFlyTo(sample));
+
+    if (now - lastCameraPathLogAt >= 250 || sample.finished) {
+      lastCameraPathLogAt = now;
+      appendCameraPathTelemetry(path, sample, elapsedSeconds, false);
+    }
 
     if (!sample.finished && elapsedSeconds <= duration + 0.05) {
       activeCameraPathFrame = requestAnimationFrame(step);
@@ -862,6 +1146,334 @@ function playCameraPath(path: CameraPath): void {
   };
 
   activeCameraPathFrame = requestAnimationFrame(step);
+}
+
+async function runCameraPathAudit(pathId?: string): Promise<CameraPathTelemetrySample[]> {
+  const path = preferredCameraPath(pathId);
+
+  if (!path) {
+    cameraPathStatusElement.textContent = "nessun path";
+    return [];
+  }
+
+  stopCameraPath("audit");
+  cameraPathAuditElement.disabled = true;
+  cameraPathStopElement.disabled = true;
+  cameraPathTelemetryLog = [];
+  updateCameraPathLogOutput(false);
+
+  if (!dtmTerrainVisible) {
+    await toggleDtmTerrain();
+  }
+
+  if (!debugTileOverlay) {
+    debugTileOverlay = true;
+    viewer.setDebugTileOverlay(true);
+    tileDebugToggleElement.setAttribute("aria-pressed", "true");
+    tileDebugToggleElement.textContent = "LOD ON";
+  }
+
+  const duration = cameraPathDuration(path);
+  const stepSeconds = 0.25;
+  const totalSamples = Math.ceil(duration / stepSeconds) + 1;
+
+  try {
+    for (let index = 0; index < totalSamples; index += 1) {
+      const elapsedSeconds = Math.min(index * stepSeconds, duration);
+      const sample = sampleCameraPath(path, elapsedSeconds);
+
+      viewer.flyTo(cameraPathSampleToFlyTo(sample));
+      viewer.renderFrameForDebug();
+      await nextAnimationFrame();
+      appendCameraPathTelemetry(path, sample, elapsedSeconds, false);
+      cameraPathStatusElement.textContent = `audit ${index + 1}/${totalSamples}`;
+
+      if (elapsedSeconds >= duration) {
+        break;
+      }
+    }
+
+    updateCameraPathLogOutput(true);
+    cameraPathStatusElement.textContent = `audit pronto ${cameraPathTelemetryLog.length}`;
+    return [...cameraPathTelemetryLog];
+  } finally {
+    cameraPathAuditElement.disabled = loadedCameraPaths.length === 0;
+    syncCameraPathButtons();
+  }
+}
+
+async function runBenchmark(pathId?: string): Promise<CameraPathBenchmarkResult | undefined> {
+  const path = preferredCameraPath(pathId);
+
+  if (!path) {
+    cameraPathStatusElement.textContent = "nessun path";
+    return undefined;
+  }
+
+  stopCameraPath("benchmark");
+  cameraPathAuditElement.disabled = true;
+  cameraPathBenchmarkElement.disabled = true;
+  cameraPathStopElement.disabled = true;
+  cameraPathTelemetryLog = [];
+  cameraPathBenchmarkResult = undefined;
+  updateCameraPathLogOutput(false);
+  updateBenchmarkOutput();
+
+  if (!dtmTerrainVisible) {
+    cameraPathStatusElement.textContent = "benchmark DTM";
+    await toggleDtmTerrain();
+  }
+
+  viewer.resetAdaptiveLod();
+  const duration = cameraPathDuration(path);
+  const stepSeconds = 0.25;
+  const totalSamples = Math.ceil(duration / stepSeconds) + 1;
+  const startedAt = performance.now();
+
+  try {
+    for (let index = 0; index < totalSamples; index += 1) {
+      const elapsedSeconds = Math.min(index * stepSeconds, duration);
+      const sample = sampleCameraPath(path, elapsedSeconds);
+
+      viewer.flyTo(cameraPathSampleToFlyTo(sample));
+      viewer.renderFrameForDebug();
+      await nextAnimationFrame();
+      cameraPathTelemetryLog.push(captureCameraPathTelemetry(path, sample, elapsedSeconds));
+      cameraPathStatusElement.textContent = `benchmark ${index + 1}/${totalSamples}`;
+
+      if (elapsedSeconds >= duration) {
+        break;
+      }
+    }
+
+    cameraPathBenchmarkResult = summarizeBenchmark(
+      path,
+      cameraPathTelemetryLog,
+      (performance.now() - startedAt) / 1000,
+    );
+    updateCameraPathLogOutput(false);
+    updateBenchmarkOutput();
+    cameraPathStatusElement.textContent = `benchmark ${formatBenchmarkScore(cameraPathBenchmarkResult)}`;
+    return cameraPathBenchmarkResult;
+  } finally {
+    viewer.resetAdaptiveLod();
+    viewer.renderFrameForDebug();
+    syncRuntimeMetrics(true);
+    cameraPathAuditElement.disabled = loadedCameraPaths.length === 0;
+    cameraPathBenchmarkElement.disabled = loadedCameraPaths.length === 0;
+    syncCameraPathButtons();
+  }
+}
+
+function preferredCameraPath(pathId?: string): CameraPath | undefined {
+  return (
+    (pathId ? loadedCameraPaths.find((path) => path.id === pathId) : undefined) ??
+    loadedCameraPaths.find((path) => path.id === "south-tyrol-mountain-run") ??
+    loadedCameraPaths[0]
+  );
+}
+
+function summarizeBenchmark(
+  path: CameraPath,
+  samples: readonly CameraPathTelemetrySample[],
+  elapsedSeconds: number,
+): CameraPathBenchmarkResult {
+  const frameValues = samples.map((sample) => sample.frame?.frameMs ?? 0).filter((value) => value > 0);
+  const cpuValues = samples.map((sample) => sample.frame?.cpuMs ?? 0).filter((value) => value > 0);
+  const updateValues = samples.map((sample) => sample.frame?.updateMs ?? 0).filter((value) => value > 0);
+  const renderValues = samples.map((sample) => sample.frame?.renderMs ?? 0).filter((value) => value > 0);
+  const worstFrame = samples.reduce<CameraPathTelemetrySample | undefined>((worst, sample) => {
+    if (!sample.frame) {
+      return worst;
+    }
+
+    if (!worst?.frame || sample.frame.frameMs > worst.frame.frameMs) {
+      return sample;
+    }
+
+    return worst;
+  }, undefined);
+
+  return {
+    pathId: path.id,
+    pathName: path.name,
+    sampleCount: samples.length,
+    elapsedSeconds: Number(elapsedSeconds.toFixed(2)),
+    qualityMultiplier: clampNumber(lodControlValue("qualityMultiplier"), 0.5, 1.75),
+    debugImagery: debugImageryEnabled,
+    dtmTerrain: dtmTerrainVisible,
+    frame: benchmarkStats(frameValues),
+    cpu: benchmarkStats(cpuValues),
+    update: benchmarkStats(updateValues),
+    render: benchmarkStats(renderValues),
+    coverage: {
+      maxTiles: maxSampleValue(samples, (sample) => sample.frame?.coverageTiles ?? 0),
+      maxCoverageMs: maxSampleValue(samples, (sample) => sample.frame?.updateBreakdown.coverageMs ?? 0),
+      maxSamples: maxSampleValue(samples, (sample) => sample.frame?.coverageSamples ?? 0),
+    },
+    imagery: {
+      maxRequested: maxSampleValue(samples, (sample) => sample.tiles.imagery.requested.length),
+      maxRendered: maxSampleValue(samples, (sample) => sample.tiles.imagery.rendered.length),
+      maxVisible: maxSampleValue(samples, (sample) => sample.tiles.imagery.visible.length),
+      maxOffscreen: maxSampleValue(samples, (sample) => sample.tiles.imagery.offscreen.length),
+    },
+    terrain: {
+      maxRequested: maxSampleValue(samples, (sample) => sample.tiles.terrain.requested.length),
+      maxRendered: maxSampleValue(samples, (sample) => sample.tiles.terrain.rendered.length),
+      maxVisible: maxSampleValue(samples, (sample) => sample.tiles.terrain.visible.length),
+      maxLoading: maxSampleValue(samples, (sample) => sample.tiles.terrain.loading.length),
+      maxErrors: maxSampleValue(samples, (sample) => sample.tiles.terrain.errors.length),
+      maxActiveTiles: maxSampleValue(samples, (sample) => sample.frame?.terrain?.activeTiles ?? 0),
+      maxRenderTiles: maxSampleValue(samples, (sample) => sample.frame?.terrain?.renderTiles ?? 0),
+      maxPendingTiles: maxSampleValue(samples, (sample) => sample.frame?.terrain?.pendingTiles ?? 0),
+      maxMeshCacheSize: maxSampleValue(samples, (sample) => sample.frame?.terrain?.meshCacheSize ?? 0),
+      maxTargetLevel: maxOptionalSampleValue(samples, (sample) => sample.tiles.terrain.targetLevel),
+      providerMaxNativeLevel: maxOptionalSampleValue(samples, (sample) => sample.tiles.terrain.providerMaxNativeLevel),
+      minGridSize: minOptionalSampleValue(samples, (sample) => sample.tiles.terrain.gridSize),
+      maxGridSize: maxOptionalSampleValue(samples, (sample) => sample.tiles.terrain.gridSize),
+    },
+    worstFrame,
+  };
+}
+
+function benchmarkStats(values: readonly number[]): BenchmarkStats {
+  if (values.length === 0) {
+    return { min: 0, max: 0, avg: 0, p95: 0 };
+  }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const sum = sorted.reduce((total, value) => total + value, 0);
+  const p95Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
+
+  return {
+    min: Number(sorted[0].toFixed(2)),
+    max: Number(sorted[sorted.length - 1].toFixed(2)),
+    avg: Number((sum / sorted.length).toFixed(2)),
+    p95: Number(sorted[p95Index].toFixed(2)),
+  };
+}
+
+function maxSampleValue(
+  samples: readonly CameraPathTelemetrySample[],
+  valueForSample: (sample: CameraPathTelemetrySample) => number,
+): number {
+  return samples.reduce((max, sample) => Math.max(max, valueForSample(sample)), 0);
+}
+
+function maxOptionalSampleValue(
+  samples: readonly CameraPathTelemetrySample[],
+  valueForSample: (sample: CameraPathTelemetrySample) => number | undefined,
+): number | undefined {
+  const values = samples.map(valueForSample).filter((value): value is number => value !== undefined && Number.isFinite(value));
+
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
+function minOptionalSampleValue(
+  samples: readonly CameraPathTelemetrySample[],
+  valueForSample: (sample: CameraPathTelemetrySample) => number | undefined,
+): number | undefined {
+  const values = samples.map(valueForSample).filter((value): value is number => value !== undefined && Number.isFinite(value));
+
+  return values.length > 0 ? Math.min(...values) : undefined;
+}
+
+function updateBenchmarkOutput(): void {
+  cameraBenchmarkOutputElement.value = cameraPathBenchmarkResult
+    ? JSON.stringify(cameraPathBenchmarkResult, null, 2)
+    : "";
+}
+
+function formatBenchmarkScore(result: CameraPathBenchmarkResult): string {
+  return `p95 ${result.frame.p95.toFixed(1)} ms, CPU ${result.cpu.p95.toFixed(1)} ms`;
+}
+
+function cameraPathSampleToFlyTo(sample: CameraPathSample): {
+  lon: number;
+  lat: number;
+  height: number;
+  heading?: number;
+  pitch?: number;
+  fov?: number;
+} {
+  return {
+    lon: sample.lon,
+    lat: sample.lat,
+    height: sample.height,
+    heading: sample.heading === undefined ? undefined : toRadians(sample.heading),
+    pitch: sample.pitch === undefined ? undefined : toRadians(sample.pitch),
+    fov: sample.fov === undefined ? undefined : toRadians(sample.fov),
+  };
+}
+
+function appendCameraPathTelemetry(
+  path: CameraPath,
+  sample: CameraPathSample,
+  elapsedSeconds: number,
+  pretty: boolean,
+): void {
+  cameraPathTelemetryLog.push(captureCameraPathTelemetry(path, sample, elapsedSeconds));
+  updateCameraPathLogOutput(pretty);
+}
+
+function captureCameraPathTelemetry(
+  path: CameraPath,
+  sample: CameraPathSample,
+  elapsedSeconds: number,
+): CameraPathTelemetrySample {
+  return {
+    pathId: path.id,
+    pathName: path.name,
+    elapsedSeconds: Number(elapsedSeconds.toFixed(3)),
+    segmentIndex: sample.segmentIndex,
+    progress: Number(sample.progress.toFixed(4)),
+    finished: sample.finished,
+    sample,
+    camera: viewer.cameraSnapshot(),
+    surface: viewer.cameraSurfaceStatus(),
+    frame: summarizeFrameStats(lastFrameStats),
+    tiles: viewer.tileTelemetry(),
+  };
+}
+
+function summarizeFrameStats(stats: GeoViewerFrameStats | undefined): CameraPathTelemetrySample["frame"] {
+  if (!stats) {
+    return undefined;
+  }
+
+  return {
+    fps: stats.fps,
+    frameMs: stats.frameMs,
+    cpuMs: stats.cpuMs,
+    updateMs: stats.updateMs,
+    renderMs: stats.renderMs,
+    coverageTiles: stats.coverageTiles,
+    coverageBudget: stats.coverageBudget,
+    coverageSamples: stats.coverageSamples,
+    coverageStrategy: stats.coverageStrategy,
+    imageryTargetLevel: stats.imageryTargetLevel,
+    terrainTargetLevel: stats.terrainTargetLevel,
+    updateBreakdown: stats.updateBreakdown,
+    lod: {
+      profile: stats.lod.profile,
+      adaptiveQualityReduction: stats.lod.adaptiveQualityReduction,
+      altitudeMeters: stats.lod.altitudeMeters,
+      metersPerPixel: stats.lod.metersPerPixel,
+      imageryTargetTilePixels: stats.lod.imageryTargetTilePixels,
+      terrainTargetTilePixels: stats.lod.terrainTargetTilePixels,
+    },
+    terrain: stats.terrain,
+  };
+}
+
+function updateCameraPathLogOutput(pretty: boolean): void {
+  cameraPathLogOutputElement.value = JSON.stringify(cameraPathTelemetryLog, null, pretty ? 2 : undefined);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 function stopCameraPath(status?: string): void {
@@ -979,6 +1591,81 @@ function applyCameraLimitControls(): void {
   });
 }
 
+function applyLodControls(): void {
+  const qualityMultiplier = lodControlValue("qualityMultiplier");
+  const imageryTargetTilePixels = lodControlValue("imageryTargetTilePixels");
+  const terrainTargetTilePixels = lodControlValue("terrainTargetTilePixels");
+  const terrainMaxTiles = lodControlValue("terrainMaxTiles");
+  const safeQualityMultiplier = clampNumber(qualityMultiplier, 0.5, 1.75);
+  const budgetMultiplier = safeQualityMultiplier * safeQualityMultiplier;
+  const networkMultiplier = clampNumber(safeQualityMultiplier, 0.65, 1.65);
+  const effectiveImageryTargetTilePixels = roundToStep(
+    clampNumber(imageryTargetTilePixels / safeQualityMultiplier, 96, 1024),
+    8,
+  );
+  const effectiveTerrainTargetTilePixels = roundToStep(
+    clampNumber(terrainTargetTilePixels / safeQualityMultiplier, 64, 896),
+    8,
+  );
+  const effectiveTerrainMaxTiles = Math.round(clampNumber(terrainMaxTiles * budgetMultiplier, 32, 1024));
+
+  viewer.setLod({
+    ...defaultLodOptions,
+    pixelErrorBudget: defaultLodOptions.pixelErrorBudget / Math.sqrt(safeQualityMultiplier),
+    maxVisibleTiles: Math.round(defaultLodOptions.maxVisibleTiles * budgetMultiplier),
+    maxNetworkRequests: Math.round(defaultLodOptions.maxNetworkRequests * networkMultiplier),
+    qualityBias: Math.log2(safeQualityMultiplier),
+    imagery: {
+      ...defaultLodOptions.imagery,
+      targetTilePixels: effectiveImageryTargetTilePixels,
+    },
+    terrain: {
+      ...defaultLodOptions.terrain,
+      targetTilePixels: effectiveTerrainTargetTilePixels,
+      maxTiles: effectiveTerrainMaxTiles,
+    },
+  });
+  setLodControlOutput("qualityMultiplier", formatQualityMultiplier(safeQualityMultiplier));
+  setLodControlOutput("imageryTargetTilePixels", `${Math.round(imageryTargetTilePixels)} -> ${effectiveImageryTargetTilePixels} px`);
+  setLodControlOutput("terrainTargetTilePixels", `${Math.round(terrainTargetTilePixels)} -> ${effectiveTerrainTargetTilePixels} px`);
+  setLodControlOutput("terrainMaxTiles", `${Math.round(terrainMaxTiles)} -> ${effectiveTerrainMaxTiles}`);
+}
+
+function lodControlValue(key: string): number {
+  const input = lodControlInputElements.find((item) => item.dataset.lodControl === key);
+  const value = input ? Number(input.value) : Number.NaN;
+
+  return Number.isFinite(value) ? value : 0;
+}
+
+function setLodControlOutput(key: string, value: string): void {
+  const output = lodControlOutputElements.find((item) => item.dataset.lodValue === key);
+
+  if (output) {
+    output.textContent = value;
+  }
+}
+
+function formatQualityMultiplier(value: number): string {
+  if (value < 0.95) {
+    return `${value.toFixed(2)}x performance`;
+  }
+
+  if (value > 1.05) {
+    return `${value.toFixed(2)}x dettaglio`;
+  }
+
+  return `${value.toFixed(2)}x neutro`;
+}
+
+function roundToStep(value: number, step: number): number {
+  return Math.round(value / step) * step;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+}
+
 function cameraLimitValue(key: string): number {
   const input = cameraLimitInputElements.find((item) => item.dataset.cameraLimit === key);
   const value = input ? Number(input.value) : Number.NaN;
@@ -1031,16 +1718,21 @@ function formatHeight(value: number): string {
 }
 
 function startCameraStatusLoop(): void {
-  const update = () => {
+  const update = (now = performance.now()) => {
+    if (now - lastCameraStatusUpdateAt < debugHudUpdateIntervalMs) {
+      requestAnimationFrame(update);
+      return;
+    }
+
+    lastCameraStatusUpdateAt = now;
     cameraStatusElement.textContent = formatCameraStatus();
-    lodDebugOutputElement.value = formatLodDebugStatus();
     requestAnimationFrame(update);
   };
 
   update();
 }
 
-function formatLodDebugStatus(): string {
+function formatLodDebugStatus(tiles: ReturnType<GeoViewer["tileTelemetry"]> = viewer.tileTelemetry()): string {
   const surface = viewer.cameraSurfaceStatus();
   const camera = viewer.cameraSnapshot();
   const lod = lastFrameStats?.lod;
@@ -1082,7 +1774,13 @@ function formatLodDebugStatus(): string {
     `vt.compositeChildren=${imagery?.vtCompositeChildren ?? "-"}`,
     `vt.compositeMaxLevel=${imagery?.vtCompositeMaxLevel ?? "-"}`,
     `imagery.cache=${imagery?.cacheSize ?? "-"}`,
+    `tileTelemetry.imageryRequested=${tiles.imagery.requested.length}`,
+    `tileTelemetry.imageryRendered=${tiles.imagery.rendered.length}`,
+    `tileTelemetry.imageryVisible=${tiles.imagery.visible.length}`,
+    `tileTelemetry.imageryOffscreen=${tiles.imagery.offscreen.length}`,
     `terrain.lod=${terrain?.level ?? "-"}`,
+    `terrain.providerMinLevel=${terrain?.providerMinLevel ?? tiles.terrain.providerMinLevel ?? "-"}`,
+    `terrain.providerMaxNativeLevel=${terrain?.providerMaxNativeLevel ?? tiles.terrain.providerMaxNativeLevel ?? "-"}`,
     `terrain.tiles=${terrain ? `${terrain.loadedTiles}/${terrain.activeTiles}` : "-"}`,
     `terrain.pending=${terrain?.pendingTiles ?? "-"}`,
     `terrain.render=${terrain?.renderTiles ?? "-"}`,
@@ -1098,6 +1796,14 @@ function formatLodDebugStatus(): string {
     `terrain.cpuMeshes=${terrain?.cpuMeshes ?? "-"}`,
     `terrain.gpuDisplacement=${terrain?.gpuDisplacement ?? "-"}`,
     `terrain.gpuSkirts=${terrain?.gpuSkirts ?? "-"}`,
+    `tileTelemetry.terrainRequested=${tiles.terrain.requested.length}`,
+    `tileTelemetry.terrainRendered=${tiles.terrain.rendered.length}`,
+    `tileTelemetry.terrainVisible=${tiles.terrain.visible.length}`,
+    `tileTelemetry.terrainLoading=${tiles.terrain.loading.length}`,
+    `tileTelemetry.terrainErrors=${tiles.terrain.errors.length}`,
+    `tileTelemetry.terrainTargetLevel=${tiles.terrain.targetLevel ?? "-"}`,
+    `tileTelemetry.terrainGridSize=${tiles.terrain.gridSize ?? "-"}`,
+    `tileTelemetry.terrainProviderMaxNativeLevel=${tiles.terrain.providerMaxNativeLevel ?? "-"}`,
     `frame.statsAgeMs=${lastFrameStats ? Math.round(performance.now() - lastFrameStats.timestampMs) : "-"}`,
     `frame.rawFrameMs=${lastFrameStats ? lastFrameStats.rawFrameMs.toFixed(1) : "-"}`,
     `frame.rawCpuMs=${lastFrameStats ? lastFrameStats.rawCpuMs.toFixed(1) : "-"}`,
@@ -1119,8 +1825,12 @@ function formatLodDebugStatus(): string {
     `lod.altitudeMeters=${lod ? Math.round(lod.altitudeMeters) : "-"}`,
     `lod.cameraDistance=${lod ? lod.cameraDistance.toFixed(6) : "-"}`,
     `lod.projectedLevel=${lastFrameStats?.lodDebug.projectedImageryLevel ?? "-"}`,
+    `lod.projectedTerrainLevel=${lastFrameStats?.lodDebug.projectedTerrainLevel ?? "-"}`,
     `lod.metricInputLevel=${lastFrameStats?.lodDebug.metricImageryLevel ?? "-"}`,
     `lod.combinedLevel=${lastFrameStats?.lodDebug.imageryLevel ?? "-"}`,
+    `lod.terrainInputLevel=${lastFrameStats?.lodDebug.terrainLevel ?? "-"}`,
+    `lod.cameraSlope=${lastFrameStats ? lastFrameStats.lodDebug.cameraSlope.toFixed(3) : "-"}`,
+    `lod.equalizedTerrainZoom=${lastFrameStats?.lodDebug.equalizedTerrainZoom ?? "-"}`,
     `lod.requestedImageryLevel=${lastFrameStats?.lodDebug.requestedImageryTargetLevel ?? "-"}`,
     `lod.requestedTerrainLevel=${lastFrameStats?.lodDebug.requestedTerrainTargetLevel ?? "-"}`,
     `lod.stableImageryLevel=${lastFrameStats?.lodDebug.stableImageryTargetLevel ?? "-"}`,
@@ -1131,6 +1841,9 @@ function formatLodDebugStatus(): string {
     `lod.tileBudget=${lod?.tileBudget ?? "-"}`,
     `lod.requestBudget=${lod?.requestBudget ?? "-"}`,
     `lod.metersPerPixel=${lod ? lod.metersPerPixel.toFixed(2) : "-"}`,
+    `lod.imageryTargetTilePixels=${lod?.imageryTargetTilePixels ?? "-"}`,
+    `lod.terrainTargetTilePixels=${lod?.terrainTargetTilePixels ?? "-"}`,
+    `lod.terrainEqualizedZoom=${lod?.terrainEqualizedZoom ?? "-"}`,
     `lod.metricLevelRaw=${metricLevelRaw ?? "-"}`,
     `lod.metricLevel=${lastFrameStats?.metricLevel ?? "-"}`,
     `lod.imageryTargetLevel=${lastFrameStats?.imageryTargetLevel ?? "-"}`,
@@ -1230,6 +1943,8 @@ function setMenuOpen(open: boolean): void {
   menuToggleElement.setAttribute("aria-expanded", String(open));
   menuToggleElement.textContent = open ? "Menu ON" : "Menu";
   demoTocElement.classList.toggle("open", open);
+  demoTocElement.style.opacity = open ? "1" : "";
+  demoTocElement.style.transform = open ? "translateX(0)" : "";
 }
 
 function setInfoOpen(open: boolean): void {

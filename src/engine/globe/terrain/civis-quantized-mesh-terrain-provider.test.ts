@@ -57,6 +57,14 @@ describe("civis-quantized-mesh-terrain-provider", () => {
     expect(provider.isTileAvailable?.({ level: 2, x: 2, y: 2 })).toBe(true);
   });
 
+  it("reports the native runtime level from source availability and source offset", () => {
+    const layer = parseCivisQuantizedMeshLayer({ ...layerJson(), available: [[], [], []] });
+    const provider = createCivisQuantizedMeshTerrainProvider(layer, { sourceLevelOffset: 1 });
+
+    expect(provider.minLevel).toBe(0);
+    expect(provider.maxNativeLevel).toBe(1);
+  });
+
   it("rejects runtime tiles without available source terrain samples", async () => {
     const layer = parseCivisQuantizedMeshLayer({ ...layerJson(), available: [[]] });
     const provider = createCivisQuantizedMeshTerrainProvider(layer, {

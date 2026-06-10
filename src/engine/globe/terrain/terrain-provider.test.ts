@@ -24,5 +24,7 @@ describe("terrain-provider", () => {
     expect(tile.minHeight).toBe(42);
     expect(tile.maxHeight).toBe(42);
     expect(provider.sampleHeight?.(0.2, 0.4)).toBe(42);
+    expect(provider.minLevel).toBe(0);
+    expect(provider.maxNativeLevel).toBe(0);
   });
 });

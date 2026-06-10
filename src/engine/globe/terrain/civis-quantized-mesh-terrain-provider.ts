@@ -103,6 +103,8 @@ export function createCivisQuantizedMeshTerrainProvider(
 
 class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
   readonly attribution: string | undefined;
+  readonly minLevel = 0;
+  readonly maxNativeLevel: number;
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string | undefined;
   private readonly heightmapSize: number;
@@ -122,6 +124,7 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
     this.heightmapSize = options.heightmapSize ?? 33;
     this.cacheSize = options.cacheSize ?? 512;
     this.sourceLevelOffset = options.sourceLevelOffset ?? 0;
+    this.maxNativeLevel = Math.max(0, layer.available.length - 1 - this.sourceLevelOffset);
   }
 
   isTileAvailable(key: TerrainTileKey): boolean {

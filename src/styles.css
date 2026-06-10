@@ -567,6 +567,11 @@ h2 {
     padding: 14px;
   }
 
+  .toc-drawer.open {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
   .panel {
     top: 62px;
     right: 12px;

@@ -18,6 +18,8 @@ export type TerrainMeshOptions = {
   tiling?: WebMercatorTilingScheme;
   exaggeration?: number;
   skirtDepth?: number;
+  gridSize?: number;
+  gridSizeByLevel?: readonly number[];
 };
 
 export function createTerrainMesh(tile: TerrainHeightmapTile, options: TerrainMeshOptions = {}): TerrainMesh {
@@ -29,23 +31,26 @@ export function createTerrainMesh(tile: TerrainHeightmapTile, options: TerrainMe
   const tiling = options.tiling ?? new WebMercatorTilingScheme(tile.level, tile.width);
   const exaggeration = options.exaggeration ?? 1;
   const skirtDepth = Math.max(0, options.skirtDepth ?? 0);
-  const baseVertexCount = tile.width * tile.height;
-  const skirtVertexCount = skirtDepth > 0 ? boundaryVertexCount(tile.width, tile.height) : 0;
+  const gridSize = terrainGridSizeForLevel(tile.level, options);
+  const meshWidth = gridSize === undefined ? tile.width : gridSize + 1;
+  const meshHeight = gridSize === undefined ? tile.height : gridSize + 1;
+  const baseVertexCount = meshWidth * meshHeight;
+  const skirtVertexCount = skirtDepth > 0 ? boundaryVertexCount(meshWidth, meshHeight) : 0;
   const vertexCount = baseVertexCount + skirtVertexCount;
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
   const texcoords = new Float32Array(vertexCount * 2);
   const cartographicSamples = new Array<{ lon: number; lat: number; height: number }>(baseVertexCount);
-  let minHeight = Number.POSITIVE_INFINITY;
-  let maxHeight = Number.NEGATIVE_INFINITY;
+  let minHeight = Number.isFinite(tile.minHeight) ? tile.minHeight : Number.POSITIVE_INFINITY;
+  let maxHeight = Number.isFinite(tile.maxHeight) ? tile.maxHeight : Number.NEGATIVE_INFINITY;
 
-  for (let row = 0; row < tile.height; row += 1) {
-    const v = tile.height === 1 ? 0 : row / (tile.height - 1);
+  for (let row = 0; row < meshHeight; row += 1) {
+    const v = meshHeight === 1 ? 0 : row / (meshHeight - 1);
 
-    for (let column = 0; column < tile.width; column += 1) {
-      const u = tile.width === 1 ? 0 : column / (tile.width - 1);
-      const vertexIndex = row * tile.width + column;
-      const height = finiteOr(tile.heights[vertexIndex], 0);
+    for (let column = 0; column < meshWidth; column += 1) {
+      const u = meshWidth === 1 ? 0 : column / (meshWidth - 1);
+      const vertexIndex = row * meshWidth + column;
+      const height = sampleHeightmap(tile, u, v);
       const { lon, lat } = tileSampleToCartographic(tile, u, v, tiling);
       cartographicSamples[vertexIndex] = { lon, lat, height };
       const normal = ellipsoid.geodeticSurfaceNormal(lon, lat);
@@ -70,18 +75,19 @@ export function createTerrainMesh(tile: TerrainHeightmapTile, options: TerrainMe
 
   const skirtIndexByBaseVertex = skirtDepth > 0
     ? appendSkirtVertices({
-        tile,
         ellipsoid,
         exaggeration,
         skirtDepth,
         baseVertexCount,
+        meshWidth,
+        meshHeight,
         cartographicSamples,
         positions,
         normals,
         texcoords,
       })
     : undefined;
-  const indices = createTileIndices(tile.width, tile.height, vertexCount, skirtIndexByBaseVertex);
+  const indices = createTileIndices(meshWidth, meshHeight, vertexCount, skirtIndexByBaseVertex);
 
   return {
     positions,
@@ -154,21 +160,23 @@ function writeGridIndices<T extends Uint16Array | Uint32Array>(indices: T, width
 }
 
 function appendSkirtVertices({
-  tile,
   ellipsoid,
   exaggeration,
   skirtDepth,
   baseVertexCount,
+  meshWidth,
+  meshHeight,
   cartographicSamples,
   positions,
   normals,
   texcoords,
 }: {
-  tile: TerrainHeightmapTile;
   ellipsoid: Ellipsoid;
   exaggeration: number;
   skirtDepth: number;
   baseVertexCount: number;
+  meshWidth: number;
+  meshHeight: number;
   cartographicSamples: readonly { lon: number; lat: number; height: number }[];
   positions: Float32Array;
   normals: Float32Array;
@@ -177,7 +185,7 @@ function appendSkirtVertices({
   const skirtIndexByBaseVertex = new Map<number, number>();
   let nextVertexIndex = baseVertexCount;
 
-  for (const baseVertexIndex of boundaryBaseVertexIndices(tile.width, tile.height)) {
+  for (const baseVertexIndex of boundaryBaseVertexIndices(meshWidth, meshHeight)) {
     const sample = cartographicSamples[baseVertexIndex];
     const normal = ellipsoid.geodeticSurfaceNormal(sample.lon, sample.lat);
     const position = ellipsoid.cartographicToCartesian({
@@ -286,6 +294,38 @@ function facePointsOutward(indices: Uint16Array | Uint32Array, positions: Float3
   ]);
 
   return dot(faceNormal, center) >= 0;
+}
+
+export function terrainGridSizeForLevel(
+  level: number,
+  { gridSize, gridSizeByLevel }: Pick<TerrainMeshOptions, "gridSize" | "gridSizeByLevel"> = {},
+): number | undefined {
+  const selected = gridSize ?? gridSizeByLevel?.[Math.max(0, Math.round(level))];
+
+  if (selected === undefined) {
+    return undefined;
+  }
+
+  return Math.min(512, Math.max(1, Math.round(selected)));
+}
+
+function sampleHeightmap(tile: TerrainHeightmapTile, u: number, v: number): number {
+  const x = clamp(u, 0, 1) * (tile.width - 1);
+  const y = clamp(v, 0, 1) * (tile.height - 1);
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(tile.width - 1, x0 + 1);
+  const y1 = Math.min(tile.height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const h00 = finiteOr(tile.heights[y0 * tile.width + x0], 0);
+  const h10 = finiteOr(tile.heights[y0 * tile.width + x1], h00);
+  const h01 = finiteOr(tile.heights[y1 * tile.width + x0], h00);
+  const h11 = finiteOr(tile.heights[y1 * tile.width + x1], h10);
+  const top = h00 * (1 - tx) + h10 * tx;
+  const bottom = h01 * (1 - tx) + h11 * tx;
+
+  return top * (1 - ty) + bottom * ty;
 }
 
 function vertexAt(positions: Float32Array, index: number): MutableVec3 {
