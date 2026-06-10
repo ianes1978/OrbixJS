@@ -122,7 +122,6 @@ export {
 } from "./engine/core/lod/lod";
 export {
   selectGlobeLodTargets,
-  shouldEqualizeTerrainZoom,
   type GlobeLodPolicyInput,
   type GlobeLodPolicyResult,
 } from "./engine/core/lod/globe-lod-policy";

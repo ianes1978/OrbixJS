@@ -179,6 +179,8 @@ Le due tecniche anti-instabilità percepita adottate dallo stato dell'arte (§2.
 
 **Uscita:** `geo-viewer.ts` sotto le ~2000 righe (oggi 3300+); nessun riferimento residuo (`grep` pulito); suite verde.
 
+*Stato 2026-06-10: eseguita. Cancellati `ClassicSelectionStrategy`, l'opzione `LodOptions.strategy` e `?lod=`, l'equalizzazione terrain (`shouldEqualizeTerrainZoom`, opzioni `equalZoom*`, `terrainEqualizedZoom`), i tetti di budget per quota e gli helper orfani di coverage-utils. `TileSelectionHost` ridotto a 4 membri. `geo-viewer.ts` a ~2430 righe (dalle 3300+). Suite verde (233).*
+
 ### Fase 7-bis — Milestone futura: geometria GPU-driven (fuori da questo piano)
 
 Quando la baseline sarà stabile e la telemetria permetterà confronti onesti, valutare la sostituzione della *geometria* di superficie con tassellazione adattiva su GPU ([CBT, Benyoub & Dupuy 2024](https://arxiv.org/abs/2407.02215)) sul backend WebGPU: la selezione/streaming dei *dati* (questo piano) resta comunque necessaria e invariata. Decisione rinviata di proposito: prima si stabilizza, poi si accelera.

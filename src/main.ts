@@ -578,9 +578,7 @@ let lastImageryStats:
     }
   | undefined;
 let lastFrameStats: GeoViewerFrameStats | undefined;
-const lodStrategyParam = urlParams.get("lod");
 const defaultLodOptions = {
-  strategy: (lodStrategyParam === "classic" ? "classic" : "quadtree") as "classic" | "quadtree",
   pixelErrorBudget: 1.15,
   maxVisibleTiles: 768,
   maxNetworkRequests: 20,
@@ -1832,7 +1830,6 @@ function formatLodDebugStatus(tiles: ReturnType<GeoViewer["tileTelemetry"]> = vi
     `lod.combinedLevel=${lastFrameStats?.lodDebug.imageryLevel ?? "-"}`,
     `lod.terrainInputLevel=${lastFrameStats?.lodDebug.terrainLevel ?? "-"}`,
     `lod.cameraSlope=${lastFrameStats ? lastFrameStats.lodDebug.cameraSlope.toFixed(3) : "-"}`,
-    `lod.equalizedTerrainZoom=${lastFrameStats?.lodDebug.equalizedTerrainZoom ?? "-"}`,
     `lod.requestedImageryLevel=${lastFrameStats?.lodDebug.requestedImageryTargetLevel ?? "-"}`,
     `lod.requestedTerrainLevel=${lastFrameStats?.lodDebug.requestedTerrainTargetLevel ?? "-"}`,
     `lod.stableImageryLevel=${lastFrameStats?.lodDebug.stableImageryTargetLevel ?? "-"}`,
@@ -1845,7 +1842,6 @@ function formatLodDebugStatus(tiles: ReturnType<GeoViewer["tileTelemetry"]> = vi
     `lod.metersPerPixel=${lod ? lod.metersPerPixel.toFixed(2) : "-"}`,
     `lod.imageryTargetTilePixels=${lod?.imageryTargetTilePixels ?? "-"}`,
     `lod.terrainTargetTilePixels=${lod?.terrainTargetTilePixels ?? "-"}`,
-    `lod.terrainEqualizedZoom=${lod?.terrainEqualizedZoom ?? "-"}`,
     `lod.metricLevelRaw=${metricLevelRaw ?? "-"}`,
     `lod.metricLevel=${lastFrameStats?.metricLevel ?? "-"}`,
     `lod.imageryTargetLevel=${lastFrameStats?.imageryTargetLevel ?? "-"}`,

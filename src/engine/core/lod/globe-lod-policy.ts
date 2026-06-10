@@ -15,15 +15,12 @@ export type GlobeLodPolicyResult = {
   terrainLevel?: number;
   requestedImageryTargetLevel?: number;
   requestedTerrainTargetLevel?: number;
-  equalizedTerrainZoom: boolean;
 };
 
 export function selectGlobeLodTargets({
   projectedImageryLevel,
   projectedTerrainLevel,
   metricImageryLevel,
-  cameraSlope,
-  altitudeMeters,
   options,
   context,
 }: GlobeLodPolicyInput): GlobeLodPolicyResult {
@@ -33,48 +30,14 @@ export function selectGlobeLodTargets({
     applyLodBiasToLevel(imageryLevel, options.imagery, context),
     clampLodLayerLevel(metricImageryLevel, options.imagery),
   );
-  const requestedTerrainLevel = applyLodBiasToLevel(terrainInputLevel, options.terrain, context);
-  const equalizedTerrainZoom = shouldEqualizeTerrainZoom({
-    altitudeMeters,
-    cameraSlope,
-    minAltitudeMeters: options.terrain.equalZoomMinAltitudeMeters,
-    maxAltitudeMeters: options.terrain.equalZoomMaxAltitudeMeters,
-    minCameraSlope: options.terrain.equalZoomMinCameraSlope,
-  });
-  const requestedTerrainTargetLevel =
-    equalizedTerrainZoom && requestedImageryTargetLevel !== undefined && requestedTerrainLevel !== undefined
-      ? Math.min(options.terrain.maxLevel, Math.max(requestedTerrainLevel, requestedImageryTargetLevel))
-      : requestedTerrainLevel;
+  const requestedTerrainTargetLevel = applyLodBiasToLevel(terrainInputLevel, options.terrain, context);
 
   return {
     imageryLevel,
     terrainLevel: terrainInputLevel,
     requestedImageryTargetLevel,
     requestedTerrainTargetLevel,
-    equalizedTerrainZoom,
   };
-}
-
-export function shouldEqualizeTerrainZoom({
-  altitudeMeters,
-  cameraSlope,
-  minAltitudeMeters = 10_000,
-  maxAltitudeMeters = 15_000_000,
-  minCameraSlope = 0.8,
-}: {
-  altitudeMeters: number;
-  cameraSlope: number;
-  minAltitudeMeters?: number;
-  maxAltitudeMeters?: number;
-  minCameraSlope?: number;
-}): boolean {
-  return (
-    Number.isFinite(altitudeMeters) &&
-    Number.isFinite(cameraSlope) &&
-    altitudeMeters > minAltitudeMeters &&
-    altitudeMeters < maxAltitudeMeters &&
-    cameraSlope > minCameraSlope
-  );
 }
 
 function clampLodLayerLevel(

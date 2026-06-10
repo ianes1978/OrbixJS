@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createLodContext, normalizeLodOptions } from "./lod";
-import { selectGlobeLodTargets, shouldEqualizeTerrainZoom } from "./globe-lod-policy";
+import { selectGlobeLodTargets } from "./globe-lod-policy";
 
 describe("globe LOD policy", () => {
-  it("equalizes terrain zoom for nadir-like mid-altitude views", () => {
+  it("derives imagery and terrain targets independently from the projections", () => {
     const options = normalizeLodOptions({
       imagery: { maxLevel: 18 },
       terrain: { maxLevel: 15 },
@@ -25,17 +25,33 @@ describe("globe LOD policy", () => {
       context,
     });
 
-    expect(targets.equalizedTerrainZoom).toBe(true);
     expect(targets.requestedImageryTargetLevel).toBe(12);
-    expect(targets.requestedTerrainTargetLevel).toBe(12);
+    expect(targets.requestedTerrainTargetLevel).toBe(8);
   });
 
-  it("keeps terrain independent when the view is too oblique", () => {
-    expect(
-      shouldEqualizeTerrainZoom({
-        altitudeMeters: 100_000,
-        cameraSlope: 0.3,
-      }),
-    ).toBe(false);
+  it("clamps targets to the configured layer limits", () => {
+    const options = normalizeLodOptions({
+      imagery: { maxLevel: 10 },
+      terrain: { maxLevel: 6 },
+    });
+    const context = createLodContext(options, {
+      cameraDistance: 1.01,
+      altitudeMeters: 5_000,
+      viewportWidth: 1200,
+      viewportHeight: 800,
+      fov: Math.PI / 4,
+    });
+    const targets = selectGlobeLodTargets({
+      projectedImageryLevel: 16,
+      projectedTerrainLevel: 14,
+      metricImageryLevel: 15,
+      cameraSlope: 1,
+      altitudeMeters: 5_000,
+      options,
+      context,
+    });
+
+    expect(targets.requestedImageryTargetLevel).toBe(10);
+    expect(targets.requestedTerrainTargetLevel).toBe(6);
   });
 });

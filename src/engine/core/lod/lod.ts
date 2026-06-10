@@ -8,14 +8,10 @@ export type LodLayerOptions = {
   targetTilePixels?: number;
 };
 
-export type TileSelectionStrategyName = "classic" | "quadtree";
-
 export type LodOptions =
   | LodProfile
   | {
       profile?: LodProfile;
-      /** Strategia di selezione tile (Plan3): "quadtree" (SSE, default) o "classic" (legacy). */
-      strategy?: TileSelectionStrategyName;
       adaptive?: boolean;
       devicePixelRatioLimit?: number;
       pixelErrorBudget?: number;
@@ -27,9 +23,6 @@ export type LodOptions =
       terrain?: LodLayerOptions & {
         maxTiles?: number;
         gridSizeByLevel?: readonly number[];
-        equalZoomMinAltitudeMeters?: number;
-        equalZoomMaxAltitudeMeters?: number;
-        equalZoomMinCameraSlope?: number;
       };
       tiles3d?: {
         maxScreenSpaceError?: number;
@@ -39,7 +32,6 @@ export type LodOptions =
 
 export type NormalizedLodOptions = {
   profile: LodProfile;
-  strategy: TileSelectionStrategyName;
   adaptive: boolean;
   devicePixelRatioLimit: number;
   pixelErrorBudget: number;
@@ -51,9 +43,6 @@ export type NormalizedLodOptions = {
   terrain: Required<LodLayerOptions> & {
     maxTiles: number;
     gridSizeByLevel: readonly number[];
-    equalZoomMinAltitudeMeters: number;
-    equalZoomMaxAltitudeMeters: number;
-    equalZoomMinCameraSlope: number;
   };
   tiles3d: {
     maxScreenSpaceError: number;
@@ -79,7 +68,6 @@ export type LodContext = {
   pixelErrorBudget: number;
   imageryTargetTilePixels: number;
   terrainTargetTilePixels: number;
-  terrainEqualizedZoom: boolean;
   terrainGridSizeByLevel: readonly number[];
   tileBudget: number;
   requestBudget: number;
@@ -101,7 +89,7 @@ export type LodContextInput = {
 const earthRadiusMeters = 6_378_137;
 const defaultTerrainGridSizeByLevel = [32, 32, 32, 24, 24, 16, 16, 16, 12, 12, 8, 8, 8, 6, 6, 4, 4, 4, 2, 2, 2];
 
-const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "strategy" | "imagery" | "terrain" | "tiles3d">> = {
+const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "imagery" | "terrain" | "tiles3d">> = {
   performance: {
     adaptive: true,
     devicePixelRatioLimit: 1.25,
@@ -149,7 +137,6 @@ export function normalizeLodOptions(options: LodOptions | undefined): Normalized
 
   return {
     profile,
-    strategy: objectOptions.strategy ?? "quadtree",
     adaptive: objectOptions.adaptive ?? defaults.adaptive,
     devicePixelRatioLimit: objectOptions.devicePixelRatioLimit ?? defaults.devicePixelRatioLimit,
     pixelErrorBudget: objectOptions.pixelErrorBudget ?? defaults.pixelErrorBudget,
@@ -165,9 +152,6 @@ export function normalizeLodOptions(options: LodOptions | undefined): Normalized
       ...normalizeLayerOptions(objectOptions.terrain),
       maxTiles: objectOptions.terrain?.maxTiles ?? Math.max(64, Math.round(maxVisibleTiles * 0.25)),
       gridSizeByLevel: objectOptions.terrain?.gridSizeByLevel ?? defaultTerrainGridSizeByLevel,
-      equalZoomMinAltitudeMeters: objectOptions.terrain?.equalZoomMinAltitudeMeters ?? 10_000,
-      equalZoomMaxAltitudeMeters: objectOptions.terrain?.equalZoomMaxAltitudeMeters ?? 15_000_000,
-      equalZoomMinCameraSlope: objectOptions.terrain?.equalZoomMinCameraSlope ?? 0.8,
     },
     tiles3d: {
       maxScreenSpaceError: objectOptions.tiles3d?.maxScreenSpaceError ?? tiles3dErrorForProfile(profile),
@@ -227,7 +211,6 @@ export function createLodContext(options: NormalizedLodOptions, input: LodContex
     pixelErrorBudget: options.pixelErrorBudget * reductionFactor,
     imageryTargetTilePixels: options.imagery.targetTilePixels,
     terrainTargetTilePixels: options.terrain.targetTilePixels,
-    terrainEqualizedZoom: false,
     terrainGridSizeByLevel: options.terrain.gridSizeByLevel,
     tileBudget: Math.max(16, Math.round(options.maxVisibleTiles / reductionFactor)),
     requestBudget: Math.max(4, Math.round(options.maxNetworkRequests / (1 + reduction))),

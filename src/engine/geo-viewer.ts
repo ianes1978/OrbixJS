@@ -14,7 +14,6 @@ import {
   type LodContext,
   type LodOptions,
   type NormalizedLodOptions,
-  type TileSelectionStrategyName,
 } from "./core/lod/lod";
 import { selectGlobeLodTargets } from "./core/lod/globe-lod-policy";
 import { invert, multiply, transformPoint, type Mat4 } from "./core/math/mat4";
@@ -28,9 +27,7 @@ import { Scene } from "./core/scene/scene";
 import { ImageryLayerCollection } from "./globe/imagery/imagery-layer-collection";
 import { type TileLevelStats } from "./globe/imagery/imagery-layer";
 import { createQuadtreeTile, type QuadtreeTile } from "./globe/imagery/quadtree-tile";
-import { selectLevel } from "./globe/imagery/tile-selector";
 import { createSurfaceTileSet, type SurfaceTile } from "./globe/surface/surface-tile";
-import { ClassicSelectionStrategy } from "./globe/selection/classic-selection-strategy";
 import { QuadtreeSelectionStrategy } from "./globe/quadtree/quadtree-selection-strategy";
 import { type TileSelectionHost, type TileSelectionStrategy } from "./globe/selection/selection-strategy";
 import {
@@ -133,7 +130,6 @@ export type GeoViewerFrameStats = {
     imageryLevel?: number;
     terrainLevel?: number;
     cameraSlope: number;
-    equalizedTerrainZoom: boolean;
     requestedImageryTargetLevel?: number;
     requestedTerrainTargetLevel?: number;
     stableImageryTargetLevel?: number;
@@ -330,34 +326,10 @@ export class GeoViewer {
   private lastCoverageStrategy = "none";
   private selectionStrategy: TileSelectionStrategy;
 
-  private createSelectionStrategy(strategy: TileSelectionStrategyName): TileSelectionStrategy {
-    const host = this.createSelectionHost();
-
-    return strategy === "quadtree" ? new QuadtreeSelectionStrategy(host) : new ClassicSelectionStrategy(host);
-  }
-
   private createSelectionHost(): TileSelectionHost {
-    const viewer = this;
-
     return {
-      get imageryTiling() {
-        return viewer.imageryTiling;
-      },
       canvasSize: () => [this.canvas.width || this.canvas.clientWidth, this.canvas.height || this.canvas.clientHeight],
       cameraFov: () => this.camera.fov,
-      cameraTiltOffset: () => this.camera.tiltOffset,
-      cameraAltitudeAboveSurfaceMeters: () => this.cameraAltitudeAboveSurfaceMeters(),
-      cameraDistanceForLod: () => this.cameraDistanceForLod(),
-      cameraSurfaceStatus: () => this.cameraSurfaceStatus(),
-      lodViewportHeight: () => this.lodViewportHeight(),
-      smoothedCpuMs: () => this.smoothedCpuMs,
-      adaptiveQualityReduction: () => this.adaptiveLodState.qualityReduction,
-      currentViewportSampleCount: () => this.currentViewportSampleCount,
-      projectedImageryLevel: () => this.projectedImageryLevel(),
-      pickNormalizedDeviceCoordinate: (x, y) => this.pickNormalizedDeviceCoordinate(x, y),
-      pickRayFromNdc: (x, y) => this.pickRayFromNdc(x, y),
-      nearestVisibleCartographicSample: () => this.nearestVisibleCartographicSample(),
-      projectTileScreenBounds: (tile) => this.projectTileScreenBounds(tile),
       cameraPositionUnit: () => this.camera.position,
       viewProjectionMatrix: () => {
         const width = this.canvas.width || this.canvas.clientWidth || 1;
@@ -373,7 +345,7 @@ export class GeoViewer {
     this.onFrameStatsCallback = options.onFrameStats;
     this.onTilesetStatsCallback = options.onTilesetStats;
     this.lodOptions = normalizeLodOptions(options.lod);
-    this.selectionStrategy = this.createSelectionStrategy(this.lodOptions.strategy);
+    this.selectionStrategy = new QuadtreeSelectionStrategy(this.createSelectionHost());
     this.cameraHeightLimits = options.cameraHeightLimits ?? {};
     this.cameraCollision = normalizeCameraCollisionOptions(options.cameraCollision);
     this.defaultTerrainExaggeration = options.terrainExaggeration ?? 1;
@@ -948,7 +920,6 @@ export class GeoViewer {
         options: this.lodOptions,
         context: lodContext,
       });
-      lodContext.terrainEqualizedZoom = lodPolicy.equalizedTerrainZoom;
       const requestedImageryTargetLevel = this.performanceAdjustedTargetLevel(
         lodPolicy.requestedImageryTargetLevel,
         lodContext,
@@ -975,22 +946,14 @@ export class GeoViewer {
         targetTilePixels: this.stableCoverageTargetPixels("imagery"),
       });
       this.lastCoverageStrategy = coverageSelection?.strategy ?? "none";
-      const coverageTiles = coverageSelection?.tiles;
-      // Il quadtree SSE produce foglie già non sovrapposte E ordinate per
-      // priorità di caricamento: il pruning le riordinerebbe per (z,y,x)
-      // distruggendo la priorità.
-      const quadtreeSelection = this.lodOptions.strategy === "quadtree";
-      const surfaceCoverageTiles = coverageTiles
-        ? quadtreeSelection
-          ? coverageTiles
-          : nonOverlappingQuadtreeTiles(coverageTiles)
-        : undefined;
+      // Le foglie del quadtree sono già non sovrapposte e ordinate per
+      // priorità di caricamento: nessun pruning/riordino necessario.
+      const surfaceCoverageTiles = coverageSelection?.tiles;
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
       const terrainCoverageTiles = this.terrainSurface && imageryCenter
         ? terrainTargetLevel === imageryTargetLevel
           ? surfaceCoverageTiles
-          : quadtreeSelection &&
-              surfaceCoverageTiles &&
+          : surfaceCoverageTiles &&
               imageryTargetLevel !== undefined &&
               terrainTargetLevel !== undefined &&
               imageryTargetLevel > terrainTargetLevel
@@ -1009,11 +972,7 @@ export class GeoViewer {
                 recordStrategy: false,
               })?.tiles
         : undefined;
-      const terrainSurfaceCoverageTiles = terrainCoverageTiles
-        ? quadtreeSelection
-          ? terrainCoverageTiles
-          : nonOverlappingQuadtreeTiles(terrainCoverageTiles)
-        : undefined;
+      const terrainSurfaceCoverageTiles = terrainCoverageTiles;
       const coverageLevels = summarizeTileLevels(surfaceCoverageTiles ?? []);
       const afterCoverage = performance.now();
       const nextImageryRequestTileIds = surfaceCoverageTiles?.map((tile) => tile.id) ?? [];
@@ -1101,7 +1060,6 @@ export class GeoViewer {
           imageryLevel: lodPolicy.imageryLevel,
           terrainLevel: lodPolicy.terrainLevel,
           cameraSlope,
-          equalizedTerrainZoom: lodPolicy.equalizedTerrainZoom,
           requestedImageryTargetLevel,
           requestedTerrainTargetLevel,
           stableImageryTargetLevel: imageryTargetLevel,
@@ -1209,38 +1167,9 @@ export class GeoViewer {
   }
 
   private effectiveCoverageTileBudget(lodContext: LodContext): number {
-    const elasticBudget = this.effectiveTileBudget(lodContext);
-
-    // Il quadtree SSE copre onestamente tutto il frustum: i tetti per quota,
-    // tarati sulle strategie ad anelli, lo strozzerebbero. Il raffinamento è
-    // già limitato dalla soglia SSE; serve solo il tetto elastico globale.
-    if (this.lodOptions.strategy === "quadtree") {
-      return Math.min(elasticBudget, 256);
-    }
-
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
-
-    if (altitudeMeters <= 2_500) {
-      return Math.min(elasticBudget, 64);
-    }
-
-    if (altitudeMeters <= 20_000) {
-      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 144 : 64);
-    }
-
-    if (altitudeMeters < 80_000) {
-      return Math.min(elasticBudget, Math.abs(this.camera.tiltOffset) > 0.35 ? 176 : 96);
-    }
-
-    if (altitudeMeters <= 250_000) {
-      return Math.min(elasticBudget, 96);
-    }
-
-    if (altitudeMeters <= 1_000_000) {
-      return Math.min(elasticBudget, 128);
-    }
-
-    return elasticBudget;
+    // Il raffinamento è già limitato dalla soglia SSE: serve solo il tetto
+    // elastico globale (frame sotto sforzo ⇒ budget ridotto).
+    return Math.min(this.effectiveTileBudget(lodContext), 256);
   }
 
   private effectiveRequestBudget(lodContext: LodContext): number {
