@@ -1230,7 +1230,7 @@ export class GeoViewer {
 
   private effectiveRequestBudget(lodContext: LodContext): number {
     if (this.cameraAltitudeAboveSurfaceMeters() < 80_000) {
-      const strainedFrame = lodContext.adaptiveQualityReduction > 1.25 || this.smoothedCpuMs > 80;
+      const strainedFrame = lodContext.adaptiveQualityReduction > 1.25;
 
       if (strainedFrame) {
         return Math.max(4, Math.min(lodContext.requestBudget, 8));
@@ -1258,7 +1258,7 @@ export class GeoViewer {
     }
 
     const altitudeMeters = lodContext.altitudeMeters;
-    const strainedFrame = lodContext.adaptiveQualityReduction > 1.25 || this.smoothedCpuMs > 80;
+    const strainedFrame = lodContext.adaptiveQualityReduction > 1.25;
     const nearSurfaceFloor = this.nearSurfaceStableTargetFloor(lodContext, layer);
 
     if (nearSurfaceFloor !== undefined) {
@@ -1269,7 +1269,7 @@ export class GeoViewer {
       return targetLevel;
     }
 
-    const severeFrame = this.smoothedCpuMs > 140;
+    const severeFrame = lodContext.adaptiveQualityReduction > 1.9;
 
     if (layer === "imagery") {
       const imageryDrop = severeFrame && altitudeMeters < 20_000 ? 1 : 0;
@@ -1277,8 +1277,8 @@ export class GeoViewer {
       return Math.max(nearSurfaceFloor ?? 2, targetLevel - imageryDrop);
     }
 
-    const terrainStrainedFrame = lodContext.adaptiveQualityReduction > 0.75 || this.smoothedCpuMs > 32;
-    const severeTerrainFrame = severeFrame || lodContext.adaptiveQualityReduction > 1.75;
+    const terrainStrainedFrame = lodContext.adaptiveQualityReduction > 0.75;
+    const severeTerrainFrame = lodContext.adaptiveQualityReduction > 1.75;
     const terrainDrop = altitudeMeters < 20_000
       ? severeTerrainFrame
         ? 3
@@ -1698,23 +1698,12 @@ export class GeoViewer {
   }
 
   private effectiveTerrainTileBudget(lodContext: LodContext): number {
-    const altitudeMeters = this.cameraAltitudeAboveSurfaceMeters();
+    // Come per l'imagery: il raffinamento è limitato dalla soglia SSE, al
+    // budget resta solo il ruolo di tetto elastico nei frame sotto sforzo.
     const baseBudget = Math.min(this.lodOptions.terrain.maxTiles, lodContext.tileBudget);
-    const strainedFrame = lodContext.adaptiveQualityReduction > 0.75 || this.smoothedCpuMs > 32;
+    const strainedFrame = lodContext.adaptiveQualityReduction > 0.75;
 
-    if (altitudeMeters <= 5_000) {
-      return Math.min(baseBudget, strainedFrame ? 32 : 40);
-    }
-
-    if (altitudeMeters <= 20_000) {
-      return Math.min(baseBudget, strainedFrame ? 40 : 56);
-    }
-
-    if (altitudeMeters <= 80_000) {
-      return Math.min(baseBudget, strainedFrame ? 64 : 96);
-    }
-
-    return Math.min(baseBudget, 192);
+    return Math.min(baseBudget, strainedFrame ? 96 : 192);
   }
 
   private createCanvas(): HTMLCanvasElement {

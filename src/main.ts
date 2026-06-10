@@ -588,7 +588,9 @@ const defaultLodOptions = {
     targetTilePixels: 256,
   },
   terrain: {
-    maxLevel: 15,
+    // Oltre il livello nativo (15) la geometria ricampiona la sorgente, ma i
+    // tile più profondi portano texture imagery più fini sul terreno.
+    maxLevel: 18,
     maxTiles: 256,
     targetTilePixels: 256,
   },
@@ -961,7 +963,7 @@ async function loadTerrainHeightmapSource(preprocessManifestUrl: string | undefi
     const layerUrl = demoAssetUrl(quantizedMeshInput.url);
     const layer = await loadCivisQuantizedMeshLayer(layerUrl);
 
-    viewer.setTerrainProvider(createCivisQuantizedMeshTerrainProvider(layer, { baseUrl: layerUrl, heightmapSize: 33 }), {
+    viewer.setTerrainProvider(createCivisQuantizedMeshTerrainProvider(layer, { baseUrl: layerUrl, heightmapSize: 65 }), {
       skirtDepth: 80,
     });
     return;

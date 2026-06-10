@@ -38,6 +38,8 @@ type TerrainPendingRequest = {
   tile: TerrainTileKey;
   promise: Promise<TerrainSurfaceMeshEntry>;
   controller: AbortController;
+  /** Frame consecutivi fuori dalla selezione: si aborta solo dopo una grazia. */
+  staleFrames: number;
 };
 
 export type TerrainLevelStats = {
@@ -107,7 +109,11 @@ export class TerrainSurfaceRuntime {
     this.activeTileIds = new Set(availableTiles.map((tile) => createTerrainTileId(tile)));
     this.activeTilesById = new Map(availableTiles.map((tile) => [createTerrainTileId(tile), tile]));
     const requestTiles = prioritizeTerrainRequests(availableTiles, this.meshCache, this.pending, this.errors);
-    this.cancelStalePendingRequests(new Set(requestTiles.map((tile) => createTerrainTileId(tile))));
+    const requestIds = new Set(requestTiles.map((tile) => createTerrainTileId(tile)));
+    const waitingRequests = requestTiles.filter(
+      (tile) => !this.meshCache.has(createTerrainTileId(tile)) && !this.pending.has(createTerrainTileId(tile)),
+    ).length;
+    this.cancelStalePendingRequests(requestIds, maxPending, waitingRequests);
 
     for (const tile of requestTiles) {
       if (this.pending.size >= maxPending) {
@@ -276,19 +282,46 @@ export class TerrainSurfaceRuntime {
         }
       });
 
-    pendingRequest = { id, tile, promise: request, controller };
+    pendingRequest = { id, tile, promise: request, controller, staleFrames: 0 };
     this.pending.set(id, pendingRequest);
     void request.catch(() => undefined);
   }
 
-  private cancelStalePendingRequests(keepIds: ReadonlySet<string>): void {
+  private cancelStalePendingRequests(keepIds: ReadonlySet<string>, maxPending: number, waitingRequests: number): void {
+    const stale: { id: string; request: TerrainPendingRequest }[] = [];
+
     for (const [id, request] of this.pending) {
       if (keepIds.has(id)) {
+        request.staleFrames = 0;
         continue;
+      }
+
+      // Grazia di qualche frame: se la selezione oscilla (LOD adattivo, soglie
+      // di budget) le richieste in volo non vanno abortite a ogni flap,
+      // altrimenti i tile profondi non finiscono mai di caricarsi.
+      request.staleFrames += 1;
+
+      if (request.staleFrames >= 4) {
+        request.controller.abort();
+        this.pending.delete(id);
+      } else {
+        stale.push({ id, request });
+      }
+    }
+
+    // Se il budget è saturo e ci sono richieste nuove in attesa, le stale in
+    // grazia cedono comunque il posto (le più vecchie per prime).
+    let needed = Math.min(waitingRequests, Math.max(0, this.pending.size - maxPending + waitingRequests));
+    stale.sort((a, b) => b.request.staleFrames - a.request.staleFrames);
+
+    for (const { id, request } of stale) {
+      if (needed <= 0 || this.pending.size < maxPending) {
+        break;
       }
 
       request.controller.abort();
       this.pending.delete(id);
+      needed -= 1;
     }
   }
 
