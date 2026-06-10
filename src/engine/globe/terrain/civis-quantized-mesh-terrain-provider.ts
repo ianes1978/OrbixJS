@@ -112,6 +112,10 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
   private readonly sourceLevelOffset: number;
   private readonly tiling = new WebMercatorTilingScheme();
   private readonly sourceCache = new Map<string, DecodedQuantizedMeshTile>();
+  // Indice piatto della cache per sampleHeight: ricostruito solo quando la
+  // cache cambia (enumerare e riordinare la mappa a ogni campione costava
+  // ~65 µs a chiamata, con migliaia di chiamate per frame).
+  private sampleIndex: SourceSampleTile[] | undefined;
   private readonly pendingSourceTiles = new Map<string, Promise<DecodedQuantizedMeshTile | undefined>>();
 
   constructor(
@@ -190,17 +194,27 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
   }
 
   sampleHeight(lon: number, lat: number): number | undefined {
-    const candidates = [...this.sourceCache.entries()]
-      .map(([id, mesh]) => {
-        const key = parseGeographicTileId(id);
+    if (!this.sampleIndex) {
+      this.sampleIndex = [...this.sourceCache.entries()]
+        .map(([id, mesh]) => {
+          const key = parseGeographicTileId(id);
 
-        return key ? { key, mesh, rectangle: geographicTileRectangle(key) } : undefined;
-      })
-      .filter((sample): sample is SourceSampleTile => sample !== undefined)
-      .filter((sample) => lon >= sample.rectangle.west && lon <= sample.rectangle.east && lat >= sample.rectangle.south && lat <= sample.rectangle.north)
-      .sort((a, b) => b.key.level - a.key.level);
+          return key ? { key, mesh, rectangle: geographicTileRectangle(key) } : undefined;
+        })
+        .filter((sample): sample is SourceSampleTile => sample !== undefined)
+        .sort((a, b) => b.key.level - a.key.level);
+    }
 
-    const sample = candidates[0];
+    let sample: SourceSampleTile | undefined;
+
+    for (const candidate of this.sampleIndex) {
+      const rectangle = candidate.rectangle;
+
+      if (lon >= rectangle.west && lon <= rectangle.east && lat >= rectangle.south && lat <= rectangle.north) {
+        sample = candidate;
+        break;
+      }
+    }
 
     if (!sample) {
       return undefined;
@@ -291,6 +305,7 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
     const mesh = decodeQuantizedMesh(await response.arrayBuffer());
 
     this.sourceCache.set(geographicTileId(key), mesh);
+    this.sampleIndex = undefined;
     this.trimCache();
     return mesh;
   }
@@ -315,6 +330,7 @@ class CivisQuantizedMeshTerrainProvider implements TerrainProvider {
       }
 
       this.sourceCache.delete(first);
+      this.sampleIndex = undefined;
     }
   }
 }

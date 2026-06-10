@@ -255,6 +255,15 @@ export class GeoViewer {
   private lastCoverageBudget = 0;
   private lastCoverageSamples = 0;
   private lastTileChurn = 0;
+  private viewProjectionCache:
+    | {
+        aspect: number;
+        cameraState: readonly number[];
+        matrix: Mat4;
+        inverse: Mat4 | undefined;
+        inverseComputed: boolean;
+      }
+    | undefined;
   private tileLabelOverlay: HTMLDivElement | undefined;
   private lastDebugSurfaceKey = "";
   private lastRendererTerrainKey = "";
@@ -326,6 +335,61 @@ export class GeoViewer {
   private lastCoverageStrategy = "none";
   private selectionStrategy: TileSelectionStrategy;
 
+
+  /**
+   * View-projection (e inversa) calcolate al più una volta per frame: i
+   * percorsi di proiezione/picking le richiedono migliaia di volte a frame
+   * e una moltiplicazione di matrici per punto dominava la telemetria.
+   */
+  private currentViewProjection(aspect: number): Mat4 {
+    const cache = this.viewProjectionCache;
+    const cameraState = this.cameraStateKey();
+
+    if (cache && cache.aspect === aspect && cameraStatesEqual(cache.cameraState, cameraState)) {
+      return cache.matrix;
+    }
+
+    const matrix = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
+
+    this.viewProjectionCache = { aspect, cameraState, matrix, inverse: undefined, inverseComputed: false };
+    return matrix;
+  }
+
+  private cameraStateKey(): readonly number[] {
+    return [
+      this.camera.yaw,
+      this.camera.pitch,
+      this.camera.distance,
+      this.camera.tiltOffset,
+      this.camera.lookYawOffset,
+      this.camera.fov,
+      this.camera.target[0],
+      this.camera.target[1],
+      this.camera.target[2],
+    ];
+  }
+
+  private currentInverseViewProjection(aspect: number): Mat4 | undefined {
+    this.currentViewProjection(aspect);
+    const cache = this.viewProjectionCache;
+
+    if (!cache) {
+      return undefined;
+    }
+
+    if (!cache.inverseComputed) {
+      cache.inverseComputed = true;
+
+      try {
+        cache.inverse = invert(cache.matrix);
+      } catch {
+        cache.inverse = undefined;
+      }
+    }
+
+    return cache.inverse;
+  }
+
   private createSelectionHost(): TileSelectionHost {
     return {
       canvasSize: () => [this.canvas.width || this.canvas.clientWidth, this.canvas.height || this.canvas.clientHeight],
@@ -335,7 +399,7 @@ export class GeoViewer {
         const width = this.canvas.width || this.canvas.clientWidth || 1;
         const height = this.canvas.height || this.canvas.clientHeight || 1;
 
-        return multiply(this.camera.projectionMatrix(width / height), this.camera.viewMatrix());
+        return this.currentViewProjection(width / height);
       },
     };
   }
@@ -1894,8 +1958,7 @@ export class GeoViewer {
       height: this.sampleTerrainHeightAt(lon, lat) ?? 0,
     });
     const aspect = width / height;
-    const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
-    const ndc = transformPoint(viewProjection, world);
+    const ndc = transformPoint(this.currentViewProjection(aspect), world);
 
     if (!Number.isFinite(ndc[0]) || !Number.isFinite(ndc[1]) || ndc[2] < -1 || ndc[2] > 1) {
       return undefined;
@@ -1990,8 +2053,7 @@ export class GeoViewer {
       height: this.sampleTerrainHeightAt(lon, lat) ?? 0,
     });
     const aspect = width / height;
-    const viewProjection = multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix());
-    const clip = transformPointWithW(viewProjection, world);
+    const clip = transformPointWithW(this.currentViewProjection(aspect), world);
 
     if (!clip || clip.w <= 0 || (!options.allowDepthOutside && (clip.z < -1.1 || clip.z > 1.1))) {
       return undefined;
@@ -2054,11 +2116,9 @@ export class GeoViewer {
     }
 
     const aspect = width / height;
-    let inverseViewProjection: ReturnType<typeof invert>;
+    const inverseViewProjection = this.currentInverseViewProjection(aspect);
 
-    try {
-      inverseViewProjection = invert(multiply(this.camera.projectionMatrix(aspect), this.camera.viewMatrix()));
-    } catch {
+    if (!inverseViewProjection) {
       return undefined;
     }
 
@@ -2248,6 +2308,16 @@ function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
     average: tiles.length > 0 ? total / tiles.length : undefined,
     histogram,
   };
+}
+
+function cameraStatesEqual(a: readonly number[], b: readonly number[]): boolean {
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function countTileChurn(previousIds: readonly string[], nextIds: readonly string[]): number {
