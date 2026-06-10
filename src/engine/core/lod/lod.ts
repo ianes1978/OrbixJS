@@ -87,7 +87,7 @@ export type LodContextInput = {
 };
 
 const earthRadiusMeters = 6_378_137;
-const defaultTerrainGridSizeByLevel = [32, 32, 32, 24, 24, 16, 16, 16, 12, 12, 8, 8, 8, 6, 6, 4, 4, 4, 2, 2, 2];
+const defaultTerrainGridSizeByLevel = [32, 32, 32, 24, 24, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 8, 8, 8];
 
 const profileDefaults: Record<LodProfile, Omit<NormalizedLodOptions, "profile" | "imagery" | "terrain" | "tiles3d">> = {
   performance: {

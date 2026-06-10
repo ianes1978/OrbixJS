@@ -950,27 +950,19 @@ export class GeoViewer {
       // priorità di caricamento: nessun pruning/riordino necessario.
       const surfaceCoverageTiles = coverageSelection?.tiles;
       const imageryCenter = this.centerViewCartographic() ?? this.nearestVisibleCartographicSample() ?? coveragePositions[0];
+      // Il terrain usa lo stesso attraversamento SSE con il proprio livello
+      // target: derivarlo dalle foglie imagery con un drop uniforme produce
+      // tile giganti all'orizzonte che inghiottono il campo vicino.
       const terrainCoverageTiles = this.terrainSurface && imageryCenter
         ? terrainTargetLevel === imageryTargetLevel
           ? surfaceCoverageTiles
-          : surfaceCoverageTiles &&
-              imageryTargetLevel !== undefined &&
-              terrainTargetLevel !== undefined &&
-              imageryTargetLevel > terrainTargetLevel
-            ? // Plan3 Fase 5: il terrain deriva dallo stesso albero dell'imagery,
-              // mappato al livello terrain — un solo attraversamento per frame.
-              deriveCoarserCoverage(
-                surfaceCoverageTiles,
-                imageryTargetLevel - terrainTargetLevel,
-                this.effectiveTerrainTileBudget(lodContext),
-              )
-            : this.selectionStrategy.selectCoverage({
-                maxTiles: this.effectiveTerrainTileBudget(lodContext),
-                targetLevel: terrainTargetLevel,
-                coveragePositions,
-                targetTilePixels: this.stableCoverageTargetPixels("terrain"),
-                recordStrategy: false,
-              })?.tiles
+          : this.selectionStrategy.selectCoverage({
+              maxTiles: this.effectiveTerrainTileBudget(lodContext),
+              targetLevel: terrainTargetLevel,
+              coveragePositions,
+              targetTilePixels: this.stableCoverageTargetPixels("terrain"),
+              recordStrategy: false,
+            })?.tiles
         : undefined;
       const terrainSurfaceCoverageTiles = terrainCoverageTiles;
       const coverageLevels = summarizeTileLevels(surfaceCoverageTiles ?? []);
@@ -2256,30 +2248,6 @@ function summarizeTileLevels(tiles: readonly QuadtreeTile[]): TileLevelStats {
     average: tiles.length > 0 ? total / tiles.length : undefined,
     histogram,
   };
-}
-
-function deriveCoarserCoverage(tiles: readonly QuadtreeTile[], levelDrop: number, maxTiles: number): QuadtreeTile[] {
-  const drop = Math.max(0, Math.round(levelDrop));
-  const minLevel = 2;
-  const derived = new Map<string, QuadtreeTile>();
-
-  for (const tile of tiles) {
-    const targetLevel = Math.max(minLevel, tile.z - drop);
-    const factor = 2 ** (tile.z - targetLevel);
-    const coarse = createQuadtreeTile(Math.floor(tile.x / factor), Math.floor(tile.y / factor), targetLevel);
-
-    if (!derived.has(coarse.id)) {
-      derived.set(coarse.id, coarse);
-
-      if (derived.size >= maxTiles) {
-        break;
-      }
-    }
-  }
-
-  // Il drop uniforme su foglie di livelli diversi può produrre coppie
-  // antenato/discendente: le mesh terrain sovrapposte vanno potate.
-  return nonOverlappingQuadtreeTiles([...derived.values()]);
 }
 
 function countTileChurn(previousIds: readonly string[], nextIds: readonly string[]): number {
