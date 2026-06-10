@@ -135,6 +135,9 @@ uniform vec2 uImageryUvOffset;
 uniform vec3 uCameraPosition;
 // (inizio, fine) della zona di morphing CDLOD in distanza unit-scale.
 uniform vec2 uMorphRange;
+// Normali world-space precalcolate per texel (RGB8, n*0.5+0.5): evita di
+// ricalcolare 4 conversioni geodetiche per vertice a ogni frame.
+uniform sampler2D uNormalMap;
 
 out vec3 vNormal;
 out vec3 vPosition;
@@ -169,16 +172,6 @@ vec3 geodeticToWorld(float lon, float lat, float height) {
   return world / WGS84_A;
 }
 
-vec3 terrainWorldAt(vec2 sampleUv) {
-  float tileCount = exp2(uTileKey.x);
-  float globalX = (uTileKey.y + sampleUv.x) / tileCount;
-  float globalY = (uTileKey.z + sampleUv.y) / tileCount;
-  float lon = globalX * PI * 2.0 - PI;
-  float lat = webMercatorYToLatitude(globalY);
-  float height = texture(uHeightmap, clamp(sampleUv, vec2(0.0), vec2(1.0))).r * uExaggeration;
-  return geodeticToWorld(lon, lat, height);
-}
-
 // Geomorphing CDLOD: verso il bordo esterno della zona di transizione l'altezza
 // scivola sul campionamento a meta' risoluzione (≈ il livello padre), cosi' il
 // passaggio di LOD non produce pop verticale.
@@ -204,17 +197,7 @@ void main() {
   float height = morphedHeightAt(uv, morph) * uExaggeration - position.z * uSkirtDepth;
   vec3 ellipsoidNormal = ellipsoidNormalAt(lon, lat);
   vec3 world = geodeticToWorld(lon, lat, height);
-  vec2 heightmapSize = vec2(textureSize(uHeightmap, 0));
-  vec2 texel = 1.0 / max(heightmapSize - vec2(1.0), vec2(1.0));
-  vec3 west = terrainWorldAt(uv - vec2(texel.x, 0.0));
-  vec3 east = terrainWorldAt(uv + vec2(texel.x, 0.0));
-  vec3 north = terrainWorldAt(uv - vec2(0.0, texel.y));
-  vec3 south = terrainWorldAt(uv + vec2(0.0, texel.y));
-  vec3 terrainNormal = normalize(cross(east - west, north - south));
-
-  if (dot(terrainNormal, ellipsoidNormal) < 0.0) {
-    terrainNormal = -terrainNormal;
-  }
+  vec3 terrainNormal = normalize(texture(uNormalMap, uv).xyz * 2.0 - 1.0);
 
   vPosition = world;
   vNormal = position.z > 0.5 ? ellipsoidNormal : terrainNormal;

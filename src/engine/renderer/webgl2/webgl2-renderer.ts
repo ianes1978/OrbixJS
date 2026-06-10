@@ -6,6 +6,7 @@ import { createEllipsoidTileMesh } from "../../globe/ellipsoid/create-ellipsoid-
 import { type QuadtreeTile } from "../../globe/imagery/quadtree-tile";
 import { type TerrainMesh } from "../../globe/terrain/terrain-mesh";
 import { type TerrainHeightmapTile } from "../../globe/terrain/terrain-provider";
+import { computeTerrainNormalMap } from "../../globe/terrain/terrain-normal-map";
 import { type TerrainSurfaceMeshEntry } from "../../globe/terrain/terrain-surface-runtime";
 import { createRendererFramePlan } from "../interface/render-frame-plan";
 import { type Renderer, type RendererFrame } from "../interface/renderer";
@@ -67,6 +68,7 @@ type TerrainProgram = {
   uDebugOverlay: WebGLUniformLocation;
   uCameraPosition: WebGLUniformLocation;
   uMorphRange: WebGLUniformLocation;
+  uNormalMap: WebGLUniformLocation;
 };
 
 type VectorProgram = {
@@ -133,6 +135,8 @@ type TerrainGpuEntry = {
   skirtDepth: number;
   heightmapTexture: WebGLTexture;
   heightmapTextureResource: RendererResourceHandle;
+  normalTexture: WebGLTexture;
+  normalTextureResource: RendererResourceHandle;
   ready: boolean;
 };
 
@@ -681,6 +685,9 @@ export class WebGL2Renderer implements Renderer {
       this.gl.activeTexture(this.gl.TEXTURE1);
       this.gl.bindTexture(this.gl.TEXTURE_2D, terrain.heightmapTexture);
       this.gl.uniform1i(this.terrainProgram.uHeightmap, 1);
+      this.gl.activeTexture(this.gl.TEXTURE2);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, terrain.normalTexture);
+      this.gl.uniform1i(this.terrainProgram.uNormalMap, 2);
       this.gl.uniform1f(this.terrainProgram.uExaggeration, terrain.exaggeration);
       this.gl.uniform1f(this.terrainProgram.uSkirtDepth, terrain.skirtDepth);
       this.gl.uniform2f(this.terrainProgram.uImageryUvScale, imageryFallback.uvScale[0], imageryFallback.uvScale[1]);
@@ -764,6 +771,7 @@ export class WebGL2Renderer implements Renderer {
     }
 
     const texture = createHeightmapTexture(this.gl, entry.heightmap, this.resourceManager);
+    const normalTexture = createTerrainNormalTexture(this.gl, entry.heightmap, entry.exaggeration, this.resourceManager);
 
     return {
       tile: entry.heightmap,
@@ -771,6 +779,8 @@ export class WebGL2Renderer implements Renderer {
       skirtDepth: entry.skirtDepth,
       heightmapTexture: texture.texture,
       heightmapTextureResource: texture.resource,
+      normalTexture: normalTexture.texture,
+      normalTextureResource: normalTexture.resource,
       ready: true,
     };
   }
@@ -782,6 +792,8 @@ export class WebGL2Renderer implements Renderer {
 
     this.gl.deleteTexture(entry.heightmapTexture);
     this.resourceManager.release(entry.heightmapTextureResource);
+    this.gl.deleteTexture(entry.normalTexture);
+    this.resourceManager.release(entry.normalTextureResource);
   }
 
   private ensureTerrainPatchMesh(width: number, height: number): GpuMesh | undefined {
@@ -920,6 +932,7 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
   const uDebugOverlay = gl.getUniformLocation(program, "uDebugOverlay");
   const uCameraPosition = gl.getUniformLocation(program, "uCameraPosition");
   const uMorphRange = gl.getUniformLocation(program, "uMorphRange");
+  const uNormalMap = gl.getUniformLocation(program, "uNormalMap");
 
   if (
     !uProjection ||
@@ -934,7 +947,8 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
     !uSunDirection ||
     !uDebugOverlay ||
     !uCameraPosition ||
-    !uMorphRange
+    !uMorphRange ||
+    !uNormalMap
   ) {
     throw new Error("Missing WebGL2 terrain uniform");
   }
@@ -955,6 +969,7 @@ function createTerrainProgram(gl: WebGL2RenderingContext, resources: RendererRes
     uDebugOverlay,
     uCameraPosition,
     uMorphRange,
+    uNormalMap,
   };
 }
 
@@ -1574,6 +1589,30 @@ function createHeightmapTexture(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, tile.width, tile.height, 0, gl.RED, gl.FLOAT, tile.heights);
+  return { texture, resource };
+}
+
+function createTerrainNormalTexture(
+  gl: WebGL2RenderingContext,
+  tile: TerrainHeightmapTile,
+  exaggeration: number,
+  resources: RendererResourceManager,
+): GpuTexture {
+  const texture = gl.createTexture();
+
+  if (!texture) {
+    throw new Error("Unable to allocate terrain normal texture");
+  }
+
+  const normals = computeTerrainNormalMap(tile, { exaggeration });
+  const resource = resources.track("texture");
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, tile.width, tile.height, 0, gl.RGB, gl.UNSIGNED_BYTE, normals);
   return { texture, resource };
 }
 

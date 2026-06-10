@@ -159,6 +159,8 @@ Le due tecniche anti-instabilità percepita adottate dallo stato dell'arte (§2.
 
 *Stato 2026-06-10: implementato sul backend WebGL2 (fade 220 ms con antenato di supporto sotto al tile in dissolvenza; morphing dell'altezza verso il campionamento a mezza risoluzione con zona di transizione per livello). Parità WGSL/WebGPU da fare quando il backend WebGPU tornerà prioritario.*
 
+*Ottimizzazione DTM 2026-06-10: le normali terrain sono precalcolate per tile in una texture RGB8 (`terrain-normal-map.ts`, CPU float64, una tantum all'upload della heightmap) — eliminate le 4 conversioni geodetiche per vertice per frame dal vertex shader. Stessa scena di riferimento: frame da ~700 ms a ~67 ms in GL software. Anche qui parità WGSL da fare (lo shader WGSL ha ancora le differenze finite per vertice).*
+
 ### Fase 6 — Validazione A/B e switch (1 giorno + bake time)
 
 - Camera-path audit (`runCameraPathAudit`, già nella demo) sui path standard con entrambe le strategie; confronto automatico dei campioni.
